@@ -407,31 +407,22 @@ export default function GroupsScreen() {
         return;
       }
 
-      const { data: userProfile } = await supabase
-        .from('profiles')
-        .select('id')
-        .eq('auth_id', user.id)
-        .single();
-
-      if (!userProfile) {
-        showToast('Profile not found', 'error');
-        return;
-      }
-
+      // Check if user already exists in household_members
       const { data: existing, error: existingError } = await supabase
         .from('household_members')
         .select('id')
         .eq('household_id', householdData.id)
-        .eq('profile_id', userProfile.id);
+        .eq('user_id', user.id);
 
       if (existing && existing.length > 0) {
         showToast('You are already a member of this household', 'error');
         return;
       }
 
+      // Add user to household_members
       const { error: insertError } = await supabase.from('household_members').insert({
         household_id: householdData.id,
-        profile_id: userProfile.id,
+        user_id: user.id,
         role: 'member',
         status: 'active',
       });
@@ -446,7 +437,7 @@ export default function GroupsScreen() {
       await supabase
         .from('profiles')
         .update({ household_id: householdData.id })
-        .eq('id', userProfile.id);
+        .eq('id', user.id);
 
       showToast(`Joined "${householdData.name}" successfully!`);
       setShowJoinModal(false);
