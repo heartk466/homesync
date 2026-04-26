@@ -12,8 +12,7 @@ import './GroupsScreen.css';
 export default function GroupsScreen() {
   const navigate = useNavigate();
   const [profile, setProfile] = useState(null);
-  const [household, setHousehold] = useState(null);
-  const [householdSummary, setHouseholdSummary] = useState(null);
+  const [households, setHouseholds] = useState([]);
   const [groups, setGroups] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -124,6 +123,30 @@ export default function GroupsScreen() {
     };
   }, []);
 
+  // Fetch all households user is a member of
+  const fetchAllHouseholds = useCallback(async (user, profileData) => {
+    const { data: memberHouseholds } = await supabase
+      .from('household_members')
+      .select('household_id, role')
+      .eq('user_id', user.id)
+      .eq('status', 'active');
+
+    if (!memberHouseholds || memberHouseholds.length === 0) return [];
+
+    const householdIds = memberHouseholds.map(mh => mh.household_id);
+    const { data: householdsData } = await supabase
+      .from('households')
+      .select('*')
+      .in('id', householdIds);
+
+    const householdsList = [];
+    for (const hh of householdsData || []) {
+      const summary = await fetchHouseholdSummary(hh, profileData);
+      if (summary) householdsList.push(summary);
+    }
+    return householdsList;
+  }, [fetchHouseholdSummary]);
+
   // Main data fetch
   const fetchData = useCallback(async () => {
     try {
@@ -141,20 +164,9 @@ export default function GroupsScreen() {
       // Fetch notifications for this user
       await fetchNotifications(user.id);
 
-      // Household
-      let householdData = null;
-      if (profileData?.household_id) {
-        const { data: hh } = await supabase
-          .from('households')
-          .select('*')
-          .eq('id', profileData.household_id)
-          .single();
-        householdData = hh;
-        setHousehold(householdData);
-        
-        const summary = await fetchHouseholdSummary(householdData, profileData);
-        setHouseholdSummary(summary);
-      }
+      // Fetch all households user is a member of
+      const householdsList = await fetchAllHouseholds(user, profileData);
+      setHouseholds(householdsList);
 
       // Groups where user is a member
       const { data: memberGroups, error: memberGroupsError } = await supabase
@@ -269,7 +281,7 @@ export default function GroupsScreen() {
     } finally {
       setLoading(false);
     }
-  }, [navigate, fetchHouseholdSummary]);
+  }, [navigate, fetchHouseholdSummary, fetchAllHouseholds]);
 
   useEffect(() => {
     fetchData();
@@ -433,12 +445,6 @@ export default function GroupsScreen() {
         return;
       }
 
-      // Update user's household_id in profiles
-      await supabase
-        .from('profiles')
-        .update({ household_id: householdData.id })
-        .eq('id', user.id);
-
       showToast(`Joined "${householdData.name}" successfully!`);
       setShowJoinModal(false);
       setJoinCode('');
@@ -555,11 +561,11 @@ export default function GroupsScreen() {
       />
 
       <div className="groups-content">
-        {/* Household Card */}
-        {household && householdSummary && (
+        {/* Households */}
+        {households.length > 0 && (
           <div className="household-section">
-            <h4 className="section-title">🏠 Your Household</h4>
-            {renderGroupCard(householdSummary, true)}
+            <h4 className="section-title">🏠 Households</h4>
+            {households.map(household => renderGroupCard(household, true))}
           </div>
         )}
 
