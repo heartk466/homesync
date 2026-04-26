@@ -1,0 +1,113 @@
+@import url('https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,400;0,600;0,700;0,800;1,400&display=swap');
+
+.splash {
+  width: 390px;
+  height: 844px;
+  background: linear-gradient(180deg, #EEEEEE 0%, #AE96FF 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: 48px 28px 40px;
+  font-family: 'Poppins', sans-serif;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+/* ── Top Section ── */
+.splash-top {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.splash-logo-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.splash-logo-icon {
+  width: 36px;
+  height: 36px;
+  margin-top: 20px;
+}
+
+.splash-logo-text {
+  font-size: 26px;
+  font-weight: 700;
+  color: #3B2AAB;
+  letter-spacing: 0.3px;
+  margin-top: 20px;
+}
+
+.splash-subtitle {
+  font-size: 13px;
+  color: #5A4AAA;
+  font-style: italic;
+  text-align: center;
+  font-weight: 400;
+  max-width: 220px;
+  line-height: 1.5;
+  margin-top: 0;
+}
+
+/* ── Illustration ── */
+.splash-illustration {
+  width: 70%;
+  max-width: 280px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  padding: 0px 0px;
+}
+
+.splash-illustration img {
+  width: 100%;
+  height: auto;
+}
+
+/* ── Bottom Section ── */
+.splash-bottom {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 28px;
+  width: 100%;
+}
+
+.splash-tagline {
+  font-size: 25px;
+  font-weight: 800;
+  color: #4D2FB2;
+  text-align: center;
+  line-height: 1.3;
+  
+}
+
+.splash-btn {
+  width: 100%;
+  background: #4D2FB2;
+  color: white;
+  border: none;
+  border-radius: 50px;
+  padding: 18px 0;
+  font-family: 'Poppins', sans-serif;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  letter-spacing: 0.5px;
+  transition: opacity 0.15s, transform 0.15s;
+  margin-bottom: 20px;
+}
+
+.splash-btn:hover {
+  opacity: 0.92;
+  transform: translateY(-1px);
+}
+
+.splash-btn:active {
+  transform: scale(0.98);
+}
