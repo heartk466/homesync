@@ -19,6 +19,7 @@ export default function GroupsScreen() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showJoinModal, setShowJoinModal] = useState(false);
   const [joinCode, setJoinCode] = useState('');
+  const [joinType, setJoinType] = useState('group'); // 'group' or 'household'
   const [createForm, setCreateForm] = useState({ name: '', description: '' });
   const [createLoading, setCreateLoading] = useState(false);
   const [joinLoading, setJoinLoading] = useState(false);
@@ -326,9 +327,15 @@ export default function GroupsScreen() {
 
   const handleJoinGroup = async () => {
     if (!joinCode.trim()) {
-      showToast('Enter a group code', 'error');
+      showToast('Enter a code', 'error');
       return;
     }
+    
+    if (joinType === 'household') {
+      handleJoinHousehold();
+      return;
+    }
+    
     setJoinLoading(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -372,9 +379,82 @@ export default function GroupsScreen() {
       showToast(`Joined "${group.name}" successfully!`);
       setShowJoinModal(false);
       setJoinCode('');
+      setJoinType('group');
       fetchData();
     } catch (err) {
       console.error('Join error:', err);
+      showToast(err.message, 'error');
+    }
+    setJoinLoading(false);
+  };
+
+  const handleJoinHousehold = async () => {
+    if (!joinCode.trim()) {
+      showToast('Enter a household code', 'error');
+      return;
+    }
+    setJoinLoading(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      const { data: householdData, error: findError } = await supabase
+        .from('households')
+        .select('id, name')
+        .eq('code', joinCode.trim().toUpperCase())
+        .single();
+
+      if (findError || !householdData) {
+        showToast('Invalid household code', 'error');
+        return;
+      }
+
+      const { data: userProfile } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('auth_id', user.id)
+        .single();
+
+      if (!userProfile) {
+        showToast('Profile not found', 'error');
+        return;
+      }
+
+      const { data: existing, error: existingError } = await supabase
+        .from('household_members')
+        .select('id')
+        .eq('household_id', householdData.id)
+        .eq('profile_id', userProfile.id);
+
+      if (existing && existing.length > 0) {
+        showToast('You are already a member of this household', 'error');
+        return;
+      }
+
+      const { error: insertError } = await supabase.from('household_members').insert({
+        household_id: householdData.id,
+        profile_id: userProfile.id,
+        role: 'member',
+        status: 'active',
+      });
+
+      if (insertError) {
+        console.error('Insert error:', insertError);
+        showToast(`Failed to join: ${insertError.message}`, 'error');
+        return;
+      }
+
+      // Update user's household_id in profiles
+      await supabase
+        .from('profiles')
+        .update({ household_id: householdData.id })
+        .eq('id', userProfile.id);
+
+      showToast(`Joined "${householdData.name}" successfully!`);
+      setShowJoinModal(false);
+      setJoinCode('');
+      setJoinType('group');
+      fetchData();
+    } catch (err) {
+      console.error('Join household error:', err);
       showToast(err.message, 'error');
     }
     setJoinLoading(false);
@@ -548,26 +628,77 @@ export default function GroupsScreen() {
         </div>
       )}
 
-      {/* Join Group Modal */}
+      {/* Join Group or Household Modal */}
       {showJoinModal && (
         <div className="modal-overlay-group">
           <div className="modal-group-card">
             <div className="modal-header">
-              <h2>Join a Group</h2>
-              <button className="modal-close" onClick={() => setShowJoinModal(false)}>
+              <h2>Join {joinType === 'household' ? 'Household' : 'Group'}</h2>
+              <button className="modal-close" onClick={() => {
+                setShowJoinModal(false);
+                setJoinType('group');
+                setJoinCode('');
+              }}>
                 <X size={20} />
               </button>
             </div>
             <div className="modal-body">
+              {/* Join Type Toggle */}
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+                <button
+                  onClick={() => setJoinType('group')}
+                  style={{
+                    flex: 1,
+                    padding: '10px',
+                    borderRadius: '50px',
+                    border: joinType === 'group' ? '2px solid #3B2AAB' : '1.5px solid #E0D9FF',
+                    background: joinType === 'group' ? '#F0EDFF' : 'white',
+                    color: joinType === 'group' ? '#3B2AAB' : '#9E8FCC',
+                    fontFamily: "'Poppins', sans-serif",
+                    fontWeight: 600,
+                    fontSize: '13px',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                  }}
+                >
+                  👥 Group
+                </button>
+                <button
+                  onClick={() => setJoinType('household')}
+                  style={{
+                    flex: 1,
+                    padding: '10px',
+                    borderRadius: '50px',
+                    border: joinType === 'household' ? '2px solid #3B2AAB' : '1.5px solid #E0D9FF',
+                    background: joinType === 'household' ? '#F0EDFF' : 'white',
+                    color: joinType === 'household' ? '#3B2AAB' : '#9E8FCC',
+                    fontFamily: "'Poppins', sans-serif",
+                    fontWeight: 600,
+                    fontSize: '13px',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                  }}
+                >
+                  🏠 Household
+                </button>
+              </div>
+
               <input
                 type="text"
-                placeholder="Enter group code (e.g. A1B2C3)"
+                placeholder={joinType === 'household' ? 'Enter household code (e.g. A1B2C3)' : 'Enter group code (e.g. A1B2C3)'}
                 value={joinCode}
                 onChange={e => setJoinCode(e.target.value.toUpperCase())}
                 className="group-input"
               />
-              <button className="join-group-btn" onClick={handleJoinGroup} disabled={joinLoading}>
-                {joinLoading ? 'Joining...' : 'Join Group'}
+              <button 
+                className="join-group-btn" 
+                onClick={handleJoinGroup} 
+                disabled={joinLoading}
+                style={{
+                  background: joinType === 'household' ? '#2C7A7B' : '#3B2AAB',
+                }}
+              >
+                {joinLoading ? 'Joining...' : `Join ${joinType === 'household' ? 'Household' : 'Group'}`}
               </button>
             </div>
           </div>
