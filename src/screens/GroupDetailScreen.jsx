@@ -44,6 +44,9 @@ export default function GroupDetailScreen() {
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showRejectProofModal, setShowRejectProofModal] = useState(false);
+  const [showDeleteGroupModal, setShowDeleteGroupModal] = useState(false);
+  const [showKickMemberModal, setShowKickMemberModal] = useState(false);
+  const [selectedMember, setSelectedMember] = useState(null);
   const [selectedExpense, setSelectedExpense] = useState(null);
   const [selectedProof, setSelectedProof] = useState(null);
   const [pendingApprovals, setPendingApprovals] = useState([]);
@@ -126,57 +129,67 @@ export default function GroupDetailScreen() {
       let membersList = [];
 
       if (resolvedType === 'household') {
+        // Fetch household members first
         const { data: memberData, error: memberError } = await supabase
           .from('household_members')
-          .select(`
-            user_id,
-            role,
-            status,
-            profiles!inner (
-              id,
-              full_name,
-              email,
-              avatar_url
-            )
-          `)
+          .select('*')
           .eq('household_id', id)
           .eq('status', 'active');
 
         if (memberError) console.error('Error fetching household members:', memberError);
 
+        // Then fetch each member's profile separately
+        const userIds = (memberData || []).map(m => m.user_id);
+        let profilesMap = {};
+        if (userIds.length > 0) {
+          const { data: profilesData } = await supabase
+            .from('profiles')
+            .select('id, full_name, email, avatar_url')
+            .in('id', userIds);
+          
+          (profilesData || []).forEach(p => {
+            profilesMap[p.id] = p;
+          });
+        }
+
         membersList = (memberData || []).map(m => ({
           user_id: m.user_id,
           role: m.role,
           status: m.status,
-          profiles: m.profiles || { full_name: 'Unknown', email: '' }
+          profiles: profilesMap[m.user_id] || { full_name: 'Unknown', email: '' }
         }));
 
         const userMember = membersList.find(m => m.user_id === user.id);
         adminStatus = userMember?.role === 'owner' || groupData?.created_by === user.id;
       } else {
+        // Fetch group members first
         const { data: memberData, error: memberError } = await supabase
           .from('group_members')
-          .select(`
-            user_id,
-            role,
-            status,
-            profiles!inner (
-              id,
-              full_name,
-              email,
-              avatar_url
-            )
-          `)
+          .select('*')
           .eq('group_id', id)
           .eq('status', 'active');
 
         if (memberError) console.error('Error fetching group members:', memberError);
 
+        // Then fetch each member's profile separately
+        const userIds = (memberData || []).map(m => m.user_id);
+        let profilesMap = {};
+        if (userIds.length > 0) {
+          const { data: profilesData } = await supabase
+            .from('profiles')
+            .select('id, full_name, email, avatar_url')
+            .in('id', userIds);
+          
+          (profilesData || []).forEach(p => {
+            profilesMap[p.id] = p;
+          });
+        }
+
         membersList = (memberData || []).map(m => ({
           user_id: m.user_id,
           role: m.role,
           status: m.status,
-          profiles: m.profiles || { full_name: 'Unknown', email: '' }
+          profiles: profilesMap[m.user_id] || { full_name: 'Unknown', email: '' }
         }));
 
         // FIX: If the user created this group but has no group_members row yet,
@@ -295,6 +308,7 @@ export default function GroupDetailScreen() {
       title: expenseForm.title.trim(),
       amount: Number(expenseForm.amount),
       category: expenseForm.category,
+      expense_type: expenseForm.category,
       expense_date: expenseForm.expense_date,
       location: expenseForm.location || group?.name,
       paid_by: expenseForm.who_paid,
@@ -373,6 +387,75 @@ export default function GroupDetailScreen() {
     fetchGroupAndData();
   };
 
+  const handleDeleteGroup = async () => {
+    setLoadingAction(true);
+    try {
+      const resolvedType = contextType;
+      
+      // Delete all related data first
+      if (resolvedType === 'household') {
+        // Delete expenses
+        await supabase.from('expenses').delete().eq('household_id', id);
+        // Delete household members
+        await supabase.from('household_members').delete().eq('household_id', id);
+        // Delete household
+        await supabase.from('households').delete().eq('id', id);
+      } else {
+        // Delete expenses
+        await supabase.from('expenses').delete().eq('group_id', id);
+        // Delete group members
+        await supabase.from('group_members').delete().eq('group_id', id);
+        // Delete group
+        await supabase.from('groups').delete().eq('id', id);
+      }
+      
+      showToast(resolvedType === 'household' ? 'Household deleted' : 'Group deleted');
+      setShowDeleteGroupModal(false);
+      navigate('/groups');
+    } catch (err) {
+      console.error('Error deleting group:', err);
+      showToast('Failed to delete group', 'error');
+    }
+    setLoadingAction(false);
+  };
+
+  const handleKickMember = async () => {
+    if (!selectedMember) return;
+    setLoadingAction(true);
+    try {
+      const resolvedType = contextType;
+      
+      if (resolvedType === 'household') {
+        await supabase.from('household_members')
+          .update({ status: 'kicked' })
+          .eq('household_id', id)
+          .eq('user_id', selectedMember.user_id);
+      } else {
+        await supabase.from('group_members')
+          .update({ status: 'kicked' })
+          .eq('group_id', id)
+          .eq('user_id', selectedMember.user_id);
+      }
+      
+      // Send notification to kicked user
+      await supabase.from('notifications').insert({
+        user_id: selectedMember.user_id,
+        title: 'Removed from Group',
+        message: `You have been removed from "${group?.name}"`,
+        type: 'kicked',
+      });
+      
+      showToast('Member removed');
+      setShowKickMemberModal(false);
+      setSelectedMember(null);
+      fetchGroupAndData();
+    } catch (err) {
+      console.error('Error kicking member:', err);
+      showToast('Failed to remove member', 'error');
+    }
+    setLoadingAction(false);
+  };
+
   const handleSubmitProof = async () => {
     if (!proofForm.screenshot) {
       showToast('Please upload a screenshot', 'error');
@@ -413,16 +496,18 @@ export default function GroupDetailScreen() {
   };
 
   const handleConfirmPayment = async (proof) => {
+    // Get expense details for the notification
+    const expense = expenses.find(e => e.id === proof.expense_id);
     await supabase.from('payment_proofs').update({ status: 'verified' }).eq('id', proof.id);
     await supabase.from('expenses').update({ status: 'paid' }).eq('id', proof.expense_id);
     await supabase.from('notifications').insert({
       user_id: proof.submitted_by,
-      title: 'Payment Confirmed',
-      message: 'Your payment has been verified!',
+      title: '✅ Payment Verified!',
+      message: `Your payment proof for "${expense?.title || 'expense'}" has been accepted. The expense is now marked as paid.`,
       type: 'payment_confirmed',
     });
     setShowViewProofModal(false);
-    showToast('Payment confirmed');
+    showToast('Payment confirmed and member notified');
     fetchGroupAndData();
   };
 
@@ -431,6 +516,8 @@ export default function GroupDetailScreen() {
       showToast('Please provide a reason', 'error');
       return;
     }
+    // Get expense details for the notification
+    const expense = expenses.find(e => e.id === selectedProof.expense_id);
     await supabase.from('payment_proofs').update({
       status: 'rejected',
       rejection_reason: rejectProofReason
@@ -438,14 +525,14 @@ export default function GroupDetailScreen() {
     await supabase.from('expenses').update({ status: 'pending' }).eq('id', selectedProof.expense_id);
     await supabase.from('notifications').insert({
       user_id: selectedProof.submitted_by,
-      title: 'Payment Proof Rejected',
-      message: `Your proof was rejected. Reason: ${rejectProofReason}`,
+      title: '❌ Payment Proof Rejected',
+      message: `Your payment proof for "${expense?.title || 'expense'}" was rejected. Reason: ${rejectProofReason}. Please submit a new proof of payment.`,
       type: 'payment_rejected',
     });
     setShowRejectProofModal(false);
     setRejectProofReason('');
     setSelectedProof(null);
-    showToast('Payment proof rejected');
+    showToast('Payment proof rejected - member notified');
     fetchGroupAndData();
   };
 
@@ -530,6 +617,11 @@ export default function GroupDetailScreen() {
         <div className="detail-code-actions">
           <button className="icon-btn-sm" onClick={handleCopyCode}><Copy size={16} /></button>
           <button className="icon-btn-sm" onClick={handleShare}><Share2 size={16} /></button>
+          {isAdmin && (
+            <button className="icon-btn-sm" onClick={() => setShowDeleteGroupModal(true)} title="Delete Group">
+              <Trash2 size={16} />
+            </button>
+          )}
         </div>
       </div>
 
@@ -539,13 +631,27 @@ export default function GroupDetailScreen() {
         {members.length === 0 ? (
           <p style={{ fontSize: 12, color: '#9E8FCC', margin: 0 }}>No members found.</p>
         ) : (
-          <div className="members-avatars">
-            {members.slice(0, 8).map(member => (
-              <div key={member.user_id} className="member-avatar-tooltip" title={member.profiles?.full_name}>
-                {getMemberAvatar(member)}
+          <div className="members-list">
+            {members.map(member => (
+              <div key={member.user_id} className="member-row">
+                <div className="member-avatar-tooltip" title={member.profiles?.full_name}>
+                  {getMemberAvatar(member)}
+                </div>
+                <div className="member-info">
+                  <span className="member-name">{member.profiles?.full_name}</span>
+                  <span className="member-role">{member.role === 'owner' ? 'Owner' : 'Member'}</span>
+                </div>
+                {isAdmin && member.user_id !== currentUser?.id && (
+                  <button 
+                    className="kick-btn" 
+                    onClick={() => { setSelectedMember(member); setShowKickMemberModal(true); }}
+                    title="Remove member"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
               </div>
             ))}
-            {members.length > 8 && <div className="member-more">+{members.length - 8}</div>}
           </div>
         )}
       </div>
@@ -595,6 +701,8 @@ export default function GroupDetailScreen() {
               && expense.status !== 'paid'
               && expense.approval_status === 'approved'
               && myShare;
+            // Check if there's a pending payment proof for this expense
+            const pendingProof = pendingPaymentProofs.find(p => p.expense_id === expense.id);
             return (
               <div key={expense.id} className="expense-item-detail">
                 <div
@@ -609,6 +717,11 @@ export default function GroupDetailScreen() {
                   <div className="expense-meta">
                     {expense.expense_date}{expense.location ? ` • ${expense.location}` : ''}
                   </div>
+                  {pendingProof && (
+                    <div className="pending-proof-indicator">
+                      📸 Proof pending verification
+                    </div>
+                  )}
                   {isOwed && (
                     <div className="owe-row">
                       <span>You owe ₱{Number(myShare).toFixed(2)}</span>
@@ -887,6 +1000,48 @@ export default function GroupDetailScreen() {
               />
               <button className="add-expense-btn" onClick={handleRejectProof}>Confirm</button>
               <button className="cancel-btn" onClick={() => setShowRejectProofModal(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Group Modal */}
+      {showDeleteGroupModal && (
+        <div className="modal-overlay-detail">
+          <div className="modal-detail-card">
+            <div className="modal-header" style={{ flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+              <AlertCircle size={40} color="#e53e3e" />
+              <h2>Delete {contextType === 'household' ? 'Household' : 'Group'}?</h2>
+            </div>
+            <div className="modal-body-scroll">
+              <p style={{ textAlign: 'center', color: '#9E8FCC', fontSize: 13 }}>
+                This will permanently delete this {contextType === 'household' ? 'household' : 'group'} and all expenses. This action cannot be undone.
+              </p>
+              <button className="delete-confirm-btn" onClick={handleDeleteGroup} disabled={loadingAction}>
+                {loadingAction ? 'Deleting...' : 'Yes, Delete'}
+              </button>
+              <button className="cancel-btn" onClick={() => setShowDeleteGroupModal(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Kick Member Modal */}
+      {showKickMemberModal && selectedMember && (
+        <div className="modal-overlay-detail">
+          <div className="modal-detail-card">
+            <div className="modal-header" style={{ flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+              <AlertCircle size={40} color="#e53e3e" />
+              <h2>Remove Member?</h2>
+            </div>
+            <div className="modal-body-scroll">
+              <p style={{ textAlign: 'center', color: '#9E8FCC', fontSize: 13 }}>
+                Are you sure you want to remove <strong>{selectedMember.profiles?.full_name}</strong> from this {contextType === 'household' ? 'household' : 'group'}?
+              </p>
+              <button className="delete-confirm-btn" onClick={handleKickMember} disabled={loadingAction}>
+                {loadingAction ? 'Removing...' : 'Yes, Remove'}
+              </button>
+              <button className="cancel-btn" onClick={() => { setShowKickMemberModal(false); setSelectedMember(null); }}>Cancel</button>
             </div>
           </div>
         </div>

@@ -93,6 +93,54 @@
   align-items: center;
 }
 
+.members-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.member-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px;
+  border-radius: 12px;
+  background: #F8F6FF;
+}
+
+.member-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.member-name {
+  font-weight: 600;
+  color: #2D1A7A;
+  font-size: 13px;
+}
+
+.member-role {
+  font-size: 11px;
+  color: #9E8FCC;
+}
+
+.kick-btn {
+  background: #ffe5e5;
+  border: none;
+  border-radius: 8px;
+  padding: 6px;
+  cursor: pointer;
+  color: #e53e3e;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.kick-btn:hover {
+  background: #ffcccb;
+}
+
 .member-avatar-tooltip {
   width: 44px;
   height: 44px;
@@ -206,6 +254,16 @@
   align-items: center;
   gap: 8px;
   margin-top: 4px;
+}
+
+.pending-proof-indicator {
+  background: #FFF3CD;
+  color: #856404;
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  margin-top: 4px;
+  display: inline-block;
 }
 
 .pay-btn-small {
