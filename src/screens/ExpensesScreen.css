@@ -173,6 +173,48 @@
 
 .expenses-content::-webkit-scrollbar { display: none; }
 
+/* Household Search & Toggle */
+.hh-search-row {
+  display: flex;
+  gap: 8px;
+  padding: 0 16px 12px;
+  flex-shrink: 0;
+  align-items: center;
+}
+
+.hh-search-input-wrap {
+  flex: 1;
+  position: relative;
+}
+
+.hh-search-icon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #9E8FCC;
+}
+
+.hh-search-input {
+  width: 100%;
+  padding: 10px 12px 10px 36px;
+  border: 1px solid #E2D9FF;
+  border-radius: 12px;
+  font-size: 13px;
+  font-family: 'Poppins', sans-serif;
+  background: white;
+  color: #2D1A7A;
+}
+
+.hh-search-input:focus {
+  outline: none;
+  border-color: #3B2AAB;
+}
+
+.hh-search-input::placeholder {
+  color: #9E8FCC;
+}
+
 /* Household Pill Toggle */
 .hh-toggle-row {
   display: flex;
@@ -657,7 +699,7 @@
 
 /* Modals */
 .modal-overlay {
-  position: absolute;
+  position: fixed;
   top: 0; left: 0; right: 0; bottom: 0;
   background: rgba(0,0,0,0.5);
   display: flex;

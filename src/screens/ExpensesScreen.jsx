@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import {
   Search, Filter, X, Check, Plus,
-  Trash2, AlertCircle
+  Trash2, AlertCircle, ChevronDown
 } from 'lucide-react';
 import './ExpensesScreen.css';
 import TopBar from '../components/TopBar';
@@ -57,6 +57,7 @@ export default function ExpensesScreen() {
   const [selectedExpense, setSelectedExpense] = useState(null);
   const [selectedProof, setSelectedProof] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [householdSearch, setHouseholdSearch] = useState('');
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState(null);
 
@@ -539,20 +540,38 @@ export default function ExpensesScreen() {
       />
 
       <div className="expenses-content">
-        {/* Household Pill Toggle — always visible */}
+        {/* Household Search & Toggle — always visible */}
         {households.length > 0 && (
-          <div className="hh-toggle-row">
-            {households.map(hh => (
-              <button
-                key={hh.id}
-                className={`hh-toggle-pill${selectedHousehold?.id === hh.id ? ' active' : ''}`}
-                onClick={() => handleHouseholdSelect(hh)}
-              >
-                🏠 {hh.name}
-                {selectedHousehold?.id === hh.id && <span className="hh-pill-dot" />}
-              </button>
-            ))}
-          </div>
+          <>
+            {households.length > 1 && (
+              <div className="hh-search-row">
+                <div className="hh-search-input-wrap">
+                  <Search size={14} className="hh-search-icon"/>
+                  <input
+                    type="text"
+                    placeholder="Search households..."
+                    value={householdSearch}
+                    onChange={e => setHouseholdSearch(e.target.value)}
+                    className="hh-search-input"
+                  />
+                </div>
+              </div>
+            )}
+            <div className="hh-toggle-row">
+              {households
+                .filter(hh => householdSearch === '' || hh.name.toLowerCase().includes(householdSearch.toLowerCase()))
+                .map(hh => (
+                  <button
+                    key={hh.id}
+                    className={`hh-toggle-pill${selectedHousehold?.id === hh.id ? ' active' : ''}`}
+                    onClick={() => handleHouseholdSelect(hh)}
+                  >
+                    🏠 {hh.name}
+                    {selectedHousehold?.id === hh.id && <span className="hh-pill-dot" />}
+                  </button>
+                ))}
+            </div>
+          </>
         )}
 
         {/* Premium Stat Cards */}
@@ -694,7 +713,7 @@ export default function ExpensesScreen() {
       </div>
 
       {/* FAB */}
-      <button className="fab-btn" onClick={() => setShowAddExpense(true)}><Plus size={24}/></button>
+      <button className="fab-btn" onClick={() => { console.log('FAB clicked, showAddExpense:', !showAddExpense); setShowAddExpense(true); }}><Plus size={24}/></button>
 
       {/* Add Expense Modal */}
       {showAddExpense && (

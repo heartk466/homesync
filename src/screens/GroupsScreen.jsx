@@ -76,6 +76,23 @@ export default function GroupsScreen() {
     return () => supabase.removeChannel(channel);
   }, [profile?.id]);
 
+  // Realtime expense subscription - refresh data when expenses are added/updated
+  useEffect(() => {
+    if (!profile?.id) return;
+    const channel = supabase
+      .channel('groups-expenses')
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'expenses',
+      }, () => {
+        // Refresh all data when any expense changes
+        fetchData();
+      })
+      .subscribe();
+    return () => supabase.removeChannel(channel);
+  }, [profile?.id, fetchData]);
+
   // Fetch household summary
   const fetchHouseholdSummary = useCallback(async (householdData, profileData) => {
     if (!householdData || !profileData) return null;
