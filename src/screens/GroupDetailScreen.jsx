@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import {
-  ArrowLeft, Users, Plus, Check, X, Camera, 
+  ArrowLeft, Users, Plus, Check, X, Camera,
   Copy, Share2, DollarSign, AlertCircle, Trash2, Edit
 } from 'lucide-react';
 import './GroupDetailScreen.css';
@@ -22,10 +22,6 @@ export default function GroupDetailScreen() {
   const { id } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
-
-  // FIX: contextType comes from navigation state; default to 'group'.
-  // If the user refreshes, state is lost, so we also try to infer from the URL
-  // or fall back gracefully.
   const { type: contextType = 'group' } = location.state || {};
 
   const proofInputRef = useRef(null);
@@ -38,6 +34,7 @@ export default function GroupDetailScreen() {
   const [expenses, setExpenses] = useState([]);
   const [filteredExpenses, setFilteredExpenses] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [showAddExpense, setShowAddExpense] = useState(false);
   const [showPaymentProofModal, setShowPaymentProofModal] = useState(false);
   const [showViewProofModal, setShowViewProofModal] = useState(false);
@@ -73,8 +70,11 @@ export default function GroupDetailScreen() {
     setTimeout(() => setToast(null), 3000);
   };
 
+  // ========== FIXED fetch function ==========
   const fetchGroupAndData = useCallback(async () => {
     try {
+      setError(null);
+      setLoading(true);
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { navigate('/login'); return; }
       setCurrentUser(user);
@@ -86,172 +86,131 @@ export default function GroupDetailScreen() {
         .single();
       setProfile(profileData);
 
-      // ─── FIX: Fetch group data ────────────────────────────────────────────
-      // Try the groups table first, then households, so a page refresh still works
-      let groupData = null;
+      // Determine type and fetch entity
       let resolvedType = contextType;
+      let groupData = null;
 
       if (contextType === 'household') {
-        const { data } = await supabase
-          .from('households')
-          .select('*')
-          .eq('id', id)
-          .single();
+        const { data } = await supabase.from('households').select('*').eq('id', id).maybeSingle();
         groupData = data;
+        if (!groupData) resolvedType = 'group';
       } else {
-        // Try groups table
-        const { data: gData } = await supabase
-          .from('groups')
-          .select('*')
-          .eq('id', id)
-          .single();
-
-        if (gData) {
-          groupData = gData;
+        const { data } = await supabase.from('groups').select('*').eq('id', id).maybeSingle();
+        if (data) {
+          groupData = data;
           resolvedType = 'group';
         } else {
-          // Fallback: maybe it's a household
-          const { data: hhData } = await supabase
-            .from('households')
-            .select('*')
-            .eq('id', id)
-            .single();
-          groupData = hhData;
-          resolvedType = 'household';
+          const { data: hhData } = await supabase.from('households').select('*').eq('id', id).maybeSingle();
+          if (hhData) {
+            groupData = hhData;
+            resolvedType = 'household';
+          }
         }
       }
 
+      if (!groupData) {
+        setError('Group or household not found. It may have been deleted.');
+        setLoading(false);
+        return;
+      }
       setGroup(groupData);
-      // ─────────────────────────────────────────────────────────────────────
 
-      // ─── FIX: Fetch members ───────────────────────────────────────────────
-      let adminStatus = false;
+      // Fetch members
       let membersList = [];
+      let adminStatus = false;
 
       if (resolvedType === 'household') {
-        // Fetch household members first
-        const { data: memberData, error: memberError } = await supabase
+        const { data: memberRows } = await supabase
           .from('household_members')
-          .select('*')
+          .select('user_id, role, status')
           .eq('household_id', id)
           .eq('status', 'active');
 
-        if (memberError) console.error('Error fetching household members:', memberError);
-
-        // Then fetch each member's profile separately
-        const userIds = (memberData || []).map(m => m.user_id);
-        let profilesMap = {};
-        if (userIds.length > 0) {
+        if (memberRows && memberRows.length) {
+          const userIds = memberRows.map(m => m.user_id);
           const { data: profilesData } = await supabase
             .from('profiles')
             .select('id, full_name, email, avatar_url')
             .in('id', userIds);
-          
-          (profilesData || []).forEach(p => {
-            profilesMap[p.id] = p;
-          });
+          const profilesMap = Object.fromEntries((profilesData || []).map(p => [p.id, p]));
+          membersList = memberRows.map(m => ({
+            user_id: m.user_id,
+            role: m.role,
+            status: m.status,
+            profiles: profilesMap[m.user_id] || { full_name: 'Unknown', email: '' }
+          }));
         }
-
-        membersList = (memberData || []).map(m => ({
-          user_id: m.user_id,
-          role: m.role,
-          status: m.status,
-          profiles: profilesMap[m.user_id] || { full_name: 'Unknown', email: '' }
-        }));
-
         const userMember = membersList.find(m => m.user_id === user.id);
-        adminStatus = userMember?.role === 'owner' || groupData?.created_by === user.id;
+        adminStatus = userMember?.role === 'owner' || groupData.created_by === user.id;
       } else {
-        // Fetch group members first
-        const { data: memberData, error: memberError } = await supabase
+        const { data: memberRows } = await supabase
           .from('group_members')
-          .select('*')
+          .select('user_id, role, status')
           .eq('group_id', id)
           .eq('status', 'active');
 
-        if (memberError) console.error('Error fetching group members:', memberError);
-
-        // Then fetch each member's profile separately
-        const userIds = (memberData || []).map(m => m.user_id);
-        let profilesMap = {};
-        if (userIds.length > 0) {
+        if (memberRows && memberRows.length) {
+          const userIds = memberRows.map(m => m.user_id);
           const { data: profilesData } = await supabase
             .from('profiles')
             .select('id, full_name, email, avatar_url')
             .in('id', userIds);
-          
-          (profilesData || []).forEach(p => {
-            profilesMap[p.id] = p;
-          });
+          const profilesMap = Object.fromEntries((profilesData || []).map(p => [p.id, p]));
+          membersList = memberRows.map(m => ({
+            user_id: m.user_id,
+            role: m.role,
+            status: m.status,
+            profiles: profilesMap[m.user_id] || { full_name: 'Unknown', email: '' }
+          }));
         }
-
-        membersList = (memberData || []).map(m => ({
-          user_id: m.user_id,
-          role: m.role,
-          status: m.status,
-          profiles: profilesMap[m.user_id] || { full_name: 'Unknown', email: '' }
-        }));
-
-        // FIX: If the user created this group but has no group_members row yet,
-        // treat them as owner and add themselves to the list so they can use the screen
         const userMember = membersList.find(m => m.user_id === user.id);
-        adminStatus = userMember?.role === 'owner' || groupData?.created_by === user.id;
+        adminStatus = userMember?.role === 'owner' || groupData.created_by === user.id;
 
-        if (!userMember && groupData?.created_by === user.id) {
-          membersList = [{
+        if (!userMember && groupData.created_by === user.id) {
+          membersList.unshift({
             user_id: user.id,
             role: 'owner',
             status: 'active',
-            profiles: {
-              id: user.id,
-              full_name: profileData?.full_name || 'You',
-              email: profileData?.email || '',
-              avatar_url: profileData?.avatar_url || null,
-            }
-          }, ...membersList];
+            profiles: { id: user.id, full_name: profileData?.full_name || 'You', email: profileData?.email || '', avatar_url: profileData?.avatar_url || null }
+          });
         }
       }
 
       setIsAdmin(adminStatus);
       setMembers(membersList);
-      // ─────────────────────────────────────────────────────────────────────
 
-      // ─── FIX: Fetch expenses ──────────────────────────────────────────────
-      // Use the correct column based on resolved type.
-      // No approval_status filter here — show ALL expenses in the list.
+      // Fetch expenses
       const expenseColumn = resolvedType === 'household' ? 'household_id' : 'group_id';
-      const { data: expensesData, error: expensesError } = await supabase
+      const { data: expensesData } = await supabase
         .from('expenses')
         .select('*')
         .eq(expenseColumn, id)
         .order('created_at', { ascending: false });
 
-      if (expensesError) console.error('Error fetching expenses:', expensesError);
-
       const allExpenses = expensesData || [];
       setExpenses(allExpenses);
       setFilteredExpenses(allExpenses);
-      // ─────────────────────────────────────────────────────────────────────
 
-      // Pending approvals (admin only)
       if (adminStatus) {
         const pending = allExpenses.filter(e => e.approval_status === 'pending_approval');
         setPendingApprovals(pending);
-
         if (allExpenses.length > 0) {
           const { data: proofs } = await supabase
             .from('payment_proofs')
-            .select('*, profiles:submitted_by ( id, full_name, email, avatar_url )')
+            .select(`*, profiles:submitted_by ( id, full_name, email, avatar_url )`)
             .eq('status', 'pending_verification')
             .in('expense_id', allExpenses.map(e => e.id));
           setPendingPaymentProofs(proofs || []);
         } else {
           setPendingPaymentProofs([]);
         }
+      } else {
+        setPendingApprovals([]);
+        setPendingPaymentProofs([]);
       }
-
     } catch (err) {
       console.error('fetchGroupAndData error:', err);
+      setError('Failed to load data. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -261,12 +220,12 @@ export default function GroupDetailScreen() {
     fetchGroupAndData();
   }, [fetchGroupAndData]);
 
-  // Realtime subscriptions
+  // Realtime subscription
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser || !group) return;
     const expenseColumn = contextType === 'household' ? 'household_id' : 'group_id';
     const channel = supabase
-      .channel('group-detail')
+      .channel('group-detail-realtime')
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'expenses',
         filter: `${expenseColumn}=eq.${id}`,
@@ -276,8 +235,9 @@ export default function GroupDetailScreen() {
       }, () => fetchGroupAndData())
       .subscribe();
     return () => supabase.removeChannel(channel);
-  }, [currentUser, id, contextType, fetchGroupAndData]);
+  }, [currentUser, group, id, contextType, fetchGroupAndData]);
 
+  // ========== Handlers (original) ==========
   const handleAddExpense = async () => {
     const errors = {};
     if (!expenseForm.title.trim()) errors.title = 'Title required';
@@ -391,24 +351,15 @@ export default function GroupDetailScreen() {
     setLoadingAction(true);
     try {
       const resolvedType = contextType;
-      
-      // Delete all related data first
       if (resolvedType === 'household') {
-        // Delete expenses
         await supabase.from('expenses').delete().eq('household_id', id);
-        // Delete household members
         await supabase.from('household_members').delete().eq('household_id', id);
-        // Delete household
         await supabase.from('households').delete().eq('id', id);
       } else {
-        // Delete expenses
         await supabase.from('expenses').delete().eq('group_id', id);
-        // Delete group members
         await supabase.from('group_members').delete().eq('group_id', id);
-        // Delete group
         await supabase.from('groups').delete().eq('id', id);
       }
-      
       showToast(resolvedType === 'household' ? 'Household deleted' : 'Group deleted');
       setShowDeleteGroupModal(false);
       navigate('/groups');
@@ -424,7 +375,6 @@ export default function GroupDetailScreen() {
     setLoadingAction(true);
     try {
       const resolvedType = contextType;
-      
       if (resolvedType === 'household') {
         await supabase.from('household_members')
           .update({ status: 'kicked' })
@@ -436,15 +386,12 @@ export default function GroupDetailScreen() {
           .eq('group_id', id)
           .eq('user_id', selectedMember.user_id);
       }
-      
-      // Send notification to kicked user
       await supabase.from('notifications').insert({
         user_id: selectedMember.user_id,
         title: 'Removed from Group',
         message: `You have been removed from "${group?.name}"`,
         type: 'kicked',
       });
-      
       showToast('Member removed');
       setShowKickMemberModal(false);
       setSelectedMember(null);
@@ -496,7 +443,6 @@ export default function GroupDetailScreen() {
   };
 
   const handleConfirmPayment = async (proof) => {
-    // Get expense details for the notification
     const expense = expenses.find(e => e.id === proof.expense_id);
     await supabase.from('payment_proofs').update({ status: 'verified' }).eq('id', proof.id);
     await supabase.from('expenses').update({ status: 'paid' }).eq('id', proof.expense_id);
@@ -516,7 +462,6 @@ export default function GroupDetailScreen() {
       showToast('Please provide a reason', 'error');
       return;
     }
-    // Get expense details for the notification
     const expense = expenses.find(e => e.id === selectedProof.expense_id);
     await supabase.from('payment_proofs').update({
       status: 'rejected',
@@ -574,40 +519,38 @@ export default function GroupDetailScreen() {
     } else { handleCopyCode(); }
   };
 
+  // ========== Render ==========
   if (loading) {
     return (
       <div className="group-detail-screen">
         <div className="detail-header">
           <button className="back-btn" onClick={() => navigate(-1)}><ArrowLeft size={24} /></button>
-          <div className="detail-header-info">
-            <span className="detail-group-name">Loading...</span>
-          </div>
+          <div className="detail-header-info"><span className="detail-group-name">Loading...</span></div>
         </div>
-        <div className="loading-spinner">Loading group...</div>
+        <div className="loading-spinner">Loading group…</div>
       </div>
     );
   }
 
-  // Guard: if group couldn't be found at all
-  if (!group) {
+  if (error || !group) {
     return (
       <div className="group-detail-screen">
         <div className="detail-header">
           <button className="back-btn" onClick={() => navigate(-1)}><ArrowLeft size={24} /></button>
-          <div className="detail-header-info">
-            <span className="detail-group-name">Group not found</span>
-          </div>
+          <div className="detail-header-info"><span className="detail-group-name">Error</span></div>
         </div>
-        <div className="empty-state" style={{ padding: 40, textAlign: 'center', color: '#9E8FCC' }}>
-          This group could not be loaded. It may have been deleted.
+        <div className="empty-state" style={{ padding: 40, textAlign: 'center' }}>
+          <p>{error || 'Group not found'}</p>
+          <button className="add-expense-btn" style={{ marginTop: 16, width: 'auto', padding: '8px 20px' }} onClick={() => fetchGroupAndData()}>Retry</button>
+          <button className="cancel-btn" style={{ marginTop: 8 }} onClick={() => navigate('/groups')}>Back to Groups</button>
         </div>
       </div>
     );
   }
 
+  // ---------- Normal JSX (original) ----------
   return (
     <div className="group-detail-screen">
-      {/* Header */}
       <div className="detail-header">
         <button className="back-btn" onClick={() => navigate(-1)}><ArrowLeft size={24} /></button>
         <div className="detail-header-info">
@@ -625,7 +568,6 @@ export default function GroupDetailScreen() {
         </div>
       </div>
 
-      {/* Members Section */}
       <div className="detail-members-section">
         <h3 className="section-title">👥 Members ({members.length})</h3>
         {members.length === 0 ? (
@@ -656,7 +598,6 @@ export default function GroupDetailScreen() {
         )}
       </div>
 
-      {/* Admin Pending Approvals */}
       {isAdmin && pendingApprovals.length > 0 && (
         <div className="detail-pending-section">
           <h3 className="section-title">⏳ Approvals Needed ({pendingApprovals.length})</h3>
@@ -672,7 +613,6 @@ export default function GroupDetailScreen() {
         </div>
       )}
 
-      {/* Admin Payment Proofs */}
       {isAdmin && pendingPaymentProofs.length > 0 && (
         <div className="detail-pending-section">
           <h3 className="section-title">📸 Proofs to Verify ({pendingPaymentProofs.length})</h3>
@@ -687,7 +627,6 @@ export default function GroupDetailScreen() {
         </div>
       )}
 
-      {/* Expenses List */}
       <div className="detail-expenses-section">
         <h3 className="section-title">📋 Expenses ({filteredExpenses.length})</h3>
         {filteredExpenses.length === 0 ? (
@@ -701,7 +640,6 @@ export default function GroupDetailScreen() {
               && expense.status !== 'paid'
               && expense.approval_status === 'approved'
               && myShare;
-            // Check if there's a pending payment proof for this expense
             const pendingProof = pendingPaymentProofs.find(p => p.expense_id === expense.id);
             return (
               <div key={expense.id} className="expense-item-detail">
@@ -756,7 +694,6 @@ export default function GroupDetailScreen() {
         )}
       </div>
 
-      {/* FAB */}
       <button className="fab-detail" onClick={() => setShowAddExpense(true)}>
         <Plus size={24} />
       </button>
