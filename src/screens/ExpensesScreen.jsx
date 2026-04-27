@@ -2,9 +2,8 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import {
-  Home, FileText, Users, Zap, BarChart2, Settings,
-  Bell, Search, Filter, X, Check, Plus, Edit,
-  Trash2, Camera, ChevronDown, AlertCircle
+  Search, Filter, X, Check, Plus,
+  Trash2, AlertCircle
 } from 'lucide-react';
 import './ExpensesScreen.css';
 import TopBar from '../components/TopBar';
@@ -27,7 +26,8 @@ export default function ExpensesScreen() {
   const proofInputRef = useRef(null);
 
   const [profile, setProfile] = useState(null);
-  const [household, setHousehold] = useState(null);
+  const [households, setHouseholds] = useState([]);
+  const [selectedHousehold, setSelectedHousehold] = useState(null);
   const [currentUser, setCurrentUser] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [expenses, setExpenses] = useState([]);
@@ -46,6 +46,7 @@ export default function ExpensesScreen() {
 
   // UI State
   const [showNotifications, setShowNotifications] = useState(false);
+  const [showHouseholdSelector, setShowHouseholdSelector] = useState(false);
   const [showAddExpense, setShowAddExpense] = useState(false);
   const [showFilter, setShowFilter] = useState(false);
   const [showRejectModal, setShowRejectModal] = useState(false);
@@ -56,7 +57,6 @@ export default function ExpensesScreen() {
   const [selectedExpense, setSelectedExpense] = useState(null);
   const [selectedProof, setSelectedProof] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeNav, setActiveNav] = useState('expenses');
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState(null);
 
@@ -105,48 +105,28 @@ export default function ExpensesScreen() {
         .single();
       setProfile(profileData);
 
-      if (!profileData?.household_id) return;
-
-      const { data: householdData } = await supabase
-        .from('households')
-        .select('*')
-        .eq('id', profileData.household_id)
-        .single();
-      setHousehold(householdData);
-      setExpenseForm(prev => ({ ...prev, location: householdData?.name || '' }));
-
-      // FIXED: Two-step member fetch (same as GroupDetailScreen)
-      const { data: memberRows, error: memberError } = await supabase
+      // Fetch all households user is a member of
+      const { data: memberHouseholds } = await supabase
         .from('household_members')
-        .select('user_id, role, status')
-        .eq('household_id', profileData.household_id)
+        .select('household_id, role')
+        .eq('user_id', user.id)
         .eq('status', 'active');
 
-      if (memberError) console.error('Member fetch error:', memberError);
+      if (!memberHouseholds || memberHouseholds.length === 0) return;
 
-      let membersList = [];
-      if (memberRows && memberRows.length > 0) {
-        const userIds = memberRows.map(m => m.user_id);
-        const { data: profilesData } = await supabase
-          .from('profiles')
-          .select('id, full_name, email, avatar_url')
-          .in('id', userIds);
-        
-        membersList = memberRows.map(m => ({
-          user_id: m.user_id,
-          role: m.role,
-          status: m.status,
-          profiles: profilesData?.find(p => p.id === m.user_id) || { full_name: 'Unknown', email: '' }
-        }));
+      const householdIds = memberHouseholds.map(mh => mh.household_id);
+      const { data: householdsData } = await supabase
+        .from('households')
+        .select('*')
+        .in('id', householdIds);
+
+      setHouseholds(householdsData || []);
+      
+      // Set first household as selected by default
+      if (householdsData && householdsData.length > 0) {
+        setSelectedHousehold(householdsData[0]);
       }
-      setHouseholdMembers(membersList);
 
-      const userMember = membersList.find(m => m.user_id === user.id);
-      const adminStatus = userMember?.role === 'owner';
-      setIsAdmin(adminStatus);
-      if (adminStatus) setExpenseForm(prev => ({ ...prev, who_paid: user.id }));
-
-      await fetchExpenses(profileData, user, adminStatus, membersList);
       await fetchNotifications(user.id);
 
     } catch (err) {
@@ -154,7 +134,7 @@ export default function ExpensesScreen() {
     }
   }, [navigate]);
 
-  const fetchExpenses = async (profileData, user, adminStatus, memberData) => {
+  const fetchExpenses = async (profileData, user, adminStatus, memberData, householdId) => {
     const now = new Date();
     const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
     const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
@@ -162,7 +142,7 @@ export default function ExpensesScreen() {
     const { data: expensesData } = await supabase
       .from('expenses')
       .select('*')
-      .eq('household_id', profileData.household_id)
+      .eq('household_id', householdId || profileData.household_id)
       .order('created_at', { ascending: false });
 
     if (!expensesData) return;
@@ -234,21 +214,68 @@ export default function ExpensesScreen() {
     setUnreadCount((data || []).filter(n => !n.is_read).length);
   };
 
+  // Handle household selection
+  const handleHouseholdSelect = useCallback(async (household) => {
+    setSelectedHousehold(household);
+    setShowHouseholdSelector(false);
+    setExpenseForm(prev => ({ ...prev, location: household?.name || '' }));
+
+    // Fetch members for this household
+    const { data: memberRows } = await supabase
+      .from('household_members')
+      .select('user_id, role, status')
+      .eq('household_id', household.id)
+      .eq('status', 'active');
+
+    let membersList = [];
+    if (memberRows && memberRows.length > 0) {
+      const userIds = memberRows.map(m => m.user_id);
+      const { data: profilesData } = await supabase
+        .from('profiles')
+        .select('id, full_name, email, avatar_url')
+        .in('id', userIds);
+      
+      membersList = memberRows.map(m => ({
+        user_id: m.user_id,
+        role: m.role,
+        status: m.status,
+        profiles: profilesData?.find(p => p.id === m.user_id) || { full_name: 'Unknown', email: '' }
+      }));
+    }
+    setHouseholdMembers(membersList);
+
+    const userMember = membersList.find(m => m.user_id === currentUser.id);
+    const adminStatus = userMember?.role === 'owner';
+    setIsAdmin(adminStatus);
+    if (adminStatus) setExpenseForm(prev => ({ ...prev, who_paid: currentUser.id }));
+
+    await fetchExpenses(profile, currentUser, adminStatus, membersList, household.id);
+  }, [currentUser, profile]);
+
   useEffect(() => {
     fetchData();
   }, [fetchData]);
 
+  // When household is selected, fetch its data
+  useEffect(() => {
+    if (selectedHousehold && currentUser && profile) {
+      handleHouseholdSelect(selectedHousehold);
+    }
+  }, [selectedHousehold]);
+
   // Realtime subscriptions
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser || !selectedHousehold) return;
 
     const channel = supabase
       .channel('expenses-realtime')
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'expenses',
-        filter: `household_id=eq.${household?.id}`,
+        filter: `household_id=eq.${selectedHousehold?.id}`,
       }, () => {
-        if (profile) fetchExpenses(profile, currentUser, isAdmin, householdMembers);
+        if (profile && currentUser) {
+          handleHouseholdSelect(selectedHousehold);
+        }
       })
       .on('postgres_changes', {
         event: 'INSERT', schema: 'public', table: 'notifications',
@@ -261,7 +288,7 @@ export default function ExpensesScreen() {
       .subscribe();
 
     return () => supabase.removeChannel(channel);
-  }, [currentUser, household?.id, profile, isAdmin, householdMembers]);
+  }, [currentUser, selectedHousehold?.id, profile]);
 
   // Search & Filter
   useEffect(() => {
@@ -489,14 +516,6 @@ export default function ExpensesScreen() {
     return <div className="member-avatar-initials">{initials}</div>;
   };
 
-  const navItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: Home, path: '/dashboard' },
-    { id: 'expenses', label: 'Expenses', icon: FileText, path: '/expenses' },
-    { id: 'groups', label: 'Groups', icon: Users, path: '/groups' },
-    { id: 'utilities', label: 'Utilities', icon: Zap, path: '/utilities' },
-    { id: 'reports', label: 'Reports', icon: BarChart2, path: '/reports' },
-    { id: 'settings', label: 'Settings', icon: Settings, path: '/settings' },
-  ];
 
   return (
     <div className="expenses-screen">
@@ -510,7 +529,7 @@ export default function ExpensesScreen() {
       <TopBar
         profile={profile}
         setProfile={setProfile}
-        household={household}
+        household={selectedHousehold}
         currentUser={currentUser}
         notifications={notifications}
         unreadCount={unreadCount}
@@ -520,24 +539,61 @@ export default function ExpensesScreen() {
       />
 
       <div className="expenses-content">
-        {/* Summary Cards */}
-        <div className="summary-card">
-          <p className="summary-label">Total Shared Expenses (This Month)</p>
-          <p className="summary-amount">₱ {totalShared.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
-        </div>
-        <div className="summary-card">
-          <p className="summary-label">Expenses to Reimburse</p>
-          <p className="summary-amount">₱ {toReimburse.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
-          {reimburseDetails.map((r, i) => (
-            <p key={i} className="reimburse-detail">
-              You owe ₱{Number(r.amount).toLocaleString('en-PH', { minimumFractionDigits: 2 })} to{' '}
-              <strong>{r.payer?.full_name}</strong>
+        {/* Household Pill Toggle — always visible */}
+        {households.length > 0 && (
+          <div className="hh-toggle-row">
+            {households.map(hh => (
+              <button
+                key={hh.id}
+                className={`hh-toggle-pill${selectedHousehold?.id === hh.id ? ' active' : ''}`}
+                onClick={() => handleHouseholdSelect(hh)}
+              >
+                🏠 {hh.name}
+                {selectedHousehold?.id === hh.id && <span className="hh-pill-dot" />}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Premium Stat Cards */}
+        <div className="stat-cards-row">
+          {/* Total Shared */}
+          <div className="stat-card stat-card--indigo">
+            <div className="stat-card-top">
+              <span className="stat-card-emoji">💸</span>
+              <span className="stat-card-label">Total Shared</span>
+            </div>
+            <p className="stat-card-amount">₱{totalShared.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+            <p className="stat-card-sub">this month · {selectedHousehold?.name || '—'}</p>
+          </div>
+
+          {/* To Reimburse */}
+          <div className="stat-card stat-card--amber">
+            <div className="stat-card-top">
+              <span className="stat-card-emoji">🔁</span>
+              <span className="stat-card-label">To Reimburse</span>
+            </div>
+            <p className="stat-card-amount">₱{toReimburse.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+            <p className="stat-card-sub">
+              {reimburseDetails.length > 0
+                ? reimburseDetails.map((r, i) => (
+                    <span key={i} className="stat-reimburse-line">
+                      Owe ₱{Number(r.amount).toFixed(2)} → {r.payer?.full_name}
+                    </span>
+                  ))
+                : 'Nothing to pay 🎉'}
             </p>
-          ))}
-        </div>
-        <div className="summary-card">
-          <p className="summary-label">Total Saved</p>
-          <p className="summary-amount">₱ {totalSaved.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+          </div>
+
+          {/* Total Saved */}
+          <div className="stat-card stat-card--emerald">
+            <div className="stat-card-top">
+              <span className="stat-card-emoji">🏦</span>
+              <span className="stat-card-label">Total Saved</span>
+            </div>
+            <p className="stat-card-amount">₱{totalSaved.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+            <p className="stat-card-sub">vs paying alone</p>
+          </div>
         </div>
 
         {/* Admin Pending Approvals */}
@@ -586,6 +642,13 @@ export default function ExpensesScreen() {
         </div>
 
         {/* Expense List */}
+        {filteredExpenses.length === 0 && (
+          <div className="expenses-empty">
+            <span className="expenses-empty-icon">🧾</span>
+            <p className="expenses-empty-title">No expenses yet</p>
+            <p className="expenses-empty-sub">Tap + to add your first expense for {selectedHousehold?.name || 'this household'}.</p>
+          </div>
+        )}
         {filteredExpenses.map(expense => {
           const badge = getStatusBadge(expense);
           const myReimburse = reimburseDetails.find(r => r.expense.id === expense.id);
@@ -593,18 +656,24 @@ export default function ExpensesScreen() {
             ? Object.keys(expense.members_split).map(uid => householdMembers.find(m => m.user_id === uid)).filter(Boolean)
             : [];
           return (
-            <div key={expense.id} className="expense-item">
-              <div className="expense-icon-wrap" style={{ background: CATEGORY_COLORS[expense.category] || '#3B2AAB' }}>
-                <span>{CATEGORY_ICONS[expense.category] || '📦'}</span>
+            <div key={expense.id} className="expense-item" style={{ borderLeftColor: CATEGORY_COLORS[expense.category] || '#3B2AAB' }}>
+              <div className="expense-icon-circle" style={{ background: `${CATEGORY_COLORS[expense.category]}22` || '#F0EDFF' }}>
+                <span style={{ fontSize: 20 }}>{CATEGORY_ICONS[expense.category] || '📦'}</span>
               </div>
-              <div className="expense-details">
-                <p className="expense-name">{expense.title}: ₱{Number(expense.amount).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
-                <p className="expense-meta">{expense.expense_date} | {expense.location}</p>
-                <div className="expense-members">
-                  {expenseMembers.slice(0,3).map((m,i) => (
-                    <div key={i} className="member-avatar-wrap">{getMemberAvatar(m)}</div>
-                  ))}
-                  {expenseMembers.length > 3 && <div className="member-avatar-more">+{expenseMembers.length-3}</div>}
+              <div className="expense-body">
+                <div className="expense-title-row">
+                  <p className="expense-name">{expense.title}</p>
+                  <p className="expense-amount">₱{Number(expense.amount).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                </div>
+                <p className="expense-meta">{expense.expense_date}{expense.location ? ` · ${expense.location}` : ''}</p>
+                <div className="expense-footer-row">
+                  <div className="expense-members">
+                    {expenseMembers.slice(0,3).map((m,i) => (
+                      <div key={i} className="member-avatar-wrap">{getMemberAvatar(m)}</div>
+                    ))}
+                    {expenseMembers.length > 3 && <div className="member-avatar-more">+{expenseMembers.length-3}</div>}
+                  </div>
+                  <span className="status-badge" style={{ color: badge.color, background: badge.bg }}>{badge.label}</span>
                 </div>
                 {expense.approval_status === 'rejected' && <p className="rejection-reason">Reason: {expense.rejection_reason}</p>}
                 {myReimburse && expense.status !== 'paid' && expense.status !== 'verifying' && (
@@ -614,14 +683,11 @@ export default function ExpensesScreen() {
                   </div>
                 )}
               </div>
-              <div className="expense-right">
-                <span className="status-badge" style={{ color: badge.color, background: badge.bg }}>{badge.label}</span>
-                {isAdmin && (
-                  <div className="expense-admin-actions">
-                    <button className="icon-btn delete" onClick={() => { setSelectedExpense(expense); setShowDeleteModal(true); }}><Trash2 size={14}/></button>
-                  </div>
-                )}
-              </div>
+              {isAdmin && (
+                <div className="expense-admin-col">
+                  <button className="icon-btn delete" onClick={() => { setSelectedExpense(expense); setShowDeleteModal(true); }}><Trash2 size={14}/></button>
+                </div>
+              )}
             </div>
           );
         })}
