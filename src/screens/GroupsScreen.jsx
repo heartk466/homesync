@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
-import { 
-  Home, Users, Plus, Copy, Share2, X, 
-  DollarSign 
+import {
+  Home, Users, Plus, Copy, Share2, X,
+  DollarSign
 } from 'lucide-react';
 import TopBar from '../components/TopBar';
 import BottomNav from '../components/BottomNav';
@@ -18,22 +18,23 @@ export default function GroupsScreen() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showJoinModal, setShowJoinModal] = useState(false);
   const [joinCode, setJoinCode] = useState('');
-  const [joinType, setJoinType] = useState('group'); // 'group' or 'household'
+  const [joinType, setJoinType] = useState('group');
   const [createForm, setCreateForm] = useState({ name: '', description: '' });
   const [createLoading, setCreateLoading] = useState(false);
   const [joinLoading, setJoinLoading] = useState(false);
   const [toast, setToast] = useState(null);
-  
-  // Notification state
+
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
+
+  // Keep a stable ref to fetchData so realtime callbacks always call the latest version
+  const fetchDataRef = useRef(null);
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3000);
   };
 
-  // Fetch notifications
   const fetchNotifications = async (userId) => {
     const { data } = await supabase
       .from('notifications')
@@ -45,7 +46,6 @@ export default function GroupsScreen() {
     setUnreadCount((data || []).filter(n => !n.is_read).length);
   };
 
-  // Mark all as read
   const markNotificationsRead = async () => {
     if (!profile?.id) return;
     await supabase
@@ -57,43 +57,6 @@ export default function GroupsScreen() {
     setUnreadCount(0);
   };
 
-  // Realtime notification subscription
-  useEffect(() => {
-    if (!profile?.id) return;
-    const channel = supabase
-      .channel('groups-notifications')
-      .on('postgres_changes', {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'notifications',
-        filter: `user_id=eq.${profile.id}`,
-      }, (payload) => {
-        setNotifications(prev => [payload.new, ...prev]);
-        setUnreadCount(prev => prev + 1);
-        showToast(payload.new.message, 'info');
-      })
-      .subscribe();
-    return () => supabase.removeChannel(channel);
-  }, [profile?.id]);
-
-  // Realtime expense subscription - refresh data when expenses are added/updated
-  useEffect(() => {
-    if (!profile?.id) return;
-    const channel = supabase
-      .channel('groups-expenses')
-      .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'expenses',
-      }, () => {
-        // Refresh all data when any expense changes
-        fetchData();
-      })
-      .subscribe();
-    return () => supabase.removeChannel(channel);
-  }, [profile?.id, fetchData]);
-
-  // Fetch household summary
   const fetchHouseholdSummary = useCallback(async (householdData, profileData) => {
     if (!householdData || !profileData) return null;
     const now = new Date();
@@ -110,7 +73,7 @@ export default function GroupsScreen() {
 
     const total = (expenses || []).reduce((sum, e) => sum + Number(e.amount), 0);
     let yourShare = 0, pendingOwed = 0;
-    expenses?.forEach(exp => {
+    (expenses || []).forEach(exp => {
       const splits = exp.members_split || {};
       const mySplit = splits[profileData.id];
       if (mySplit) {
@@ -133,14 +96,13 @@ export default function GroupsScreen() {
       type: 'household',
       memberCount: memberCount || 1,
       totalExpenses: total,
-      yourShare: yourShare,
-      pendingOwed: pendingOwed,
+      yourShare,
+      pendingOwed,
       yourBalance: balance,
       role: householdData.created_by === profileData.id ? 'owner' : 'member',
     };
   }, []);
 
-  // Fetch all households user is a member of
   const fetchAllHouseholds = useCallback(async (user, profileData) => {
     const { data: memberHouseholds } = await supabase
       .from('household_members')
@@ -164,41 +126,31 @@ export default function GroupsScreen() {
     return householdsList;
   }, [fetchHouseholdSummary]);
 
-  // Main data fetch
   const fetchData = useCallback(async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { navigate('/login'); return; }
 
-      // Profile
       const { data: profileData } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', user.id)
         .single();
       setProfile(profileData);
-      
-      // Fetch notifications for this user
+
       await fetchNotifications(user.id);
 
-      // Fetch all households user is a member of
+      // Households
       const householdsList = await fetchAllHouseholds(user, profileData);
       setHouseholds(householdsList);
 
       // Groups where user is a member
-      const { data: memberGroups, error: memberGroupsError } = await supabase
+      const { data: memberGroups } = await supabase
         .from('group_members')
         .select('group_id, role')
         .eq('user_id', user.id)
         .eq('status', 'active');
 
-      console.log('Member groups:', memberGroups, memberGroupsError);
-
-      if (memberGroupsError) {
-        console.error('Error fetching member groups:', memberGroupsError);
-      }
-
-      // Fetch group details separately
       const groupIds = (memberGroups || []).map(mg => mg.group_id);
       let groupsData = [];
       if (groupIds.length > 0) {
@@ -208,8 +160,6 @@ export default function GroupsScreen() {
           .in('id', groupIds);
         groupsData = data || [];
       }
-
-      console.log('Groups data:', groupsData);
 
       const groupsList = (memberGroups || []).map(mg => {
         const group = groupsData?.find(g => g.id === mg.group_id);
@@ -222,17 +172,14 @@ export default function GroupsScreen() {
           yourBalance: 0,
           pendingOwed: 0,
         };
-      }).filter(g => g.id); // Filter out any null groups
+      }).filter(g => g.id);
 
-      // Fallback: Also fetch groups where user is the creator (in case group_members insert failed)
+      // Fallback: groups created by user
       const { data: createdGroups } = await supabase
         .from('groups')
         .select('*')
         .eq('created_by', user.id);
 
-      console.log('Created groups:', createdGroups);
-
-      // Merge created groups that aren't already in the list
       if (createdGroups) {
         createdGroups.forEach(cg => {
           if (!groupsList.find(g => g.id === cg.id)) {
@@ -249,23 +196,19 @@ export default function GroupsScreen() {
         });
       }
 
-      console.log('Final groups list:', groupsList);
-
-      // Enrich each group with stats
+      // Enrich groups with stats
       const now = new Date();
       const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
       const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
 
-      for (let group of groupsList) {
-        // Member count
+      for (const group of groupsList) {
         const { count: memberCount } = await supabase
           .from('group_members')
           .select('*', { count: 'exact', head: true })
           .eq('group_id', group.id)
           .eq('status', 'active');
-        group.memberCount = memberCount;
+        group.memberCount = memberCount || 0;
 
-        // Expenses this month
         const { data: groupExpenses } = await supabase
           .from('expenses')
           .select('amount, paid_by, status, members_split')
@@ -279,7 +222,7 @@ export default function GroupsScreen() {
 
         let yourShareTotal = 0;
         let pendingOwedTotal = 0;
-        groupExpenses?.forEach(exp => {
+        (groupExpenses || []).forEach(exp => {
           const splits = exp.members_split || {};
           const mySplit = splits[user.id];
           if (mySplit) {
@@ -300,9 +243,50 @@ export default function GroupsScreen() {
     }
   }, [navigate, fetchHouseholdSummary, fetchAllHouseholds]);
 
+  // Keep ref in sync so realtime always calls latest fetchData
+  useEffect(() => {
+    fetchDataRef.current = fetchData;
+  }, [fetchData]);
+
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // Realtime: notifications
+  useEffect(() => {
+    if (!profile?.id) return;
+    const channel = supabase
+      .channel('groups-notifications')
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'notifications',
+        filter: `user_id=eq.${profile.id}`,
+      }, (payload) => {
+        setNotifications(prev => [payload.new, ...prev]);
+        setUnreadCount(prev => prev + 1);
+        showToast(payload.new.message, 'info');
+      })
+      .subscribe();
+    return () => supabase.removeChannel(channel);
+  }, [profile?.id]);
+
+  // Realtime: expense changes → refresh groups/households stats
+  useEffect(() => {
+    if (!profile?.id) return;
+    const channel = supabase
+      .channel('groups-expenses-watch')
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'expenses',
+      }, () => {
+        // Use ref so we always call the latest fetchData without re-subscribing
+        fetchDataRef.current?.();
+      })
+      .subscribe();
+    return () => supabase.removeChannel(channel);
+  }, [profile?.id]); // only re-subscribe when profile changes
 
   const handleCreateGroup = async () => {
     if (!createForm.name.trim()) {
@@ -325,10 +309,7 @@ export default function GroupsScreen() {
         .select()
         .single();
 
-      if (groupError) {
-        console.error('Create group error:', groupError);
-        throw groupError;
-      }
+      if (groupError) throw groupError;
 
       const { error: memberError } = await supabase.from('group_members').insert({
         group_id: group.id,
@@ -338,8 +319,6 @@ export default function GroupsScreen() {
       });
 
       if (memberError) {
-        console.error('Add member error:', memberError);
-        // Group was created but member insert failed - try to delete the group
         await supabase.from('groups').delete().eq('id', group.id);
         throw new Error('Failed to add you as member');
       }
@@ -359,12 +338,12 @@ export default function GroupsScreen() {
       showToast('Enter a code', 'error');
       return;
     }
-    
+
     if (joinType === 'household') {
       handleJoinHousehold();
       return;
     }
-    
+
     setJoinLoading(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -379,13 +358,11 @@ export default function GroupsScreen() {
         return;
       }
 
-      const { data: existing, error: existingError } = await supabase
+      const { data: existing } = await supabase
         .from('group_members')
         .select('id')
         .eq('group_id', group.id)
         .eq('user_id', user.id);
-
-      console.log('Existing check:', existing, existingError);
 
       if (existing && existing.length > 0) {
         showToast('You are already a member of this group', 'error');
@@ -400,7 +377,6 @@ export default function GroupsScreen() {
       });
 
       if (insertError) {
-        console.error('Insert error:', insertError);
         showToast(`Failed to join: ${insertError.message}`, 'error');
         return;
       }
@@ -411,7 +387,6 @@ export default function GroupsScreen() {
       setJoinType('group');
       fetchData();
     } catch (err) {
-      console.error('Join error:', err);
       showToast(err.message, 'error');
     }
     setJoinLoading(false);
@@ -436,8 +411,7 @@ export default function GroupsScreen() {
         return;
       }
 
-      // Check if user already exists in household_members
-      const { data: existing, error: existingError } = await supabase
+      const { data: existing } = await supabase
         .from('household_members')
         .select('id')
         .eq('household_id', householdData.id)
@@ -448,7 +422,6 @@ export default function GroupsScreen() {
         return;
       }
 
-      // Add user to household_members
       const { error: insertError } = await supabase.from('household_members').insert({
         household_id: householdData.id,
         user_id: user.id,
@@ -457,7 +430,6 @@ export default function GroupsScreen() {
       });
 
       if (insertError) {
-        console.error('Insert error:', insertError);
         showToast(`Failed to join: ${insertError.message}`, 'error');
         return;
       }
@@ -468,7 +440,6 @@ export default function GroupsScreen() {
       setJoinType('group');
       fetchData();
     } catch (err) {
-      console.error('Join household error:', err);
       showToast(err.message, 'error');
     }
     setJoinLoading(false);
@@ -498,12 +469,13 @@ export default function GroupsScreen() {
   };
 
   const renderGroupCard = (item, isHousehold = false) => {
-    const balanceInfo = getBalanceDisplay(item.yourBalance);
+    const balanceInfo = getBalanceDisplay(item.yourBalance || 0);
     return (
-      <div 
-        key={item.id} 
-        className="group-card" 
-        onClick={() => navigate(`/group/${item.id}`, { state: { type: isHousehold ? 'household' : 'group' } })}
+      <div
+        key={item.id}
+        className="group-card"
+        // FIX: use /groups/:id so it matches the typical React Router path for GroupDetailScreen
+        onClick={() => navigate(`/groups/${item.id}`, { state: { type: isHousehold ? 'household' : 'group' } })}
       >
         <div className="group-card-header">
           <div className="group-icon">
@@ -525,11 +497,11 @@ export default function GroupsScreen() {
         <div className="group-stats">
           <div className="stat">
             <span className="stat-label">Total spent (this month)</span>
-            <span className="stat-value">₱{item.totalExpenses.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span>
+            <span className="stat-value">₱{(item.totalExpenses || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span>
           </div>
           <div className="stat">
             <span className="stat-label">Your share</span>
-            <span className="stat-value">₱{item.yourShare.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span>
+            <span className="stat-value">₱{(item.yourShare || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span>
           </div>
           <div className="stat balance">
             <span className="stat-label">Balance</span>
@@ -538,7 +510,7 @@ export default function GroupsScreen() {
             </span>
           </div>
         </div>
-        {item.pendingOwed > 0 && (
+        {(item.pendingOwed || 0) > 0 && (
           <div className="pending-badge-group">
             <DollarSign size={12} /> ₱{item.pendingOwed.toFixed(2)} pending from you
           </div>
@@ -550,16 +522,16 @@ export default function GroupsScreen() {
   if (loading) {
     return (
       <div className="groups-screen">
-        <TopBar 
-          profile={profile} 
-          setProfile={setProfile} 
-          title="Groups" 
-          showBell 
+        <TopBar
+          profile={profile}
+          setProfile={setProfile}
+          title="Groups"
+          showBell
           notifications={notifications}
           unreadCount={unreadCount}
           onMarkAllRead={markNotificationsRead}
         />
-        <div className="loading-spinner">Loading groups...</div>
+        <div className="loading-spinner">Loading groups…</div>
         <BottomNav active="groups" />
       </div>
     );
@@ -567,18 +539,17 @@ export default function GroupsScreen() {
 
   return (
     <div className="groups-screen">
-      <TopBar 
-        profile={profile} 
-        setProfile={setProfile} 
-        title="Groups" 
-        showBell 
+      <TopBar
+        profile={profile}
+        setProfile={setProfile}
+        title="Groups"
+        showBell
         notifications={notifications}
         unreadCount={unreadCount}
         onMarkAllRead={markNotificationsRead}
       />
 
       <div className="groups-content">
-        {/* Households */}
         {households.length > 0 && (
           <div className="household-section">
             <h4 className="section-title">🏠 Households</h4>
@@ -586,7 +557,6 @@ export default function GroupsScreen() {
           </div>
         )}
 
-        {/* Trip Groups */}
         <div className="groups-section">
           <h4 className="section-title">👥 Trip Groups</h4>
           {groups.length === 0 ? (
@@ -599,7 +569,6 @@ export default function GroupsScreen() {
         </div>
       </div>
 
-      {/* FAB Buttons */}
       <div className="fab-group">
         <button className="fab-btn-group" onClick={() => setShowCreateModal(true)}>
           <Plus size={24} />
@@ -635,7 +604,7 @@ export default function GroupsScreen() {
                 rows={3}
               />
               <button className="create-group-btn" onClick={handleCreateGroup} disabled={createLoading}>
-                {createLoading ? 'Creating...' : 'Create Group'}
+                {createLoading ? 'Creating…' : 'Create Group'}
               </button>
             </div>
           </div>
@@ -648,55 +617,25 @@ export default function GroupsScreen() {
           <div className="modal-group-card">
             <div className="modal-header">
               <h2>Join {joinType === 'household' ? 'Household' : 'Group'}</h2>
-              <button className="modal-close" onClick={() => {
-                setShowJoinModal(false);
-                setJoinType('group');
-                setJoinCode('');
-              }}>
+              <button className="modal-close" onClick={() => { setShowJoinModal(false); setJoinType('group'); setJoinCode(''); }}>
                 <X size={20} />
               </button>
             </div>
             <div className="modal-body">
-              {/* Join Type Toggle */}
               <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
                 <button
                   onClick={() => setJoinType('group')}
-                  style={{
-                    flex: 1,
-                    padding: '10px',
-                    borderRadius: '50px',
-                    border: joinType === 'group' ? '2px solid #3B2AAB' : '1.5px solid #E0D9FF',
-                    background: joinType === 'group' ? '#F0EDFF' : 'white',
-                    color: joinType === 'group' ? '#3B2AAB' : '#9E8FCC',
-                    fontFamily: "'Poppins', sans-serif",
-                    fontWeight: 600,
-                    fontSize: '13px',
-                    cursor: 'pointer',
-                    transition: 'all 0.2s ease',
-                  }}
+                  style={{ flex: 1, padding: '10px', borderRadius: '50px', border: joinType === 'group' ? '2px solid #3B2AAB' : '1.5px solid #E0D9FF', background: joinType === 'group' ? '#F0EDFF' : 'white', color: joinType === 'group' ? '#3B2AAB' : '#9E8FCC', fontFamily: "'Poppins', sans-serif", fontWeight: 600, fontSize: '13px', cursor: 'pointer' }}
                 >
                   👥 Group
                 </button>
                 <button
                   onClick={() => setJoinType('household')}
-                  style={{
-                    flex: 1,
-                    padding: '10px',
-                    borderRadius: '50px',
-                    border: joinType === 'household' ? '2px solid #3B2AAB' : '1.5px solid #E0D9FF',
-                    background: joinType === 'household' ? '#F0EDFF' : 'white',
-                    color: joinType === 'household' ? '#3B2AAB' : '#9E8FCC',
-                    fontFamily: "'Poppins', sans-serif",
-                    fontWeight: 600,
-                    fontSize: '13px',
-                    cursor: 'pointer',
-                    transition: 'all 0.2s ease',
-                  }}
+                  style={{ flex: 1, padding: '10px', borderRadius: '50px', border: joinType === 'household' ? '2px solid #3B2AAB' : '1.5px solid #E0D9FF', background: joinType === 'household' ? '#F0EDFF' : 'white', color: joinType === 'household' ? '#3B2AAB' : '#9E8FCC', fontFamily: "'Poppins', sans-serif", fontWeight: 600, fontSize: '13px', cursor: 'pointer' }}
                 >
                   🏠 Household
                 </button>
               </div>
-
               <input
                 type="text"
                 placeholder={joinType === 'household' ? 'Enter household code (e.g. A1B2C3)' : 'Enter group code (e.g. A1B2C3)'}
@@ -704,15 +643,13 @@ export default function GroupsScreen() {
                 onChange={e => setJoinCode(e.target.value.toUpperCase())}
                 className="group-input"
               />
-              <button 
-                className="join-group-btn" 
-                onClick={handleJoinGroup} 
+              <button
+                className="join-group-btn"
+                onClick={handleJoinGroup}
                 disabled={joinLoading}
-                style={{
-                  background: joinType === 'household' ? '#2C7A7B' : '#3B2AAB',
-                }}
+                style={{ background: joinType === 'household' ? '#2C7A7B' : '#3B2AAB' }}
               >
-                {joinLoading ? 'Joining...' : `Join ${joinType === 'household' ? 'Household' : 'Group'}`}
+                {joinLoading ? 'Joining…' : `Join ${joinType === 'household' ? 'Household' : 'Group'}`}
               </button>
             </div>
           </div>

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import {
   Search, Filter, X, Check, Plus,
-  Trash2, AlertCircle, ChevronDown
+  Trash2, AlertCircle, ChevronDown, Camera
 } from 'lucide-react';
 import './ExpensesScreen.css';
 import TopBar from '../components/TopBar';
@@ -46,7 +46,6 @@ export default function ExpensesScreen() {
 
   // UI State
   const [showNotifications, setShowNotifications] = useState(false);
-  const [showHouseholdSelector, setShowHouseholdSelector] = useState(false);
   const [showAddExpense, setShowAddExpense] = useState(false);
   const [showFilter, setShowFilter] = useState(false);
   const [showRejectModal, setShowRejectModal] = useState(false);
@@ -72,7 +71,6 @@ export default function ExpensesScreen() {
     title: '',
     amount: '',
     category: 'Rent',
-    expense_type: 'Rent',
     expense_date: new Date().toISOString().split('T')[0],
     location: '',
     who_paid: '',
@@ -92,50 +90,24 @@ export default function ExpensesScreen() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  // ==================== DATA FETCHING (FIXED) ====================
-  const fetchData = useCallback(async () => {
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) { navigate('/login'); return; }
-      setCurrentUser(user);
+  // ===================== RESET FORM (uses closure-safe args) =====================
+  const resetExpenseForm = useCallback((household, user, adminStatus) => {
+    setExpenseForm({
+      title: '',
+      amount: '',
+      category: 'Rent',
+      expense_date: new Date().toISOString().split('T')[0],
+      location: household?.name || '',
+      who_paid: adminStatus && user ? user.id : '',
+      split_type: 'equal',
+      selected_members: [],
+      custom_splits: {},
+    });
+    setExpenseErrors({});
+  }, []);
 
-      const { data: profileData } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', user.id)
-        .single();
-      setProfile(profileData);
-
-      // Fetch all households user is a member of
-      const { data: memberHouseholds } = await supabase
-        .from('household_members')
-        .select('household_id, role')
-        .eq('user_id', user.id)
-        .eq('status', 'active');
-
-      if (!memberHouseholds || memberHouseholds.length === 0) return;
-
-      const householdIds = memberHouseholds.map(mh => mh.household_id);
-      const { data: householdsData } = await supabase
-        .from('households')
-        .select('*')
-        .in('id', householdIds);
-
-      setHouseholds(householdsData || []);
-      
-      // Set first household as selected by default
-      if (householdsData && householdsData.length > 0) {
-        setSelectedHousehold(householdsData[0]);
-      }
-
-      await fetchNotifications(user.id);
-
-    } catch (err) {
-      console.error(err);
-    }
-  }, [navigate]);
-
-  const fetchExpenses = async (profileData, user, adminStatus, memberData, householdId) => {
+  // ===================== FETCH EXPENSES =====================
+  const fetchExpenses = useCallback(async (profileData, user, adminStatus, memberData, householdId) => {
     const now = new Date();
     const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
     const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
@@ -143,7 +115,7 @@ export default function ExpensesScreen() {
     const { data: expensesData } = await supabase
       .from('expenses')
       .select('*')
-      .eq('household_id', householdId || profileData.household_id)
+      .eq('household_id', householdId)
       .order('created_at', { ascending: false });
 
     if (!expensesData) return;
@@ -166,6 +138,9 @@ export default function ExpensesScreen() {
       } else {
         setPendingPaymentProofs([]);
       }
+    } else {
+      setPendingApprovals([]);
+      setPendingPaymentProofs([]);
     }
 
     const monthExpenses = expensesData.filter(e =>
@@ -202,7 +177,7 @@ export default function ExpensesScreen() {
     setToReimburse(reimburseTotal);
     setReimburseDetails(reimburseList);
     setTotalSaved(savedTotal);
-  };
+  }, []);
 
   const fetchNotifications = async (userId) => {
     const { data } = await supabase
@@ -215,11 +190,18 @@ export default function ExpensesScreen() {
     setUnreadCount((data || []).filter(n => !n.is_read).length);
   };
 
-  // Handle household selection
-  const handleHouseholdSelect = useCallback(async (household) => {
+  // ===================== HOUSEHOLD SELECTION =====================
+  const handleHouseholdSelect = useCallback(async (household, user, profileData) => {
+    // Accept user/profile as params so we can call this before state is set
+    const activeUser = user || currentUser;
+    const activeProfile = profileData || profile;
+
     setSelectedHousehold(household);
-    setShowHouseholdSelector(false);
-    setExpenseForm(prev => ({ ...prev, location: household?.name || '' }));
+    setSearchQuery('');
+    setFilterStatus([]);
+    setFilterCategory([]);
+    setFilterFrom('');
+    setFilterTo('');
 
     // Fetch members for this household
     const { data: memberRows } = await supabase
@@ -235,7 +217,7 @@ export default function ExpensesScreen() {
         .from('profiles')
         .select('id, full_name, email, avatar_url')
         .in('id', userIds);
-      
+
       membersList = memberRows.map(m => ({
         user_id: m.user_id,
         role: m.role,
@@ -245,37 +227,73 @@ export default function ExpensesScreen() {
     }
     setHouseholdMembers(membersList);
 
-    const userMember = membersList.find(m => m.user_id === currentUser.id);
+    const userMember = membersList.find(m => m.user_id === activeUser?.id);
     const adminStatus = userMember?.role === 'owner';
     setIsAdmin(adminStatus);
-    if (adminStatus) setExpenseForm(prev => ({ ...prev, who_paid: currentUser.id }));
 
-    await fetchExpenses(profile, currentUser, adminStatus, membersList, household.id);
-  }, [currentUser, profile]);
+    resetExpenseForm(household, activeUser, adminStatus);
+
+    await fetchExpenses(activeProfile, activeUser, adminStatus, membersList, household.id);
+  }, [currentUser, profile, fetchExpenses, resetExpenseForm]);
+
+  // ===================== INITIAL DATA FETCH =====================
+  const fetchData = useCallback(async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) { navigate('/login'); return; }
+      setCurrentUser(user);
+
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .single();
+      setProfile(profileData);
+
+      const { data: memberHouseholds } = await supabase
+        .from('household_members')
+        .select('household_id, role')
+        .eq('user_id', user.id)
+        .eq('status', 'active');
+
+      if (!memberHouseholds || memberHouseholds.length === 0) return;
+
+      const householdIds = memberHouseholds.map(mh => mh.household_id);
+      const { data: householdsData } = await supabase
+        .from('households')
+        .select('*')
+        .in('id', householdIds);
+
+      setHouseholds(householdsData || []);
+
+      await fetchNotifications(user.id);
+
+      // Select first household by default (pass user/profile directly to avoid stale state)
+      if (householdsData && householdsData.length > 0) {
+        const firstHH = householdsData[0];
+        await handleHouseholdSelect(firstHH, user, profileData);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  }, [navigate, handleHouseholdSelect]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
-
-  // When household is selected, fetch its data
-  useEffect(() => {
-    if (selectedHousehold && currentUser && profile) {
-      handleHouseholdSelect(selectedHousehold);
-    }
-  }, [selectedHousehold]);
 
   // Realtime subscriptions
   useEffect(() => {
     if (!currentUser || !selectedHousehold) return;
 
     const channel = supabase
-      .channel('expenses-realtime')
+      .channel(`expenses-realtime-${selectedHousehold.id}`)
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'expenses',
-        filter: `household_id=eq.${selectedHousehold?.id}`,
+        filter: `household_id=eq.${selectedHousehold.id}`,
       }, () => {
         if (profile && currentUser) {
-          handleHouseholdSelect(selectedHousehold);
+          handleHouseholdSelect(selectedHousehold, currentUser, profile);
         }
       })
       .on('postgres_changes', {
@@ -289,12 +307,12 @@ export default function ExpensesScreen() {
       .subscribe();
 
     return () => supabase.removeChannel(channel);
-  }, [currentUser, selectedHousehold?.id, profile]);
+  }, [currentUser?.id, selectedHousehold?.id, profile?.id]);
 
   // Search & Filter
   useEffect(() => {
     let result = [...expenses];
-    if (searchQuery) result = result.filter(e => e.title.toLowerCase().includes(searchQuery.toLowerCase()));
+    if (searchQuery) result = result.filter(e => e.title?.toLowerCase().includes(searchQuery.toLowerCase()));
     if (filterStatus.length > 0) result = result.filter(e => filterStatus.includes(e.status));
     if (filterCategory.length > 0) result = result.filter(e => filterCategory.includes(e.category));
     if (filterFrom) result = result.filter(e => e.expense_date >= filterFrom);
@@ -302,7 +320,7 @@ export default function ExpensesScreen() {
     setFilteredExpenses(result);
   }, [searchQuery, filterStatus, filterCategory, filterFrom, filterTo, expenses]);
 
-  // ==================== EXPENSE ACTIONS ====================
+  // ===================== EXPENSE ACTIONS =====================
   const handleAddExpense = async () => {
     const errors = {};
     if (!expenseForm.title.trim()) errors.title = 'Title is required';
@@ -314,6 +332,11 @@ export default function ExpensesScreen() {
     if (Object.keys(errors).length > 0) {
       setExpenseErrors(errors);
       showToast(Object.values(errors)[0], 'error');
+      return;
+    }
+
+    if (!selectedHousehold) {
+      showToast('No household selected', 'error');
       return;
     }
 
@@ -338,15 +361,16 @@ export default function ExpensesScreen() {
       }
     }
 
+    // FIX: use selectedHousehold.id (not profile.household_id)
     const insertData = {
-      household_id: profile.household_id,
+      household_id: selectedHousehold.id,
       created_by: currentUser.id,
       title: expenseForm.title.trim(),
       amount: totalAmount,
       category: expenseForm.category,
-      expense_type: expenseForm.category,   // FIXED
+      expense_type: expenseForm.category,
       expense_date: expenseForm.expense_date,
-      location: expenseForm.location,
+      location: expenseForm.location || selectedHousehold.name,
       paid_by: expenseForm.who_paid,
       split_type: expenseForm.split_type,
       members_split: splits,
@@ -360,34 +384,22 @@ export default function ExpensesScreen() {
     } else {
       showToast(isAdmin ? 'Expense added! ✅' : 'Expense submitted for approval! ⏳');
       setShowAddExpense(false);
-      resetExpenseForm();
-      if (!isAdmin && household?.created_by) {
+      resetExpenseForm(selectedHousehold, currentUser, isAdmin);
+
+      // Notify household owner if non-admin
+      if (!isAdmin && selectedHousehold?.created_by) {
         await supabase.from('notifications').insert({
-          user_id: household.created_by,
+          user_id: selectedHousehold.created_by,
           title: 'New Expense Pending Approval',
           message: `${profile?.full_name} submitted "${expenseForm.title}" for ₱${expenseForm.amount}`,
           type: 'approval_request',
         });
       }
-      fetchData();
+
+      // FIX: re-fetch expenses for selected household (not just top-level fetchData)
+      await handleHouseholdSelect(selectedHousehold, currentUser, profile);
     }
     setLoading(false);
-  };
-
-  const resetExpenseForm = () => {
-    setExpenseForm({
-      title: '',
-      amount: '',
-      category: 'Rent',
-      expense_type: 'Rent',
-      expense_date: new Date().toISOString().split('T')[0],
-      location: household?.name || '',
-      who_paid: isAdmin ? currentUser?.id : '',
-      split_type: 'equal',
-      selected_members: [],
-      custom_splits: {},
-    });
-    setExpenseErrors({});
   };
 
   const handleApprove = async (expense) => {
@@ -399,7 +411,7 @@ export default function ExpensesScreen() {
       type: 'approval',
     });
     showToast('Expense approved! ✅');
-    fetchData();
+    await handleHouseholdSelect(selectedHousehold, currentUser, profile);
   };
 
   const handleReject = async () => {
@@ -418,7 +430,7 @@ export default function ExpensesScreen() {
     setRejectReason('');
     setSelectedExpense(null);
     showToast('Expense rejected.');
-    fetchData();
+    await handleHouseholdSelect(selectedHousehold, currentUser, profile);
   };
 
   const handleDelete = async () => {
@@ -426,7 +438,7 @@ export default function ExpensesScreen() {
     setShowDeleteModal(false);
     setSelectedExpense(null);
     showToast('Expense deleted.');
-    fetchData();
+    await handleHouseholdSelect(selectedHousehold, currentUser, profile);
   };
 
   const handleSubmitProof = async () => {
@@ -447,18 +459,20 @@ export default function ExpensesScreen() {
       status: 'pending_verification',
     });
     await supabase.from('expenses').update({ status: 'verifying' }).eq('id', selectedExpense.id);
-    await supabase.from('notifications').insert({
-      user_id: household?.created_by,
-      title: 'Payment Proof Submitted 📸',
-      message: `${profile?.full_name} submitted payment proof for "${selectedExpense.title}"`,
-      type: 'payment_proof',
-    });
+    if (selectedHousehold?.created_by) {
+      await supabase.from('notifications').insert({
+        user_id: selectedHousehold.created_by,
+        title: 'Payment Proof Submitted 📸',
+        message: `${profile?.full_name} submitted payment proof for "${selectedExpense.title}"`,
+        type: 'payment_proof',
+      });
+    }
     setShowPaymentProofModal(false);
     setProofForm({ note: '', screenshot: null, screenshotPreview: null });
     setSelectedExpense(null);
     showToast('Payment proof submitted! ⏳');
     setLoading(false);
-    fetchData();
+    await handleHouseholdSelect(selectedHousehold, currentUser, profile);
   };
 
   const handleConfirmPayment = async (proof) => {
@@ -472,7 +486,7 @@ export default function ExpensesScreen() {
     });
     setShowViewProofModal(false);
     showToast('Payment confirmed! ✅');
-    fetchData();
+    await handleHouseholdSelect(selectedHousehold, currentUser, profile);
   };
 
   const handleRejectProof = async () => {
@@ -489,7 +503,7 @@ export default function ExpensesScreen() {
     setRejectProofReason('');
     setSelectedProof(null);
     showToast('Payment proof rejected.');
-    fetchData();
+    await handleHouseholdSelect(selectedHousehold, currentUser, profile);
   };
 
   const markNotificationsRead = async () => {
@@ -513,10 +527,9 @@ export default function ExpensesScreen() {
   const getMemberAvatar = (member) => {
     const p = member?.profiles;
     if (p?.avatar_url) return <img src={p.avatar_url} alt="" className="member-avatar-img" />;
-    const initials = p?.full_name?.split(' ').map(n => n[0]).slice(0,2).join('').toUpperCase() || '?';
+    const initials = p?.full_name?.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase() || '?';
     return <div className="member-avatar-initials">{initials}</div>;
   };
-
 
   return (
     <div className="expenses-screen">
@@ -540,23 +553,31 @@ export default function ExpensesScreen() {
       />
 
       <div className="expenses-content">
-        {/* Household Search & Toggle — always visible */}
+
+        {/* ── Household Search (always visible when user has households) ── */}
         {households.length > 0 && (
           <>
-            {households.length > 1 && (
-              <div className="hh-search-row">
-                <div className="hh-search-input-wrap">
-                  <Search size={14} className="hh-search-icon"/>
-                  <input
-                    type="text"
-                    placeholder="Search households..."
-                    value={householdSearch}
-                    onChange={e => setHouseholdSearch(e.target.value)}
-                    className="hh-search-input"
-                  />
-                </div>
+            <div className="hh-search-row">
+              <div className="hh-search-input-wrap">
+                <Search size={14} className="hh-search-icon" />
+                <input
+                  type="text"
+                  placeholder="Search households…"
+                  value={householdSearch}
+                  onChange={e => setHouseholdSearch(e.target.value)}
+                  className="hh-search-input"
+                />
+                {householdSearch !== '' && (
+                  <button
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)' }}
+                    onClick={() => setHouseholdSearch('')}
+                  >
+                    <X size={12} color="#9E8FCC" />
+                  </button>
+                )}
               </div>
-            )}
+            </div>
+
             <div className="hh-toggle-row">
               {households
                 .filter(hh => householdSearch === '' || hh.name.toLowerCase().includes(householdSearch.toLowerCase()))
@@ -564,19 +585,22 @@ export default function ExpensesScreen() {
                   <button
                     key={hh.id}
                     className={`hh-toggle-pill${selectedHousehold?.id === hh.id ? ' active' : ''}`}
-                    onClick={() => handleHouseholdSelect(hh)}
+                    onClick={() => handleHouseholdSelect(hh, currentUser, profile)}
                   >
                     🏠 {hh.name}
                     {selectedHousehold?.id === hh.id && <span className="hh-pill-dot" />}
                   </button>
                 ))}
+              {householdSearch !== '' &&
+                households.filter(hh => hh.name.toLowerCase().includes(householdSearch.toLowerCase())).length === 0 && (
+                  <p style={{ fontSize: 12, color: '#9E8FCC', padding: '8px 4px' }}>No household found</p>
+                )}
             </div>
           </>
         )}
 
-        {/* Premium Stat Cards */}
+        {/* ── Stat Cards (scoped to selectedHousehold) ── */}
         <div className="stat-cards-row">
-          {/* Total Shared */}
           <div className="stat-card stat-card--indigo">
             <div className="stat-card-top">
               <span className="stat-card-emoji">💸</span>
@@ -586,7 +610,6 @@ export default function ExpensesScreen() {
             <p className="stat-card-sub">this month · {selectedHousehold?.name || '—'}</p>
           </div>
 
-          {/* To Reimburse */}
           <div className="stat-card stat-card--amber">
             <div className="stat-card-top">
               <span className="stat-card-emoji">🔁</span>
@@ -596,15 +619,14 @@ export default function ExpensesScreen() {
             <p className="stat-card-sub">
               {reimburseDetails.length > 0
                 ? reimburseDetails.map((r, i) => (
-                    <span key={i} className="stat-reimburse-line">
-                      Owe ₱{Number(r.amount).toFixed(2)} → {r.payer?.full_name}
-                    </span>
-                  ))
+                  <span key={i} className="stat-reimburse-line">
+                    Owe ₱{Number(r.amount).toFixed(2)} → {r.payer?.full_name}
+                  </span>
+                ))
                 : 'Nothing to pay 🎉'}
             </p>
           </div>
 
-          {/* Total Saved */}
           <div className="stat-card stat-card--emerald">
             <div className="stat-card-top">
               <span className="stat-card-emoji">🏦</span>
@@ -615,7 +637,7 @@ export default function ExpensesScreen() {
           </div>
         </div>
 
-        {/* Admin Pending Approvals */}
+        {/* ── Admin Pending Approvals ── */}
         {isAdmin && pendingApprovals.length > 0 && (
           <div className="pending-section">
             <p className="pending-section-title">⏳ Pending Approvals ({pendingApprovals.length})</p>
@@ -627,15 +649,15 @@ export default function ExpensesScreen() {
                   <p className="pending-date">{expense.expense_date}</p>
                 </div>
                 <div className="pending-actions">
-                  <button className="approve-btn" onClick={() => handleApprove(expense)}><Check size={14}/> Approve</button>
-                  <button className="reject-btn" onClick={() => { setSelectedExpense(expense); setShowRejectModal(true); }}><X size={14}/> Reject</button>
+                  <button className="approve-btn" onClick={() => handleApprove(expense)}><Check size={14} /> Approve</button>
+                  <button className="reject-btn" onClick={() => { setSelectedExpense(expense); setShowRejectModal(true); }}><X size={14} /> Reject</button>
                 </div>
               </div>
             ))}
           </div>
         )}
 
-        {/* Admin Payment Proofs */}
+        {/* ── Admin Payment Proofs ── */}
         {isAdmin && pendingPaymentProofs.length > 0 && (
           <div className="pending-section">
             <p className="pending-section-title">📸 Payment Proofs to Verify ({pendingPaymentProofs.length})</p>
@@ -651,16 +673,16 @@ export default function ExpensesScreen() {
           </div>
         )}
 
-        {/* Search & Filter */}
+        {/* ── Search & Filter ── */}
         <div className="search-filter-row">
           <div className="search-input-wrap">
-            <Search size={14} className="search-icon"/>
-            <input type="text" placeholder="Search" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="search-input" />
+            <Search size={14} className="search-icon" />
+            <input type="text" placeholder="Search expenses" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="search-input" />
           </div>
-          <button className="filter-btn" onClick={() => setShowFilter(true)}><Filter size={14}/> Filter</button>
+          <button className="filter-btn" onClick={() => setShowFilter(true)}><Filter size={14} /> Filter</button>
         </div>
 
-        {/* Expense List */}
+        {/* ── Expense List ── */}
         {filteredExpenses.length === 0 && (
           <div className="expenses-empty">
             <span className="expenses-empty-icon">🧾</span>
@@ -687,10 +709,10 @@ export default function ExpensesScreen() {
                 <p className="expense-meta">{expense.expense_date}{expense.location ? ` · ${expense.location}` : ''}</p>
                 <div className="expense-footer-row">
                   <div className="expense-members">
-                    {expenseMembers.slice(0,3).map((m,i) => (
+                    {expenseMembers.slice(0, 3).map((m, i) => (
                       <div key={i} className="member-avatar-wrap">{getMemberAvatar(m)}</div>
                     ))}
-                    {expenseMembers.length > 3 && <div className="member-avatar-more">+{expenseMembers.length-3}</div>}
+                    {expenseMembers.length > 3 && <div className="member-avatar-more">+{expenseMembers.length - 3}</div>}
                   </div>
                   <span className="status-badge" style={{ color: badge.color, background: badge.bg }}>{badge.label}</span>
                 </div>
@@ -704,7 +726,7 @@ export default function ExpensesScreen() {
               </div>
               {isAdmin && (
                 <div className="expense-admin-col">
-                  <button className="icon-btn delete" onClick={() => { setSelectedExpense(expense); setShowDeleteModal(true); }}><Trash2 size={14}/></button>
+                  <button className="icon-btn delete" onClick={() => { setSelectedExpense(expense); setShowDeleteModal(true); }}><Trash2 size={14} /></button>
                 </div>
               )}
             </div>
@@ -712,46 +734,58 @@ export default function ExpensesScreen() {
         })}
       </div>
 
-      {/* FAB */}
-      <button className="fab-btn" onClick={() => { console.log('FAB clicked, showAddExpense:', !showAddExpense); setShowAddExpense(true); }}><Plus size={24}/></button>
+      {/* ── FAB ── */}
+      <button className="fab-btn" onClick={() => setShowAddExpense(true)}><Plus size={24} /></button>
 
-      {/* Add Expense Modal */}
+      {/* ── Add Expense Modal ── */}
       {showAddExpense && (
         <div className="modal-overlay">
           <div className="add-expense-modal">
             <div className="modal-header">
-              <h2>Create New Expense</h2>
-              <button className="modal-close" onClick={() => { setShowAddExpense(false); resetExpenseForm(); }}><X size={18}/></button>
+              <h2>New Expense · {selectedHousehold?.name}</h2>
+              <button className="modal-close" onClick={() => { setShowAddExpense(false); resetExpenseForm(selectedHousehold, currentUser, isAdmin); }}><X size={18} /></button>
             </div>
             <div className="modal-scroll">
               <div className="form-group">
                 <label>Amount</label>
-                <div className="amount-input-wrap"><span className="peso-sign">₱</span><input type="number" placeholder="0.00" value={expenseForm.amount} onChange={e => setExpenseForm({...expenseForm, amount: e.target.value})} /></div>
+                <div className="amount-input-wrap">
+                  <span className="peso-sign">₱</span>
+                  <input type="number" placeholder="0.00" value={expenseForm.amount} onChange={e => setExpenseForm({ ...expenseForm, amount: e.target.value })} />
+                </div>
+                {expenseErrors.amount && <span className="form-error">{expenseErrors.amount}</span>}
               </div>
               <div className="form-group">
                 <label>Description</label>
-                <input type="text" placeholder="Description" value={expenseForm.title} onChange={e => setExpenseForm({...expenseForm, title: e.target.value})} />
+                <input type="text" placeholder="e.g. Electricity bill" value={expenseForm.title} onChange={e => setExpenseForm({ ...expenseForm, title: e.target.value })} className={expenseErrors.title ? 'input-error' : ''} />
+                {expenseErrors.title && <span className="form-error">{expenseErrors.title}</span>}
               </div>
               <div className="form-group">
                 <label>Date</label>
-                <input type="date" value={expenseForm.expense_date} onChange={e => setExpenseForm({...expenseForm, expense_date: e.target.value})} />
+                <input type="date" value={expenseForm.expense_date} onChange={e => setExpenseForm({ ...expenseForm, expense_date: e.target.value })} />
               </div>
               <div className="form-group">
                 <label>Category</label>
-                <div className="select-wrap"><select value={expenseForm.category} onChange={e => setExpenseForm({...expenseForm, category: e.target.value})}>{Object.keys(CATEGORY_ICONS).map(c => <option key={c}>{c}</option>)}</select><ChevronDown size={14} className="select-arrow"/></div>
+                <div className="select-wrap">
+                  <select value={expenseForm.category} onChange={e => setExpenseForm({ ...expenseForm, category: e.target.value })}>
+                    {Object.keys(CATEGORY_ICONS).map(c => <option key={c}>{c}</option>)}
+                  </select>
+                  <ChevronDown size={14} className="select-arrow" />
+                </div>
               </div>
               <div className="form-group">
-                <label>Location</label>
-                <input type="text" placeholder="Location" value={expenseForm.location} onChange={e => setExpenseForm({...expenseForm, location: e.target.value})} />
+                <label>Location (optional)</label>
+                <input type="text" placeholder="Location" value={expenseForm.location} onChange={e => setExpenseForm({ ...expenseForm, location: e.target.value })} />
               </div>
               <div className="form-group">
                 <label>Who Paid</label>
                 <div className="select-wrap">
-                  <select value={expenseForm.who_paid} onChange={e => setExpenseForm({...expenseForm, who_paid: e.target.value})}>
-                    <option value="">Select</option>
+                  <select value={expenseForm.who_paid} onChange={e => setExpenseForm({ ...expenseForm, who_paid: e.target.value })} className={expenseErrors.who_paid ? 'input-error' : ''}>
+                    <option value="">Select member</option>
                     {householdMembers.map(m => <option key={m.user_id} value={m.user_id}>{m.profiles?.full_name}</option>)}
-                  </select><ChevronDown size={14} className="select-arrow"/>
+                  </select>
+                  <ChevronDown size={14} className="select-arrow" />
                 </div>
+                {expenseErrors.who_paid && <span className="form-error">{expenseErrors.who_paid}</span>}
               </div>
               <div className="form-group">
                 <label>Split With</label>
@@ -759,18 +793,19 @@ export default function ExpensesScreen() {
                   {householdMembers.map(m => (
                     <label key={m.user_id} className="member-checkbox">
                       <input type="checkbox" checked={expenseForm.selected_members.includes(m.user_id)} onChange={e => {
-                        if (e.target.checked) setExpenseForm({...expenseForm, selected_members: [...expenseForm.selected_members, m.user_id]});
-                        else setExpenseForm({...expenseForm, selected_members: expenseForm.selected_members.filter(id => id !== m.user_id)});
+                        if (e.target.checked) setExpenseForm({ ...expenseForm, selected_members: [...expenseForm.selected_members, m.user_id] });
+                        else setExpenseForm({ ...expenseForm, selected_members: expenseForm.selected_members.filter(id => id !== m.user_id) });
                       }} /> {m.profiles?.full_name}
                     </label>
                   ))}
                 </div>
+                {expenseErrors.members && <span className="form-error">{expenseErrors.members}</span>}
               </div>
               <div className="form-group">
                 <label>Splitting Method</label>
                 <div className="split-toggle">
-                  <button className={`split-btn ${expenseForm.split_type === 'equal' ? 'active' : ''}`} onClick={() => setExpenseForm({...expenseForm, split_type: 'equal'})}>Equal Split</button>
-                  <button className={`split-btn ${expenseForm.split_type === 'custom' ? 'active' : ''}`} onClick={() => setExpenseForm({...expenseForm, split_type: 'custom'})}>Custom Split</button>
+                  <button type="button" className={`split-btn ${expenseForm.split_type === 'equal' ? 'active' : ''}`} onClick={() => setExpenseForm({ ...expenseForm, split_type: 'equal' })}>Equal Split</button>
+                  <button type="button" className={`split-btn ${expenseForm.split_type === 'custom' ? 'active' : ''}`} onClick={() => setExpenseForm({ ...expenseForm, split_type: 'custom' })}>Custom Split</button>
                 </div>
               </div>
               {expenseForm.split_type === 'custom' && (
@@ -783,56 +818,95 @@ export default function ExpensesScreen() {
                         <span>{member?.profiles?.full_name}</span>
                         <div className="amount-input-wrap small">
                           <span className="peso-sign">₱</span>
-                          <input type="number" placeholder="0.00" value={expenseForm.custom_splits[uid] || ''} onChange={e => setExpenseForm({...expenseForm, custom_splits: {...expenseForm.custom_splits, [uid]: e.target.value}})} />
+                          <input type="number" placeholder="0.00" value={expenseForm.custom_splits[uid] || ''} onChange={e => setExpenseForm({ ...expenseForm, custom_splits: { ...expenseForm.custom_splits, [uid]: e.target.value } })} />
                         </div>
                       </div>
                     );
                   })}
                 </div>
               )}
-              <button className="add-expense-btn" onClick={handleAddExpense} disabled={loading}>{loading ? 'Adding...' : 'Add Expense'}</button>
+              <button type="button" className="add-expense-btn" onClick={handleAddExpense} disabled={loading}>
+                {loading ? 'Adding…' : 'Add Expense'}
+              </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Filter Modal */}
+      {/* ── Filter Modal ── */}
       {showFilter && (
         <div className="modal-overlay">
           <div className="filter-modal">
-            <div className="modal-header"><h2>Filter</h2><button className="modal-close" onClick={() => setShowFilter(false)}><X size={18}/></button></div>
-            <div className="form-group"><label>Status</label><div className="checkbox-group">{['paid','pending','unpaid','verifying'].map(s => (<label key={s} className="checkbox-label"><input type="checkbox" checked={filterStatus.includes(s)} onChange={e => {if(e.target.checked) setFilterStatus([...filterStatus,s]); else setFilterStatus(filterStatus.filter(x=>x!==s));}} />{s.charAt(0).toUpperCase()+s.slice(1)}</label>))}</div></div>
-            <div className="form-group"><label>Category</label><div className="checkbox-group">{Object.keys(CATEGORY_ICONS).map(c => (<label key={c} className="checkbox-label"><input type="checkbox" checked={filterCategory.includes(c)} onChange={e => {if(e.target.checked) setFilterCategory([...filterCategory,c]); else setFilterCategory(filterCategory.filter(x=>x!==c));}} />{c}</label>))}</div></div>
-            <div className="form-group"><label>Date Range</label><div className="date-range-row"><input type="date" value={filterFrom} onChange={e=>setFilterFrom(e.target.value)}/><span>to</span><input type="date" value={filterTo} onChange={e=>setFilterTo(e.target.value)}/></div></div>
-            <div className="filter-actions"><button className="filter-reset-btn" onClick={()=>{setFilterStatus([]); setFilterCategory([]); setFilterFrom(''); setFilterTo(''); setShowFilter(false);}}>Reset</button><button className="filter-apply-btn" onClick={()=>setShowFilter(false)}>Apply</button></div>
+            <div className="modal-header"><h2>Filter</h2><button className="modal-close" onClick={() => setShowFilter(false)}><X size={18} /></button></div>
+            <div className="form-group"><label>Status</label><div className="checkbox-group">{['paid', 'pending', 'unpaid', 'verifying'].map(s => (<label key={s} className="checkbox-label"><input type="checkbox" checked={filterStatus.includes(s)} onChange={e => { if (e.target.checked) setFilterStatus([...filterStatus, s]); else setFilterStatus(filterStatus.filter(x => x !== s)); }} />{s.charAt(0).toUpperCase() + s.slice(1)}</label>))}</div></div>
+            <div className="form-group"><label>Category</label><div className="checkbox-group">{Object.keys(CATEGORY_ICONS).map(c => (<label key={c} className="checkbox-label"><input type="checkbox" checked={filterCategory.includes(c)} onChange={e => { if (e.target.checked) setFilterCategory([...filterCategory, c]); else setFilterCategory(filterCategory.filter(x => x !== c)); }} />{c}</label>))}</div></div>
+            <div className="form-group"><label>Date Range</label><div className="date-range-row"><input type="date" value={filterFrom} onChange={e => setFilterFrom(e.target.value)} /><span>to</span><input type="date" value={filterTo} onChange={e => setFilterTo(e.target.value)} /></div></div>
+            <div className="filter-actions"><button className="filter-reset-btn" onClick={() => { setFilterStatus([]); setFilterCategory([]); setFilterFrom(''); setFilterTo(''); setShowFilter(false); }}>Reset</button><button className="filter-apply-btn" onClick={() => setShowFilter(false)}>Apply</button></div>
           </div>
         </div>
       )}
 
-      {/* Reject Modal */}
+      {/* ── Reject Expense Modal ── */}
       {showRejectModal && (
         <div className="modal-overlay">
-          <div className="small-modal"><h2>Reject Expense</h2><textarea placeholder="Reason" value={rejectReason} onChange={e=>setRejectReason(e.target.value)} className="reject-textarea"/><button className="add-expense-btn" onClick={handleReject}>Confirm</button><button className="edit-cancel-btn" onClick={()=>{setShowRejectModal(false); setRejectReason('');}}>Cancel</button></div>
+          <div className="small-modal">
+            <h2>Reject Expense</h2>
+            <textarea placeholder="Reason" value={rejectReason} onChange={e => setRejectReason(e.target.value)} className="reject-textarea" />
+            <button className="add-expense-btn" onClick={handleReject}>Confirm</button>
+            <button className="edit-cancel-btn" onClick={() => { setShowRejectModal(false); setRejectReason(''); }}>Cancel</button>
+          </div>
         </div>
       )}
+
+      {/* ── Delete Modal ── */}
       {showDeleteModal && (
         <div className="modal-overlay">
-          <div className="small-modal"><AlertCircle size={40} color="#e53e3e"/><h2>Delete Expense?</h2><button className="delete-confirm-btn" onClick={handleDelete}>Yes, Delete</button><button className="edit-cancel-btn" onClick={()=>setShowDeleteModal(false)}>Cancel</button></div>
+          <div className="small-modal">
+            <AlertCircle size={40} color="#e53e3e" />
+            <h2>Delete Expense?</h2>
+            <button className="delete-confirm-btn" onClick={handleDelete}>Yes, Delete</button>
+            <button className="edit-cancel-btn" onClick={() => setShowDeleteModal(false)}>Cancel</button>
+          </div>
         </div>
       )}
+
+      {/* ── Submit Payment Proof Modal ── */}
       {showPaymentProofModal && (
         <div className="modal-overlay">
-          <div className="small-modal"><h2>Submit Payment Proof</h2>{proofForm.screenshotPreview && <img src={proofForm.screenshotPreview} className="proof-preview"/>}<button className="upload-proof-btn" onClick={()=>proofInputRef.current.click()}><Camera size={16}/> Upload Screenshot</button><textarea placeholder="Optional note" value={proofForm.note} onChange={e=>setProofForm({...proofForm, note:e.target.value})} className="reject-textarea"/><button className="add-expense-btn" onClick={handleSubmitProof} disabled={loading}>{loading?'Submitting...':'Submit'}</button><button className="edit-cancel-btn" onClick={()=>{setShowPaymentProofModal(false); setProofForm({note:'', screenshot:null, screenshotPreview:null});}}>Cancel</button></div>
+          <div className="small-modal">
+            <h2>Submit Payment Proof</h2>
+            {proofForm.screenshotPreview && <img src={proofForm.screenshotPreview} className="proof-preview" alt="proof" />}
+            <button className="upload-proof-btn" onClick={() => proofInputRef.current.click()}><Camera size={16} /> Upload Screenshot</button>
+            <textarea placeholder="Optional note" value={proofForm.note} onChange={e => setProofForm({ ...proofForm, note: e.target.value })} className="reject-textarea" />
+            <button className="add-expense-btn" onClick={handleSubmitProof} disabled={loading}>{loading ? 'Submitting…' : 'Submit'}</button>
+            <button className="edit-cancel-btn" onClick={() => { setShowPaymentProofModal(false); setProofForm({ note: '', screenshot: null, screenshotPreview: null }); }}>Cancel</button>
+          </div>
         </div>
       )}
+
+      {/* ── View Proof Modal ── */}
       {showViewProofModal && selectedProof && (
         <div className="modal-overlay">
-          <div className="small-modal"><h2>Payment Proof</h2><img src={selectedProof.screenshot_url} className="proof-preview"/><p>{selectedProof.note}</p><button className="add-expense-btn" onClick={()=>handleConfirmPayment(selectedProof)}>Confirm Payment</button><button className="delete-confirm-btn" onClick={()=>{setShowViewProofModal(false); setShowRejectProofModal(true);}}>Reject Proof</button><button className="edit-cancel-btn" onClick={()=>setShowViewProofModal(false)}>Cancel</button></div>
+          <div className="small-modal">
+            <h2>Payment Proof</h2>
+            <img src={selectedProof.screenshot_url} className="proof-preview" alt="proof" />
+            <p className="proof-note">{selectedProof.note}</p>
+            <button className="add-expense-btn" onClick={() => handleConfirmPayment(selectedProof)}>Confirm Payment</button>
+            <button className="delete-confirm-btn" onClick={() => { setShowViewProofModal(false); setShowRejectProofModal(true); }}>Reject Proof</button>
+            <button className="edit-cancel-btn" onClick={() => setShowViewProofModal(false)}>Cancel</button>
+          </div>
         </div>
       )}
+
+      {/* ── Reject Proof Modal ── */}
       {showRejectProofModal && (
         <div className="modal-overlay">
-          <div className="small-modal"><h2>Reject Payment Proof</h2><textarea placeholder="Reason" value={rejectProofReason} onChange={e=>setRejectProofReason(e.target.value)} className="reject-textarea"/><button className="add-expense-btn" onClick={handleRejectProof}>Confirm</button><button className="edit-cancel-btn" onClick={()=>setShowRejectProofModal(false)}>Cancel</button></div>
+          <div className="small-modal">
+            <h2>Reject Payment Proof</h2>
+            <textarea placeholder="Reason" value={rejectProofReason} onChange={e => setRejectProofReason(e.target.value)} className="reject-textarea" />
+            <button className="add-expense-btn" onClick={handleRejectProof}>Confirm</button>
+            <button className="edit-cancel-btn" onClick={() => setShowRejectProofModal(false)}>Cancel</button>
+          </div>
         </div>
       )}
 
