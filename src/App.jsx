@@ -17,7 +17,7 @@ function App() {
         <Route path="/dashboard" element={<DashboardScreen />} />
         <Route path="/expenses" element={<ExpensesScreen />} />
         <Route path="/groups" element={<GroupsScreen />} />
-        <Route path="/group/:id" element={<GroupDetailScreen />} />
+        <Route path="/groups/:id" element={<GroupDetailScreen />} />  
       </Routes>
     </BrowserRouter>
   );
