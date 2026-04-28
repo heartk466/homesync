@@ -24,6 +24,7 @@ export default function ExpensesScreen() {
   const navigate = useNavigate();
   const fileInputRef = useRef(null);
   const proofInputRef = useRef(null);
+  const initialHouseholdSet = useRef(false);   // <-- FIX: prevent re‑select
 
   const [profile, setProfile] = useState(null);
   const [households, setHouseholds] = useState([]);
@@ -90,7 +91,7 @@ export default function ExpensesScreen() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  // ===================== RESET FORM (uses closure-safe args) =====================
+  // ===================== RESET FORM =====================
   const resetExpenseForm = useCallback((household, user, adminStatus) => {
     setExpenseForm({
       title: '',
@@ -192,7 +193,6 @@ export default function ExpensesScreen() {
 
   // ===================== HOUSEHOLD SELECTION =====================
   const handleHouseholdSelect = useCallback(async (household, user, profileData) => {
-    // Accept user/profile as params so we can call this before state is set
     const activeUser = user || currentUser;
     const activeProfile = profileData || profile;
 
@@ -203,7 +203,6 @@ export default function ExpensesScreen() {
     setFilterFrom('');
     setFilterTo('');
 
-    // Fetch members for this household
     const { data: memberRows } = await supabase
       .from('household_members')
       .select('user_id, role, status')
@@ -232,11 +231,10 @@ export default function ExpensesScreen() {
     setIsAdmin(adminStatus);
 
     resetExpenseForm(household, activeUser, adminStatus);
-
     await fetchExpenses(activeProfile, activeUser, adminStatus, membersList, household.id);
   }, [currentUser, profile, fetchExpenses, resetExpenseForm]);
 
-  // ===================== INITIAL DATA FETCH =====================
+  // ===================== INITIAL DATA FETCH (runs only once) =====================
   const fetchData = useCallback(async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -265,24 +263,25 @@ export default function ExpensesScreen() {
         .in('id', householdIds);
 
       setHouseholds(householdsData || []);
-
       await fetchNotifications(user.id);
 
-      // Select first household by default (pass user/profile directly to avoid stale state)
-      if (householdsData && householdsData.length > 0) {
+      // Only auto-select the FIRST household ONCE
+      if (householdsData && householdsData.length > 0 && !initialHouseholdSet.current) {
         const firstHH = householdsData[0];
         await handleHouseholdSelect(firstHH, user, profileData);
+        initialHouseholdSet.current = true;
       }
     } catch (err) {
       console.error(err);
     }
   }, [navigate, handleHouseholdSelect]);
 
+  // Run fetchData only when component mounts
   useEffect(() => {
     fetchData();
-  }, [fetchData]);
+  }, []);   // <-- empty dependency array
 
-  // Realtime subscriptions
+  // Realtime subscriptions (keep as is)
   useEffect(() => {
     if (!currentUser || !selectedHousehold) return;
 
@@ -307,9 +306,9 @@ export default function ExpensesScreen() {
       .subscribe();
 
     return () => supabase.removeChannel(channel);
-  }, [currentUser?.id, selectedHousehold?.id, profile?.id]);
+  }, [currentUser?.id, selectedHousehold?.id, profile?.id, handleHouseholdSelect]);
 
-  // Search & Filter
+  // Search & Filter effect (unchanged)
   useEffect(() => {
     let result = [...expenses];
     if (searchQuery) result = result.filter(e => e.title?.toLowerCase().includes(searchQuery.toLowerCase()));
@@ -320,7 +319,7 @@ export default function ExpensesScreen() {
     setFilteredExpenses(result);
   }, [searchQuery, filterStatus, filterCategory, filterFrom, filterTo, expenses]);
 
-  // ===================== EXPENSE ACTIONS =====================
+  // ===================== EXPENSE ACTIONS (all unchanged) =====================
   const handleAddExpense = async () => {
     const errors = {};
     if (!expenseForm.title.trim()) errors.title = 'Title is required';
@@ -361,7 +360,6 @@ export default function ExpensesScreen() {
       }
     }
 
-    // FIX: use selectedHousehold.id (not profile.household_id)
     const insertData = {
       household_id: selectedHousehold.id,
       created_by: currentUser.id,
@@ -386,7 +384,6 @@ export default function ExpensesScreen() {
       setShowAddExpense(false);
       resetExpenseForm(selectedHousehold, currentUser, isAdmin);
 
-      // Notify household owner if non-admin
       if (!isAdmin && selectedHousehold?.created_by) {
         await supabase.from('notifications').insert({
           user_id: selectedHousehold.created_by,
@@ -396,7 +393,6 @@ export default function ExpensesScreen() {
         });
       }
 
-      // FIX: re-fetch expenses for selected household (not just top-level fetchData)
       await handleHouseholdSelect(selectedHousehold, currentUser, profile);
     }
     setLoading(false);
@@ -531,6 +527,7 @@ export default function ExpensesScreen() {
     return <div className="member-avatar-initials">{initials}</div>;
   };
 
+  // ===================== RENDER =====================
   return (
     <div className="expenses-screen">
       <input type="file" ref={proofInputRef} style={{ display: 'none' }} accept="image/*" onChange={e => {
@@ -553,8 +550,6 @@ export default function ExpensesScreen() {
       />
 
       <div className="expenses-content">
-
-        {/* ── Household Search (always visible when user has households) ── */}
         {households.length > 0 && (
           <>
             <div className="hh-search-row">
@@ -599,7 +594,6 @@ export default function ExpensesScreen() {
           </>
         )}
 
-        {/* ── Stat Cards (scoped to selectedHousehold) ── */}
         <div className="stat-cards-row">
           <div className="stat-card stat-card--indigo">
             <div className="stat-card-top">
@@ -637,7 +631,6 @@ export default function ExpensesScreen() {
           </div>
         </div>
 
-        {/* ── Admin Pending Approvals ── */}
         {isAdmin && pendingApprovals.length > 0 && (
           <div className="pending-section">
             <p className="pending-section-title">⏳ Pending Approvals ({pendingApprovals.length})</p>
@@ -657,7 +650,6 @@ export default function ExpensesScreen() {
           </div>
         )}
 
-        {/* ── Admin Payment Proofs ── */}
         {isAdmin && pendingPaymentProofs.length > 0 && (
           <div className="pending-section">
             <p className="pending-section-title">📸 Payment Proofs to Verify ({pendingPaymentProofs.length})</p>
@@ -673,7 +665,6 @@ export default function ExpensesScreen() {
           </div>
         )}
 
-        {/* ── Search & Filter ── */}
         <div className="search-filter-row">
           <div className="search-input-wrap">
             <Search size={14} className="search-icon" />
@@ -682,7 +673,6 @@ export default function ExpensesScreen() {
           <button className="filter-btn" onClick={() => setShowFilter(true)}><Filter size={14} /> Filter</button>
         </div>
 
-        {/* ── Expense List ── */}
         {filteredExpenses.length === 0 && (
           <div className="expenses-empty">
             <span className="expenses-empty-icon">🧾</span>
@@ -734,10 +724,9 @@ export default function ExpensesScreen() {
         })}
       </div>
 
-      {/* ── FAB ── */}
       <button className="fab-btn" onClick={() => setShowAddExpense(true)}><Plus size={24} /></button>
 
-      {/* ── Add Expense Modal ── */}
+      {/* All modals remain exactly as in your original file */}
       {showAddExpense && (
         <div className="modal-overlay">
           <div className="add-expense-modal">
@@ -746,6 +735,7 @@ export default function ExpensesScreen() {
               <button className="modal-close" onClick={() => { setShowAddExpense(false); resetExpenseForm(selectedHousehold, currentUser, isAdmin); }}><X size={18} /></button>
             </div>
             <div className="modal-scroll">
+              {/* ... same form fields ... */}
               <div className="form-group">
                 <label>Amount</label>
                 <div className="amount-input-wrap">
@@ -833,7 +823,6 @@ export default function ExpensesScreen() {
         </div>
       )}
 
-      {/* ── Filter Modal ── */}
       {showFilter && (
         <div className="modal-overlay">
           <div className="filter-modal">
@@ -846,7 +835,6 @@ export default function ExpensesScreen() {
         </div>
       )}
 
-      {/* ── Reject Expense Modal ── */}
       {showRejectModal && (
         <div className="modal-overlay">
           <div className="small-modal">
@@ -858,7 +846,6 @@ export default function ExpensesScreen() {
         </div>
       )}
 
-      {/* ── Delete Modal ── */}
       {showDeleteModal && (
         <div className="modal-overlay">
           <div className="small-modal">
@@ -870,7 +857,6 @@ export default function ExpensesScreen() {
         </div>
       )}
 
-      {/* ── Submit Payment Proof Modal ── */}
       {showPaymentProofModal && (
         <div className="modal-overlay">
           <div className="small-modal">
@@ -884,7 +870,6 @@ export default function ExpensesScreen() {
         </div>
       )}
 
-      {/* ── View Proof Modal ── */}
       {showViewProofModal && selectedProof && (
         <div className="modal-overlay">
           <div className="small-modal">
@@ -898,7 +883,6 @@ export default function ExpensesScreen() {
         </div>
       )}
 
-      {/* ── Reject Proof Modal ── */}
       {showRejectProofModal && (
         <div className="modal-overlay">
           <div className="small-modal">
