@@ -812,3 +812,38 @@
 
 .toast-error { background: #e53e3e; }
 .toast-info { background: #3B2AAB; }
+
+.source-label {
+  font-size: 9px;
+  font-weight: 600;
+  color: #9E8FCC;
+  background: #F0EDFF;
+  padding: 2px 8px;
+  border-radius: 50px;
+}
+
+.proof-preview {
+  width: 100%;
+  border-radius: 12px;
+  object-fit: cover;
+  max-height: 180px;
+}
+
+.reimburse-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.pay-btn {
+  background: #3B2AAB;
+  color: white;
+  border: none;
+  border-radius: 50px;
+  padding: 4px 12px;
+  font-family: 'Poppins', sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}

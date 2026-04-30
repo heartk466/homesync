@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import {
@@ -8,6 +8,13 @@ import {
 import TopBar from '../components/TopBar';
 import BottomNav from '../components/BottomNav';
 import './UtilitiesScreen.css';
+import {
+  fetchAllUtilityItems,
+  checkDuplicate,
+  mergeItems,
+  markItemAsPaid,
+  adminConfirmPayment,
+} from '../utils/expenseUtils';
 
 const UTILITY_TYPES = ['Power', 'Water', 'Gas', 'Internet', 'Other'];
 
@@ -82,6 +89,19 @@ export default function UtilitiesScreen() {
   const [disputeReason, setDisputeReason] = useState('');
   const [adjustedSplits, setAdjustedSplits] = useState({});
 
+  // Duplicate & Payment Proof
+  const [showDuplicateModal, setShowDuplicateModal] = useState(false);
+  const [duplicateItem, setDuplicateItem] = useState(null);
+  const [showPaymentProofModal, setShowPaymentProofModal] = useState(false);
+  const [showViewProofModal, setShowViewProofModal] = useState(false);
+  const [selectedProof, setSelectedProof] = useState(null);
+  const [proofForm, setProofForm] = useState({
+    note: '',
+    screenshot: null,
+    screenshotPreview: null,
+  });
+  const proofInputRef = useRef(null);
+
   const showToast = (message, type = 'success') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3000);
@@ -137,14 +157,10 @@ export default function UtilitiesScreen() {
     const userMember = members?.find(m => m.user_id === user.id);
     setIsAdmin(userMember?.role === 'owner');
 
-    const { data: utilitiesData } = await supabase
-      .from('utilities')
-      .select('*')
-      .eq('household_id', household.id)
-      .order('created_at', { ascending: false });
-
-    setUtilities(utilitiesData || []);
-    setFilteredUtilities(utilitiesData || []);
+    const { utilities: utilitiesData, fromExpenses } = await fetchAllUtilityItems(household.id);
+    const allUtilityItems = [...utilitiesData, ...fromExpenses];
+    setUtilities(allUtilityItems);
+    setFilteredUtilities(allUtilityItems);
 
     // Summary
     const uniqueProviders = new Set(utilitiesData?.map(u => u.provider_name) || []);
@@ -246,6 +262,21 @@ export default function UtilitiesScreen() {
     }
 
     setLoading(true);
+
+    // Check for duplicates
+    const dupes = await checkDuplicate(
+      activeHousehold.id,
+      utilityForm.utility_type,
+      Number(utilityForm.amount),
+      utilityForm.billing_date
+    );
+
+    if (dupes.length > 0) {
+      setDuplicateItem(dupes[0]);
+      setShowDuplicateModal(true);
+      setLoading(false);
+      return;
+    }
 
     const splits = {};
     if (utilityForm.split_method === 'Equal Split') {
@@ -669,6 +700,21 @@ export default function UtilitiesScreen() {
                   )}
                 </div>
 
+                {/* Pay button for read-only items from expenses */}
+                {utility.source === 'expenses' && utility.status !== 'paid' && (
+                  <div className="reimburse-row">
+                    <button
+                      className="pay-btn"
+                      onClick={() => {
+                        setSelectedUtility(utility);
+                        setShowPaymentProofModal(true);
+                      }}
+                    >
+                      Pay
+                    </button>
+                  </div>
+                )}
+
                 <div className="utility-right">
                   <span
                     className="status-badge"
@@ -676,6 +722,12 @@ export default function UtilitiesScreen() {
                   >
                     {badge.label}
                   </span>
+                  {utility.source === 'expenses' && (
+                    <span className="source-label">📋 From Expenses</span>
+                  )}
+                  {utility.source === 'utilities' && utility.is_merged && (
+                    <span className="source-label">🔗 Merged</span>
+                  )}
                   {isAdmin && (
                     <div className="utility-admin-actions">
                       <button
@@ -1011,6 +1063,135 @@ export default function UtilitiesScreen() {
             </button>
             <button className="cancel-btn" onClick={() => setShowAdjustModal(false)}>
               Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Hidden proof input */}
+      <input
+        type="file"
+        ref={proofInputRef}
+        style={{ display: 'none' }}
+        accept="image/*"
+        onChange={e => {
+          const file = e.target.files[0];
+          if (file) {
+            setProofForm(prev => ({
+              ...prev,
+              screenshot: file,
+              screenshotPreview: URL.createObjectURL(file),
+            }));
+          }
+        }}
+      />
+
+      {/* Payment Proof Modal */}
+      {showPaymentProofModal && (
+        <div className="modal-overlay">
+          <div className="small-modal">
+            <h2>Submit Payment Proof</h2>
+            <p className="modal-subtitle">Upload your GCash/bank screenshot</p>
+            {proofForm.screenshotPreview && (
+              <img src={proofForm.screenshotPreview} alt="proof" className="proof-preview"/>
+            )}
+            <button
+              className="save-config-btn"
+              style={{ background: '#F0EDFF', color: '#3B2AAB', marginTop: 0 }}
+              onClick={() => proofInputRef.current.click()}
+            >
+              📷 {proofForm.screenshot ? 'Change Screenshot' : 'Upload Screenshot'}
+            </button>
+            <textarea
+              className="reject-textarea"
+              placeholder="Optional note (e.g. GCash ref# 12345)"
+              value={proofForm.note}
+              onChange={e => setProofForm(prev => ({ ...prev, note: e.target.value }))}
+            />
+            <button
+              className="save-config-btn"
+              onClick={async () => {
+                if (!proofForm.screenshot) {
+                  showToast('Please upload a screenshot.', 'error');
+                  return;
+                }
+                setLoading(true);
+                const fileExt = proofForm.screenshot.name.split('.').pop();
+                const fileName = `${currentUser.id}-${selectedUtility.id}.${fileExt}`;
+                const { error: uploadError } = await supabase.storage
+                  .from('payment-proofs')
+                  .upload(fileName, proofForm.screenshot, { upsert: true });
+                if (uploadError) {
+                  showToast('Upload failed.', 'error');
+                  setLoading(false);
+                  return;
+                }
+                const { data: urlData } = supabase.storage
+                  .from('payment-proofs')
+                  .getPublicUrl(fileName);
+                await markItemAsPaid(
+                  selectedUtility,
+                  urlData.publicUrl,
+                  proofForm.note,
+                  currentUser.id
+                );
+                await supabase.from('notifications').insert({
+                  user_id: activeHousehold?.created_by,
+                  title: 'Payment Proof Submitted 📸',
+                  message: `${profile?.full_name} submitted payment proof for "${selectedUtility.title || selectedUtility.utility_type}"`,
+                  type: 'payment_proof',
+                });
+                setShowPaymentProofModal(false);
+                setProofForm({ note: '', screenshot: null, screenshotPreview: null });
+                setSelectedUtility(null);
+                showToast('Payment proof submitted! ⏳');
+                setLoading(false);
+              }}
+              disabled={loading}
+            >
+              {loading ? 'Submitting...' : 'Submit for Verification'}
+            </button>
+            <button className="cancel-btn" onClick={() => {
+              setShowPaymentProofModal(false);
+              setProofForm({ note: '', screenshot: null, screenshotPreview: null });
+            }}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Duplicate Modal */}
+      {showDuplicateModal && duplicateItem && (
+        <div className="modal-overlay">
+          <div className="small-modal">
+            <p style={{ fontSize: 32 }}>⚠️</p>
+            <h2>Possible Duplicate!</h2>
+            <p className="modal-subtitle">
+              We found a similar entry: "{duplicateItem.title || duplicateItem.provider_name}: 
+              ₱{Number(duplicateItem.amount).toLocaleString('en-PH', { minimumFractionDigits: 2 })}"
+            </p>
+            <p className="modal-subtitle">Would you like to merge this with the existing entry?</p>
+            <button
+              className="save-config-btn"
+              onClick={async () => {
+                if (duplicateItem.source === 'expenses') {
+                  await mergeItems(duplicateItem.id, null);
+                }
+                setShowDuplicateModal(false);
+                showToast('Items merged! ✅');
+              }}
+            >
+              Yes, Merge
+            </button>
+            <button
+              className="cancel-btn"
+              onClick={async () => {
+                setShowDuplicateModal(false);
+                await handleSaveUtility(true);
+              }}
+            >
+              No, Keep Separate
             </button>
           </div>
         </div>

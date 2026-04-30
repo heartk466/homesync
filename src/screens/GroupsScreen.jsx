@@ -8,6 +8,7 @@ import {
 import TopBar from '../components/TopBar';
 import BottomNav from '../components/BottomNav';
 import './GroupsScreen.css';
+import { fetchHouseholdUtilitiesTotal } from '../utils/expenseUtils';
 
 export default function GroupsScreen() {
   const navigate = useNavigate();
@@ -201,7 +202,15 @@ export default function GroupsScreen() {
       const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
       const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
 
-      for (const group of groupsList) {
+      // Fetch utilities total for each group
+      const groupsWithUtilities = await Promise.all(
+        (groupsList || []).map(async (group) => {
+          const utilitiesTotal = await fetchHouseholdUtilitiesTotal(group.household_id || group.id);
+          return { ...group, utilitiesTotal };
+        })
+      );
+
+      for (const group of groupsWithUtilities) {
         const { count: memberCount } = await supabase
           .from('group_members')
           .select('*', { count: 'exact', head: true })
@@ -235,7 +244,7 @@ export default function GroupsScreen() {
         group.yourBalance = pendingOwedTotal - yourShareTotal;
       }
 
-      setGroups(groupsList);
+      setGroups(groupsWithUtilities);
     } catch (err) {
       console.error(err);
     } finally {
@@ -502,6 +511,12 @@ export default function GroupsScreen() {
           <div className="stat">
             <span className="stat-label">Your share</span>
             <span className="stat-value">₱{(item.yourShare || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span>
+          </div>
+          <div className="stat">
+            <span className="stat-label">Utilities</span>
+            <span className="stat-value">
+              ₱{(item.utilitiesTotal || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+            </span>
           </div>
           <div className="stat balance">
             <span className="stat-label">Balance</span>

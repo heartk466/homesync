@@ -8,6 +8,17 @@ import {
 import './ExpensesScreen.css';
 import TopBar from '../components/TopBar';
 import BottomNav from '../components/BottomNav';
+import {
+  fetchAllHouseholdExpenses,
+  checkDuplicate,
+  mergeItems,
+  isUtilityCategory,
+  UTILITY_CATEGORIES,
+} from '../utils/expenseUtils';
+
+const [showDuplicateModal, setShowDuplicateModal] = useState(false);
+const [duplicateItem, setDuplicateItem] = useState(null);
+const [pendingExpenseData, setPendingExpenseData] = useState(null);
 
 const CATEGORY_ICONS = {
   Rent: '🏠', Electricity: '⚡', Water: '💧', Internet: '📶',
@@ -107,17 +118,66 @@ export default function ExpensesScreen() {
     setExpenseErrors({});
   }, []);
 
+  const proceedAddExpense = async () => {
+  setLoading(true);
+
+  const splits = {};
+  if (expenseForm.split_type === 'equal') {
+    const share = Number(expenseForm.amount) / expenseForm.selected_members.length;
+    expenseForm.selected_members.forEach(id => {
+      splits[id] = share.toFixed(2);
+    });
+  } else {
+    expenseForm.selected_members.forEach(id => {
+      splits[id] = expenseForm.custom_splits[id] || 0;
+    });
+  }
+
+  const { error } = await supabase.from('expenses').insert({
+    household_id: profile.household_id,
+    created_by: currentUser.id,
+    title: expenseForm.title.trim(),
+    amount: Number(expenseForm.amount),
+    category: expenseForm.category,
+    expense_type: expenseForm.expense_type,
+    expense_date: expenseForm.expense_date,
+    location: expenseForm.location,
+    paid_by: expenseForm.who_paid,
+    split_type: expenseForm.split_type,
+    members_split: splits,
+    status: 'pending',
+    approval_status: isAdmin ? 'approved' : 'pending_approval',
+    source: isUtilityCategory(expenseForm.category) ? 'expenses' : 'expenses',
+    is_merged: false,
+  });
+
+  if (error) {
+    showToast('Failed to add expense. Try again.', 'error');
+  } else {
+    showToast(isAdmin ? 'Expense added! ✅' : 'Expense submitted for approval! ⏳');
+    setShowAddExpense(false);
+    resetExpenseForm();
+
+    if (!isAdmin) {
+      await supabase.from('notifications').insert({
+        user_id: household?.created_by,
+        title: 'New Expense Pending Approval',
+        message: `${profile?.full_name} submitted "${expenseForm.title}" for ₱${expenseForm.amount}`,
+        type: 'approval_request',
+      });
+    }
+  }
+
+  setLoading(false);
+};
+
   // ===================== FETCH EXPENSES =====================
   const fetchExpenses = useCallback(async (profileData, user, adminStatus, memberData, householdId) => {
     const now = new Date();
     const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
     const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
 
-    const { data: expensesData } = await supabase
-      .from('expenses')
-      .select('*')
-      .eq('household_id', householdId)
-      .order('created_at', { ascending: false });
+    const expensesData = await fetchAllHouseholdExpenses(profileData.household_id);
 
     if (!expensesData) return;
 
@@ -340,6 +400,23 @@ export default function ExpensesScreen() {
     }
 
     setLoading(true);
+   
+    // Check for duplicates
+if (isUtilityCategory(expenseForm.category)) {
+  const dupes = await checkDuplicate(
+    profile.household_id,
+    expenseForm.category,
+    Number(expenseForm.amount),
+    expenseForm.expense_date
+  );
+
+  if (dupes.length > 0) {
+    setDuplicateItem(dupes[0]);
+    setShowDuplicateModal(true);
+    setLoading(false);
+    return;
+  }
+}
 
     const splits = {};
     const totalAmount = Number(expenseForm.amount);
@@ -890,6 +967,46 @@ export default function ExpensesScreen() {
             <textarea placeholder="Reason" value={rejectProofReason} onChange={e => setRejectProofReason(e.target.value)} className="reject-textarea" />
             <button className="add-expense-btn" onClick={handleRejectProof}>Confirm</button>
             <button className="edit-cancel-btn" onClick={() => setShowRejectProofModal(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* Duplicate Detection Modal */}
+      {showDuplicateModal && duplicateItem && (
+        <div className="modal-overlay">
+          <div className="small-modal">
+            <p style={{ fontSize: 32 }}>⚠️</p>
+            <h2>Possible Duplicate!</h2>
+            <p className="modal-subtitle">
+              We found a similar entry:{'\n'}
+              "{duplicateItem.title || duplicateItem.provider_name}: 
+              ₱{Number(duplicateItem.amount).toLocaleString('en-PH', { minimumFractionDigits: 2 })} | 
+              {duplicateItem.expense_date || duplicateItem.billing_date}"
+            </p>
+            <p className="modal-subtitle">
+              Would you like to merge this with the existing entry?
+            </p>
+            <button
+              className="add-expense-btn"
+              onClick={async () => {
+                if (duplicateItem.source === 'utilities') {
+                  await mergeItems(duplicateItem.id, duplicateItem.id);
+                }
+                setShowDuplicateModal(false);
+                showToast('Items merged! ✅');
+              }}
+            >
+              Yes, Merge
+            </button>
+            <button
+              className="edit-cancel-btn"
+              onClick={async () => {
+                setShowDuplicateModal(false);
+                await proceedAddExpense();
+              }}
+            >
+              No, Keep Separate
+            </button>
           </div>
         </div>
       )}
