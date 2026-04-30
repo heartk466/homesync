@@ -483,8 +483,7 @@ export default function GroupsScreen() {
       <div
         key={item.id}
         className="group-card"
-        // FIX: use /groups/:id so it matches the typical React Router path for GroupDetailScreen
-        onClick={() => navigate(`/groups/${item.id}`, { state: { type: isHousehold ? 'household' : 'group' } })}
+        onClick={() => navigate(`/group-detail/${item.id}`, { state: { type: isHousehold ? 'household' : 'group' } })}
       >
         <div className="group-card-header">
           <div className="group-icon">
