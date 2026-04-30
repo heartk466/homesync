@@ -249,35 +249,7 @@ export default function UtilitiesScreen() {
     showToast(`Switched to ${household.name}`);
   };
 
-  const handleSaveUtility = async () => {
-    const errors = {};
-    if (!utilityForm.provider_name.trim()) errors.provider_name = 'Provider name is required';
-    if (!utilityForm.amount || isNaN(utilityForm.amount)) errors.amount = 'Valid amount is required';
-    if (!utilityForm.billing_date) errors.billing_date = 'Billing date is required';
-    if (utilityForm.selected_members.length === 0) errors.members = 'Select at least one member';
-
-    if (Object.keys(errors).length > 0) {
-      setUtilityErrors(errors);
-      return;
-    }
-
-    setLoading(true);
-
-    // Check for duplicates
-    const dupes = await checkDuplicate(
-      activeHousehold.id,
-      utilityForm.utility_type,
-      Number(utilityForm.amount),
-      utilityForm.billing_date
-    );
-
-    if (dupes.length > 0) {
-      setDuplicateItem(dupes[0]);
-      setShowDuplicateModal(true);
-      setLoading(false);
-      return;
-    }
-
+  const proceedWithUtilitySave = async () => {
     const splits = {};
     if (utilityForm.split_method === 'Equal Split') {
       const share = Number(utilityForm.amount) / utilityForm.selected_members.length;
@@ -339,6 +311,38 @@ export default function UtilitiesScreen() {
     setShowAddUtility(false);
     resetUtilityForm();
     setLoading(false);
+  };
+
+  const handleSaveUtility = async () => {
+    const errors = {};
+    if (!utilityForm.provider_name.trim()) errors.provider_name = 'Provider name is required';
+    if (!utilityForm.amount || isNaN(utilityForm.amount)) errors.amount = 'Valid amount is required';
+    if (!utilityForm.billing_date) errors.billing_date = 'Billing date is required';
+    if (utilityForm.selected_members.length === 0) errors.members = 'Select at least one member';
+
+    if (Object.keys(errors).length > 0) {
+      setUtilityErrors(errors);
+      return;
+    }
+
+    setLoading(true);
+
+    // Check for duplicates
+    const dupes = await checkDuplicate(
+      activeHousehold.id,
+      utilityForm.utility_type,
+      Number(utilityForm.amount),
+      utilityForm.billing_date
+    );
+
+    if (dupes.length > 0) {
+      setDuplicateItem(dupes[0]);
+      setShowDuplicateModal(true);
+      setLoading(false);
+      return;
+    }
+
+    await proceedWithUtilitySave();
   };
 
   const handleConfirmSplit = async (utility) => {
@@ -1188,7 +1192,8 @@ export default function UtilitiesScreen() {
               className="cancel-btn"
               onClick={async () => {
                 setShowDuplicateModal(false);
-                await handleSaveUtility(true);
+                setLoading(true);
+                await proceedWithUtilitySave();
               }}
             >
               No, Keep Separate
