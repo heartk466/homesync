@@ -4,8 +4,7 @@ import RegisterScreen from './screens/RegisterScreen';
 import LoginScreen from './screens/LoginScreen';
 import DashboardScreen from './screens/DashboardScreen';
 import ExpensesScreen from './screens/ExpensesScreen';
-import GroupsScreen from './screens/GroupsScreen';
-import GroupDetailScreen from './screens/GroupDetailScreen';
+import UtilitiesScreen from './screens/UtilitiesScreen';
 
 function App() {
   return (
@@ -16,8 +15,7 @@ function App() {
         <Route path="/login" element={<LoginScreen />} />
         <Route path="/dashboard" element={<DashboardScreen />} />
         <Route path="/expenses" element={<ExpensesScreen />} />
-        <Route path="/groups" element={<GroupsScreen />} />
-        <Route path="/groups/:id" element={<GroupDetailScreen />} />  
+        <Route path="/utilities" element={<UtilitiesScreen />} />
       </Routes>
     </BrowserRouter>
   );
