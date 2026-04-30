@@ -16,10 +16,6 @@ import {
   UTILITY_CATEGORIES,
 } from '../utils/expenseUtils';
 
-const [showDuplicateModal, setShowDuplicateModal] = useState(false);
-const [duplicateItem, setDuplicateItem] = useState(null);
-const [pendingExpenseData, setPendingExpenseData] = useState(null);
-
 const CATEGORY_ICONS = {
   Rent: '🏠', Electricity: '⚡', Water: '💧', Internet: '📶',
   Food: '🍽️', Grocery: '🛒', Other: '📦', Transport: '🚗', Entertainment: '🎬'
@@ -67,6 +63,9 @@ export default function ExpensesScreen() {
   const [showRejectProofModal, setShowRejectProofModal] = useState(false);
   const [selectedExpense, setSelectedExpense] = useState(null);
   const [selectedProof, setSelectedProof] = useState(null);
+  const [showDuplicateModal, setShowDuplicateModal] = useState(false);
+  const [duplicateItem, setDuplicateItem] = useState(null);
+  const [pendingExpenseData, setPendingExpenseData] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [householdSearch, setHouseholdSearch] = useState('');
   const [loading, setLoading] = useState(false);
