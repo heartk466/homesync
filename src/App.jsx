@@ -8,6 +8,7 @@ import UtilitiesScreen from './screens/UtilitiesScreen';
 import GroupsScreen from './screens/GroupsScreen';
 import GroupDetailScreen from './screens/GroupDetailScreen';
 import ReportsScreen from './screens/ReportsScreen';
+import SettingsScreen from './screens/SettingsScreen';
 
 function App() {
   return (
@@ -22,6 +23,7 @@ function App() {
         <Route path="/groups" element={<GroupsScreen />} />
         <Route path="/group-detail/:id" element={<GroupDetailScreen />} />
         <Route path="/reports" element={<ReportsScreen />} />
+        <Route path="/settings" element={<SettingsScreen />} />
       </Routes>
     </BrowserRouter>
   );
