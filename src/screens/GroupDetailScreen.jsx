@@ -24,7 +24,6 @@ export default function GroupDetailScreen() {
   const location = useLocation();
   const contextType = location.state?.type || 'group';
 
-  // Deep-link from notification
   const searchParams = new URLSearchParams(location.search);
   const openProofExpenseId = searchParams.get('openProof');
   const openProofId = searchParams.get('proofId');
@@ -49,7 +48,7 @@ export default function GroupDetailScreen() {
   const [showDeleteGroupModal, setShowDeleteGroupModal] = useState(false);
   const [showKickMemberModal, setShowKickMemberModal] = useState(false);
   const [showOwnerProofModal, setShowOwnerProofModal] = useState(false);
-  const [showResubmitProofModal, setShowResubmitProofModal] = useState(false);
+  const [showResubmitModal, setShowResubmitModal] = useState(false);
   const [selectedMember, setSelectedMember] = useState(null);
   const [selectedExpense, setSelectedExpense] = useState(null);
   const [selectedProof, setSelectedProof] = useState(null);
@@ -70,7 +69,7 @@ export default function GroupDetailScreen() {
   const [expenseErrors, setExpenseErrors] = useState({});
 
   const [proofForm, setProofForm] = useState({
-    note: '', screenshot: null, screenshotPreview: null, submittedBy: 'member'
+    note: '', screenshot: null, screenshotPreview: null
   });
 
   const showToast = (msg, type = 'success') => {
@@ -197,11 +196,8 @@ export default function GroupDetailScreen() {
     fetchGroupAndData();
   }, [fetchGroupAndData]);
 
-  // Deep-link: auto-open proof modal from notification
   useEffect(() => {
     if (allPaymentProofs.length === 0) return;
-    
-    console.log("Checking deep-link...", { openProofExpenseId, openProofId });
     
     let proofToOpen = null;
     if (openProofId) {
@@ -212,7 +208,6 @@ export default function GroupDetailScreen() {
     }
 
     if (proofToOpen) {
-      console.log("Found proof to open:", proofToOpen);
       setTimeout(() => {
         setSelectedProof(proofToOpen);
         setShowViewProofModal(true);
@@ -221,7 +216,6 @@ export default function GroupDetailScreen() {
     }
   }, [openProofExpenseId, openProofId, allPaymentProofs]);
 
-  // Realtime subscriptions
   useEffect(() => {
     if (!currentUser || !group) return;
     const expenseColumn = contextType === 'household' ? 'household_id' : 'group_id';
@@ -246,11 +240,10 @@ export default function GroupDetailScreen() {
       split_type: 'equal', selected_members: [], custom_splits: {}
     });
     setExpenseErrors({});
-    setProofForm({ note: '', screenshot: null, screenshotPreview: null, submittedBy: 'member' });
   };
 
   const resetProofForm = () => {
-    setProofForm({ note: '', screenshot: null, screenshotPreview: null, submittedBy: 'member' });
+    setProofForm({ note: '', screenshot: null, screenshotPreview: null });
   };
 
   const getStatusBadge = (expense) => {
@@ -451,7 +444,7 @@ export default function GroupDetailScreen() {
     setLoadingAction(false);
   };
 
-  const handleSubmitProof = async () => {
+  const handleSubmitProof = async (isResubmit = false) => {
     if (!proofForm.screenshot) { showToast('Please upload a screenshot', 'error'); return; }
     setLoadingAction(true);
     
@@ -467,17 +460,14 @@ export default function GroupDetailScreen() {
     }
     const { data: urlData } = supabase.storage.from('payment-proofs').getPublicUrl(fileName);
 
-    const isOwnerSubmitting = proofForm.submittedBy === 'owner' && isAdmin;
-    const isResubmit = proofForm.submittedBy === 'resubmit';
-
-    // If resubmitting, first deactivate old rejected proof
-    if (isResubmit && selectedExpense) {
+    // If resubmitting, mark old rejected proofs as archived
+    if (isResubmit) {
       await supabase
         .from('payment_proofs')
-        .update({ status: 'replaced' })
+        .update({ status: 'archived' })
         .eq('expense_id', selectedExpense.id)
         .eq('submitted_by', currentUser.id)
-        .eq('status', 'rejected');
+        .in('status', ['rejected', 'pending_verification']);
     }
 
     const { data: insertedProof } = await supabase.from('payment_proofs').insert({
@@ -485,45 +475,26 @@ export default function GroupDetailScreen() {
       submitted_by: currentUser.id,
       screenshot_url: urlData.publicUrl,
       note: proofForm.note,
-      status: isOwnerSubmitting ? 'verified' : 'pending_verification',
+      status: 'pending_verification',
     }).select().single();
 
-    if (isOwnerSubmitting) {
-      await supabase.from('expenses').update({ status: 'paid' }).eq('id', selectedExpense.id);
+    await supabase.from('expenses').update({ status: 'verifying' }).eq('id', selectedExpense.id);
 
-      const splits = selectedExpense.members_split || {};
-      const memberIds = Object.keys(splits).filter(uid => uid !== currentUser.id);
-      for (const memberId of memberIds) {
-        await supabase.from('notifications').insert({
-          user_id: memberId,
-          title: '✅ Payment Confirmed by Owner',
-          message: `${profile?.full_name} confirmed payment for "${selectedExpense.title}". Tap to view proof.`,
-          type: 'payment_confirmed',
-          link_path: `/groups/${id}`,
-          link_state: JSON.stringify({ type: contextType }),
-          link_query: `openProof=${selectedExpense.id}&proofId=${insertedProof.id}`,
-        });
-      }
-    } else {
-      await supabase.from('expenses').update({ status: 'verifying' }).eq('id', selectedExpense.id);
-
-      await supabase.from('notifications').insert({
-        user_id: group?.created_by,
-        title: isResubmit ? '📸 Payment Proof Resubmitted' : '📸 Payment Proof Submitted',
-        message: `${profile?.full_name} ${isResubmit ? 'resubmitted' : 'submitted'} proof for "${selectedExpense.title}". Tap to review.`,
-        type: 'payment_proof',
-        link_path: `/groups/${id}`,
-        link_state: JSON.stringify({ type: contextType }),
-        link_query: `openProof=${selectedExpense.id}&proofId=${insertedProof.id}`,
-      });
-    }
+    await supabase.from('notifications').insert({
+      user_id: group?.created_by,
+      title: isResubmit ? '📸 Payment Proof Resubmitted' : '📸 Payment Proof Submitted',
+      message: `${profile?.full_name} ${isResubmit ? 'resubmitted' : 'submitted'} proof for "${selectedExpense.title}". Tap to review.`,
+      type: 'payment_proof',
+      link_path: `/groups/${id}`,
+      link_state: JSON.stringify({ type: contextType }),
+      link_query: `openProof=${selectedExpense.id}&proofId=${insertedProof.id}`,
+    });
 
     setShowPaymentProofModal(false);
-    setShowOwnerProofModal(false);
-    setShowResubmitProofModal(false);
+    setShowResubmitModal(false);
     resetProofForm();
     setSelectedExpense(null);
-    showToast(isOwnerSubmitting ? 'Payment confirmed!' : 'Proof submitted for verification');
+    showToast('Proof submitted for verification');
     setLoadingAction(false);
     fetchGroupAndData();
   };
@@ -638,7 +609,7 @@ export default function GroupDetailScreen() {
         )}
       </div>
 
-      {/* Pending approvals (admin only) */}
+      {/* Pending approvals */}
       {isAdmin && pendingApprovals.length > 0 && (
         <div className="detail-pending-section">
           <h3 className="section-title">⏳ Approvals Needed ({pendingApprovals.length})</h3>
@@ -680,15 +651,21 @@ export default function GroupDetailScreen() {
               p => p.status === 'verified' && p.submitted_by === group?.created_by
             );
             
-            const mySubmittedProof = proofsForExpense.find(
+            const myPendingProof = proofsForExpense.find(
               p => p.submitted_by === currentUser?.id && p.status === 'pending_verification'
             );
             
+            // IMPORTANT: Check for rejected proof - THIS IS THE KEY
             const myRejectedProof = proofsForExpense.find(
               p => p.submitted_by === currentUser?.id && p.status === 'rejected'
             );
             
             const anyVerifiedProof = proofsForExpense.find(p => p.status === 'verified');
+
+            // Debug log for rejected proof
+            if (myRejectedProof) {
+              console.log("🔴 Found rejected proof for expense:", expense.title, myRejectedProof);
+            }
 
             return (
               <div key={expense.id} className="expense-item-detail">
@@ -703,7 +680,7 @@ export default function GroupDetailScreen() {
                     {expense.expense_date}{expense.location ? ` • ${expense.location}` : ''}
                   </div>
 
-                  {/* OWNER: Member pending proof with EYE ICON */}
+                  {/* OWNER: Member pending proof */}
                   {isAdmin && memberPendingProof && (
                     <div className="owe-row" style={{ marginTop: 6 }}>
                       <button
@@ -743,25 +720,30 @@ export default function GroupDetailScreen() {
                   )}
 
                   {/* MEMBER: Own pending proof */}
-                  {!isAdmin && mySubmittedProof && (
+                  {!isAdmin && myPendingProof && (
                     <div className="owe-row" style={{ marginTop: 6 }}>
                       <button
                         className="view-proof-btn"
                         style={{ display: 'flex', alignItems: 'center', gap: 6 }}
-                        onClick={() => openProofModal(mySubmittedProof)}
+                        onClick={() => openProofModal(myPendingProof)}
                       >
                         <Eye size={14} /> View Your Proof (Pending)
                       </button>
                     </div>
                   )}
 
-                  {/* MEMBER: Rejected proof - Show Resubmit button */}
-                  {!isAdmin && myRejectedProof && (
-                    <div className="owe-row" style={{ marginTop: 6, flexDirection: 'column', alignItems: 'flex-start', gap: 8 }}>
+                  {/* MEMBER: RESUBMIT BUTTON - This is what you need */}
+                  {!isAdmin && myRejectedProof && expense.status !== 'paid' && (
+                    <div className="owe-row" style={{ marginTop: 8, flexDirection: 'column', alignItems: 'flex-start', gap: 6 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                        <span style={{ fontSize: 12, color: '#e53e3e', background: '#ffe5e5', padding: '4px 10px', borderRadius: 50 }}>
-                          ❌ Proof Rejected: {myRejectedProof.rejection_reason || 'Invalid or unclear screenshot'}
+                        <span style={{ fontSize: 11, color: '#e53e3e', background: '#ffe5e5', padding: '4px 10px', borderRadius: 50 }}>
+                          ❌ Proof Rejected
                         </span>
+                        {myRejectedProof.rejection_reason && (
+                          <span style={{ fontSize: 11, color: '#9E8FCC' }}>
+                            Reason: {myRejectedProof.rejection_reason}
+                          </span>
+                        )}
                         <button
                           className="view-proof-btn"
                           style={{ display: 'flex', alignItems: 'center', gap: 6 }}
@@ -772,27 +754,27 @@ export default function GroupDetailScreen() {
                       </div>
                       <button
                         className="pay-btn-small"
-                        style={{ background: '#e53e3e', marginTop: 4 }}
+                        style={{ background: '#e53e3e', marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }}
                         onClick={() => {
                           setSelectedExpense(expense);
-                          setProofForm({ ...proofForm, submittedBy: 'resubmit' });
-                          setShowResubmitProofModal(true);
+                          resetProofForm();
+                          setShowResubmitModal(true);
                         }}
                       >
-                        <RefreshCw size={14} style={{ marginRight: 4 }} /> Resubmit New Proof
+                        <RefreshCw size={14} /> Resubmit New Proof
                       </button>
                     </div>
                   )}
 
-                  {/* Member: owe row with Pay button (only if no pending/rejected proof) */}
-                  {isOwed && !memberPendingProof && !mySubmittedProof && !myRejectedProof && !anyVerifiedProof && (
+                  {/* Member: owe row with Pay button */}
+                  {isOwed && !memberPendingProof && !myPendingProof && !myRejectedProof && !anyVerifiedProof && (
                     <div className="owe-row">
                       <span>You owe ₱{Number(myShare).toFixed(2)}</span>
                       <button
                         className="pay-btn-small"
                         onClick={() => {
                           setSelectedExpense(expense);
-                          setProofForm({ ...proofForm, submittedBy: 'member' });
+                          resetProofForm();
                           setShowPaymentProofModal(true);
                         }}
                       >
@@ -801,14 +783,14 @@ export default function GroupDetailScreen() {
                     </div>
                   )}
 
-                  {/* Owner: submit proof that they paid */}
+                  {/* Owner: submit proof */}
                   {isAdmin && expense.paid_by === currentUser?.id && expense.status !== 'paid' && !ownerVerifiedProof && (
                     <div className="owe-row">
                       <button
                         className="pay-btn-small"
                         onClick={() => {
                           setSelectedExpense(expense);
-                          setProofForm({ ...proofForm, submittedBy: 'owner' });
+                          resetProofForm();
                           setShowOwnerProofModal(true);
                         }}
                       >
@@ -896,7 +878,7 @@ export default function GroupDetailScreen() {
           <div className="modal-detail-card">
             <div className="modal-header">
               <h2>Submit Payment Proof</h2>
-              <button className="modal-close" onClick={() => setShowPaymentProofModal(false)}><X size={20} /></button>
+              <button className="modal-close" onClick={() => { setShowPaymentProofModal(false); resetProofForm(); }}><X size={20} /></button>
             </div>
             <div className="modal-body-scroll">
               {proofForm.screenshotPreview
@@ -910,24 +892,25 @@ export default function GroupDetailScreen() {
               <p style={{ fontSize: 11, color: '#9E8FCC', textAlign: 'center', margin: '0 0 4px' }}>
                 The owner will review your proof before marking it as paid.
               </p>
-              <button className="add-expense-btn" onClick={handleSubmitProof} disabled={loadingAction}>{loadingAction ? 'Submitting...' : 'Submit Proof'}</button>
-              <button className="cancel-btn" onClick={() => setShowPaymentProofModal(false)}>Cancel</button>
+              <button className="add-expense-btn" onClick={() => handleSubmitProof(false)} disabled={loadingAction}>{loadingAction ? 'Submitting...' : 'Submit Proof'}</button>
+              <button className="cancel-btn" onClick={() => { setShowPaymentProofModal(false); resetProofForm(); }}>Cancel</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Resubmit Proof Modal (for rejected proofs) */}
-      {showResubmitProofModal && (
+      {/* Resubmit Proof Modal */}
+      {showResubmitModal && (
         <div className="modal-overlay-detail">
           <div className="modal-detail-card">
             <div className="modal-header">
               <h2>Resubmit Payment Proof</h2>
-              <button className="modal-close" onClick={() => setShowResubmitProofModal(false)}><X size={20} /></button>
+              <button className="modal-close" onClick={() => { setShowResubmitModal(false); resetProofForm(); }}><X size={20} /></button>
             </div>
             <div className="modal-body-scroll">
-              <div style={{ background: '#FFF3CD', borderRadius: 12, padding: '10px 14px', marginBottom: 8, fontSize: 12, color: '#856404' }}>
-                ⚠️ Your previous proof was rejected. Please upload a new, clear screenshot of your payment.
+              <div style={{ background: '#FFF3CD', borderRadius: 12, padding: '12px 14px', marginBottom: 12, fontSize: 12, color: '#856404', textAlign: 'center' }}>
+                ⚠️ Your previous proof was rejected.<br/>
+                Please upload a new, clear screenshot of your payment.
               </div>
               {proofForm.screenshotPreview
                 ? <img src={proofForm.screenshotPreview} className="proof-preview" alt="proof" />
@@ -937,11 +920,8 @@ export default function GroupDetailScreen() {
                 <Camera size={16} /> {proofForm.screenshotPreview ? 'Change Screenshot' : 'Upload New Screenshot'}
               </button>
               <textarea placeholder="Optional note (e.g. GCash ref #)" value={proofForm.note} onChange={e => setProofForm({ ...proofForm, note: e.target.value })} className="detail-textarea" rows={3} />
-              <p style={{ fontSize: 11, color: '#9E8FCC', textAlign: 'center', margin: '0 0 4px' }}>
-                The owner will review your new proof.
-              </p>
-              <button className="add-expense-btn" onClick={handleSubmitProof} disabled={loadingAction}>{loadingAction ? 'Submitting...' : 'Resubmit Proof'}</button>
-              <button className="cancel-btn" onClick={() => setShowResubmitProofModal(false)}>Cancel</button>
+              <button className="add-expense-btn" onClick={() => handleSubmitProof(true)} disabled={loadingAction}>{loadingAction ? 'Submitting...' : 'Resubmit Proof'}</button>
+              <button className="cancel-btn" onClick={() => { setShowResubmitModal(false); resetProofForm(); }}>Cancel</button>
             </div>
           </div>
         </div>
@@ -965,9 +945,9 @@ export default function GroupDetailScreen() {
               </button>
               <textarea placeholder="Optional note" value={proofForm.note} onChange={e => setProofForm({ ...proofForm, note: e.target.value })} className="detail-textarea" rows={3} />
               <div style={{ background: '#F0EDFF', borderRadius: 12, padding: '10px 14px', fontSize: 12, color: '#3B2AAB', textAlign: 'center' }}>
-                📢 This will <strong>automatically mark the expense as paid</strong> for all members. Members will be notified and can view your screenshot.
+                📢 This will <strong>automatically mark the expense as paid</strong> for all members.
               </div>
-              <button className="add-expense-btn" onClick={handleSubmitProof} disabled={loadingAction}>{loadingAction ? 'Confirming...' : 'Confirm Payment'}</button>
+              <button className="add-expense-btn" onClick={() => handleSubmitProof(false)} disabled={loadingAction}>{loadingAction ? 'Confirming...' : 'Confirm Payment'}</button>
               <button className="cancel-btn" onClick={() => setShowOwnerProofModal(false)}>Cancel</button>
             </div>
           </div>
@@ -1045,22 +1025,22 @@ export default function GroupDetailScreen() {
                 </>
               )}
 
-              {/* Show Resubmit button for rejected proof viewing */}
+              {/* Resubmit button inside proof modal for rejected proofs */}
               {!isAdmin && selectedProof.status === 'rejected' && selectedProof.submitted_by === currentUser?.id && (
                 <button 
                   className="pay-btn-small" 
-                  style={{ width: '100%', marginTop: 8, background: '#e53e3e' }}
+                  style={{ width: '100%', marginTop: 8, background: '#e53e3e', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
                   onClick={() => {
                     setShowViewProofModal(false);
                     const expense = expenses.find(e => e.id === selectedProof.expense_id);
                     if (expense) {
                       setSelectedExpense(expense);
-                      setProofForm({ ...proofForm, submittedBy: 'resubmit' });
-                      setShowResubmitProofModal(true);
+                      resetProofForm();
+                      setShowResubmitModal(true);
                     }
                   }}
                 >
-                  <RefreshCw size={14} style={{ marginRight: 4 }} /> Resubmit New Proof
+                  <RefreshCw size={14} /> Resubmit New Proof
                 </button>
               )}
 
@@ -1146,7 +1126,7 @@ export default function GroupDetailScreen() {
         </div>
       )}
 
-      {/* Hidden file input for proof uploads */}
+      {/* Hidden file input */}
       <input
         type="file"
         ref={proofInputRef}
