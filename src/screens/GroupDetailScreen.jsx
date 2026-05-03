@@ -209,12 +209,26 @@ export default function GroupDetailScreen() {
 
     if (proofToOpen) {
       setTimeout(() => {
-        setSelectedProof(proofToOpen);
-        setShowViewProofModal(true);
         window.history.replaceState({}, '', window.location.pathname);
+        // If it's a rejected proof belonging to the current member → go straight to resubmit
+        if (
+          proofToOpen.status === 'rejected' &&
+          currentUser &&
+          proofToOpen.submitted_by === currentUser.id
+        ) {
+          const expense = expenses.find(e => e.id === proofToOpen.expense_id);
+          if (expense) {
+            setSelectedExpense(expense);
+            resetProofForm();
+            setShowResubmitModal(true);
+          }
+        } else {
+          setSelectedProof(proofToOpen);
+          setShowViewProofModal(true);
+        }
       }, 500);
     }
-  }, [openProofExpenseId, openProofId, allPaymentProofs]);
+  }, [openProofExpenseId, openProofId, allPaymentProofs, currentUser, expenses]);
 
   useEffect(() => {
     if (!currentUser || !group) return;
@@ -530,6 +544,7 @@ export default function GroupDetailScreen() {
       type: 'payment_rejected',
       link_path: `/groups/${id}`,
       link_state: JSON.stringify({ type: contextType }),
+      link_query: `openProof=${selectedProof.expense_id}&proofId=${selectedProof.id}`,
     });
     setShowRejectProofModal(false);
     setRejectProofReason('');
@@ -732,29 +747,25 @@ export default function GroupDetailScreen() {
                     </div>
                   )}
 
-                  {/* MEMBER: RESUBMIT BUTTON - This is what you need */}
+                  {/* MEMBER: Rejected proof — show notice + Resubmit button only, NO view of old proof */}
                   {!isAdmin && myRejectedProof && expense.status !== 'paid' && (
-                    <div className="owe-row" style={{ marginTop: 8, flexDirection: 'column', alignItems: 'flex-start', gap: 6 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                        <span style={{ fontSize: 11, color: '#e53e3e', background: '#ffe5e5', padding: '4px 10px', borderRadius: 50 }}>
-                          ❌ Proof Rejected
-                        </span>
+                    <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <div style={{ background: '#ffe5e5', borderRadius: 10, padding: '8px 12px' }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: '#e53e3e', marginBottom: 2 }}>
+                          ❌ Your proof was rejected
+                        </div>
                         {myRejectedProof.rejection_reason && (
-                          <span style={{ fontSize: 11, color: '#9E8FCC' }}>
+                          <div style={{ fontSize: 11, color: '#c53030', lineHeight: 1.4 }}>
                             Reason: {myRejectedProof.rejection_reason}
-                          </span>
+                          </div>
                         )}
-                        <button
-                          className="view-proof-btn"
-                          style={{ display: 'flex', alignItems: 'center', gap: 6 }}
-                          onClick={() => openProofModal(myRejectedProof)}
-                        >
-                          <Eye size={14} /> View Rejected Proof
-                        </button>
+                        <div style={{ fontSize: 11, color: '#9E8FCC', marginTop: 4 }}>
+                          Please submit a new, clear screenshot of your payment.
+                        </div>
                       </div>
                       <button
                         className="pay-btn-small"
-                        style={{ background: '#e53e3e', marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }}
+                        style={{ background: '#e53e3e', display: 'flex', alignItems: 'center', gap: 6, alignSelf: 'flex-start' }}
                         onClick={() => {
                           setSelectedExpense(expense);
                           resetProofForm();
