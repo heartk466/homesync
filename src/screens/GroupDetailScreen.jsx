@@ -24,11 +24,13 @@ export default function GroupDetailScreen() {
   const location = useLocation();
   const contextType = location.state?.type || 'group';
 
-  // Support deep-link from notification: ?openProof=<expense_id>
+  // Deep-link from notification: ?openProof=<expense_id>&proofId=<proof_id>
   const searchParams = new URLSearchParams(location.search);
   const openProofExpenseId = searchParams.get('openProof');
+  const openProofId = searchParams.get('proofId');
 
   const proofInputRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   const [group, setGroup] = useState(null);
   const [members, setMembers] = useState([]);
@@ -204,9 +206,14 @@ export default function GroupDetailScreen() {
   useEffect(() => {
     if (!openProofExpenseId || allPaymentProofs.length === 0 || expenses.length === 0) return;
 
-    const proofToOpen = allPaymentProofs.find(
-      p => p.expense_id === openProofExpenseId && p.status === 'pending_verification'
-    ) || allPaymentProofs.find(p => p.expense_id === openProofExpenseId);
+    // Try to find by specific proof ID first, then by expense ID
+    let proofToOpen = null;
+    if (openProofId) {
+      proofToOpen = allPaymentProofs.find(p => p.id === openProofId);
+    }
+    if (!proofToOpen) {
+      proofToOpen = allPaymentProofs.find(p => p.expense_id === openProofExpenseId);
+    }
 
     if (proofToOpen) {
       setSelectedProof(proofToOpen);
@@ -214,7 +221,7 @@ export default function GroupDetailScreen() {
       // Clean the URL so refreshing doesn't re-open it
       window.history.replaceState({}, '', window.location.pathname);
     }
-  }, [openProofExpenseId, allPaymentProofs, expenses]);
+  }, [openProofExpenseId, openProofId, allPaymentProofs, expenses]);
 
   // Realtime subscriptions
   useEffect(() => {
@@ -227,7 +234,7 @@ export default function GroupDetailScreen() {
         filter: `${expenseColumn}=eq.${id}`,
       }, () => fetchGroupAndData())
       .on('postgres_changes', {
-        event: 'INSERT', schema: 'public', table: 'payment_proofs',
+        event: '*', schema: 'public', table: 'payment_proofs',
       }, () => fetchGroupAndData())
       .subscribe();
     return () => supabase.removeChannel(channel);
@@ -273,13 +280,10 @@ export default function GroupDetailScreen() {
     }
   };
 
-  // Helper: open proof modal for a specific expense (for owner viewing member proofs)
-  const openProofForExpense = (expense) => {
-    const proof = allPaymentProofs.find(p => p.expense_id === expense.id);
-    if (proof) {
-      setSelectedProof(proof);
-      setShowViewProofModal(true);
-    }
+  // Helper: open proof modal for a specific proof
+  const openProofModal = (proof) => {
+    setSelectedProof(proof);
+    setShowViewProofModal(true);
   };
 
   // ---------- Expense actions ----------
@@ -346,6 +350,7 @@ export default function GroupDetailScreen() {
           type: 'approval_request',
           link_path: `/groups/${id}`,
           link_state: JSON.stringify({ type: contextType }),
+          link_query: `openExpense=${expenseForm.id}`,
         });
       }
       fetchGroupAndData();
@@ -362,6 +367,7 @@ export default function GroupDetailScreen() {
       type: 'approval',
       link_path: `/groups/${id}`,
       link_state: JSON.stringify({ type: contextType }),
+      link_query: `openExpense=${expense.id}`,
     });
     showToast('Expense approved');
     fetchGroupAndData();
@@ -451,6 +457,7 @@ export default function GroupDetailScreen() {
   const handleSubmitProof = async () => {
     if (!proofForm.screenshot) { showToast('Please upload a screenshot', 'error'); return; }
     setLoadingAction(true);
+    
     const fileExt = proofForm.screenshot.name.split('.').pop();
     const fileName = `${currentUser.id}-${selectedExpense.id}-${Date.now()}.${fileExt}`;
     const { error: uploadError } = await supabase.storage
@@ -485,10 +492,9 @@ export default function GroupDetailScreen() {
           title: '✅ Payment Confirmed by Owner',
           message: `${profile?.full_name} confirmed payment for "${selectedExpense.title}". Tap to view proof.`,
           type: 'payment_confirmed',
-          // Members can click to view the owner's proof screenshot
           link_path: `/groups/${id}`,
           link_state: JSON.stringify({ type: contextType }),
-          link_query: `openProof=${selectedExpense.id}`,
+          link_query: `openProof=${selectedExpense.id}&proofId=${insertedProof.id}`,
         });
       }
     } else {
@@ -500,10 +506,9 @@ export default function GroupDetailScreen() {
         title: '📸 Payment Proof Submitted',
         message: `${profile?.full_name} submitted proof for "${selectedExpense.title}". Tap to review.`,
         type: 'payment_proof',
-        // Owner can click to go straight to that expense's proof
         link_path: `/groups/${id}`,
         link_state: JSON.stringify({ type: contextType }),
-        link_query: `openProof=${selectedExpense.id}`,
+        link_query: `openProof=${selectedExpense.id}&proofId=${insertedProof.id}`,
       });
     }
 
@@ -526,6 +531,7 @@ export default function GroupDetailScreen() {
       type: 'payment_confirmed',
       link_path: `/groups/${id}`,
       link_state: JSON.stringify({ type: contextType }),
+      link_query: `openProof=${proof.expense_id}&proofId=${proof.id}`,
     });
     setShowViewProofModal(false);
     showToast('Payment confirmed');
@@ -642,30 +648,6 @@ export default function GroupDetailScreen() {
         </div>
       )}
 
-      {/* Pending payment proofs (admin only) */}
-      {isAdmin && pendingPaymentProofs.length > 0 && (
-        <div className="detail-pending-section">
-          <h3 className="section-title">📸 Proofs to Verify ({pendingPaymentProofs.length})</h3>
-          {pendingPaymentProofs.map(proof => (
-            <div key={proof.id} className="pending-item">
-              <div>
-                <strong>{proof.profiles?.full_name}</strong>
-                <br />
-                <span style={{ fontSize: 11, color: '#9E8FCC' }}>{proof.note || 'No note'}</span>
-              </div>
-              <div className="pending-actions">
-                <button
-                  className="view-proof-btn"
-                  onClick={() => { setSelectedProof(proof); setShowViewProofModal(true); }}
-                >
-                  👁 View Proof
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
       {/* Expenses list */}
       <div className="detail-expenses-section">
         <h3 className="section-title">📋 Expenses ({expenses.length})</h3>
@@ -683,22 +665,26 @@ export default function GroupDetailScreen() {
               && expense.approval_status === 'approved'
               && myShare;
 
-            // Proof submitted by a member, pending owner review
-            const memberPendingProof = allPaymentProofs.find(
-              p => p.expense_id === expense.id && p.status === 'pending_verification'
+            // Find all proofs for this expense
+            const proofsForExpense = allPaymentProofs.filter(p => p.expense_id === expense.id);
+            
+            // Member pending proof (submitted by member, waiting for owner)
+            const memberPendingProof = proofsForExpense.find(
+              p => p.status === 'pending_verification' && p.submitted_by !== group?.created_by
             );
-
-            // Proof submitted & verified by owner (auto-confirms)
-            const ownerVerifiedProof = allPaymentProofs.find(
-              p => p.expense_id === expense.id
-                && p.status === 'verified'
-                && p.submitted_by === (group?.created_by)
+            
+            // Owner submitted proof (verified)
+            const ownerVerifiedProof = proofsForExpense.find(
+              p => p.status === 'verified' && p.submitted_by === group?.created_by
             );
-
-            // Any proof for non-admin members to view (owner proof or their own verified proof)
-            const myVerifiedProof = !isAdmin && allPaymentProofs.find(
-              p => p.expense_id === expense.id && p.status === 'verified'
+            
+            // Member's own submitted proof
+            const mySubmittedProof = proofsForExpense.find(
+              p => p.submitted_by === currentUser?.id && p.status === 'pending_verification'
             );
+            
+            // Any verified proof that members can view
+            const anyVerifiedProof = proofsForExpense.find(p => p.status === 'verified');
 
             return (
               <div key={expense.id} className="expense-item-detail">
@@ -713,67 +699,60 @@ export default function GroupDetailScreen() {
                     {expense.expense_date}{expense.location ? ` • ${expense.location}` : ''}
                   </div>
 
-                  {/* Owner sees member's pending proof — clickable eye icon */}
+                  {/* OWNER: Member pending proof - CLICKABLE EYE ICON */}
                   {isAdmin && memberPendingProof && (
                     <div className="owe-row" style={{ marginTop: 6 }}>
-                      <span className="pending-proof-indicator">📸 Member proof waiting</span>
                       <button
                         className="view-proof-btn"
-                        style={{ display: 'flex', alignItems: 'center', gap: 4 }}
-                        onClick={() => { setSelectedProof(memberPendingProof); setShowViewProofModal(true); }}
+                        style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+                        onClick={() => openProofModal(memberPendingProof)}
                       >
-                        <Eye size={13} /> View
+                        <Eye size={14} /> View Member's Proof
                       </button>
                     </div>
                   )}
 
-                  {/* Owner sees their own verified proof (already sent) */}
+                  {/* OWNER: Owner's own verified proof */}
                   {isAdmin && ownerVerifiedProof && (
                     <div className="owe-row" style={{ marginTop: 6 }}>
-                      <span className="pending-proof-indicator" style={{ background: '#D1FAE5', color: '#065F46' }}>
-                        ✅ You confirmed payment
-                      </span>
                       <button
                         className="view-proof-btn"
-                        onClick={() => { setSelectedProof(ownerVerifiedProof); setShowViewProofModal(true); }}
+                        style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#D1FAE5', color: '#065F46' }}
+                        onClick={() => openProofModal(ownerVerifiedProof)}
                       >
-                        View
+                        <Eye size={14} /> View Your Payment Proof
                       </button>
                     </div>
                   )}
 
-                  {/* Member sees owner confirmed payment + view proof */}
-                  {!isAdmin && ownerVerifiedProof && (
+                  {/* MEMBER: Owner verified proof - clickable to view */}
+                  {!isAdmin && anyVerifiedProof && (
                     <div className="owe-row" style={{ marginTop: 6 }}>
-                      <span className="pending-proof-indicator" style={{ background: '#D1FAE5', color: '#065F46' }}>
-                        ✅ Owner confirmed payment
-                      </span>
                       <button
                         className="view-proof-btn"
-                        style={{ display: 'flex', alignItems: 'center', gap: 4 }}
-                        onClick={() => { setSelectedProof(ownerVerifiedProof); setShowViewProofModal(true); }}
+                        style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#D1FAE5', color: '#065F46' }}
+                        onClick={() => openProofModal(anyVerifiedProof)}
                       >
-                        <Eye size={13} /> View
+                        <Eye size={14} /> View Owner's Payment Proof
                       </button>
                     </div>
                   )}
 
-                  {/* Member sees their own pending proof */}
-                  {!isAdmin && memberPendingProof && memberPendingProof.submitted_by === currentUser?.id && (
+                  {/* MEMBER: Own pending proof */}
+                  {!isAdmin && mySubmittedProof && (
                     <div className="owe-row" style={{ marginTop: 6 }}>
-                      <span className="pending-proof-indicator">⏳ Your proof is being reviewed</span>
                       <button
                         className="view-proof-btn"
-                        style={{ display: 'flex', alignItems: 'center', gap: 4 }}
-                        onClick={() => { setSelectedProof(memberPendingProof); setShowViewProofModal(true); }}
+                        style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+                        onClick={() => openProofModal(mySubmittedProof)}
                       >
-                        <Eye size={13} /> View
+                        <Eye size={14} /> View Your Proof (Pending)
                       </button>
                     </div>
                   )}
 
                   {/* Member: owe row with Pay button */}
-                  {isOwed && !memberPendingProof && (
+                  {isOwed && !memberPendingProof && !mySubmittedProof && !anyVerifiedProof && (
                     <div className="owe-row">
                       <span>You owe ₱{Number(myShare).toFixed(2)}</span>
                       <button
@@ -800,7 +779,7 @@ export default function GroupDetailScreen() {
                           setShowOwnerProofModal(true);
                         }}
                       >
-                        Submit Proof
+                        Submit Payment Proof
                       </button>
                     </div>
                   )}
@@ -934,7 +913,7 @@ export default function GroupDetailScreen() {
         </div>
       )}
 
-      {/* View proof modal — used by both owner (reviewing member proof) and members (viewing owner proof) */}
+      {/* View proof modal - WORKS FOR BOTH OWNER AND MEMBERS */}
       {showViewProofModal && selectedProof && (
         <div className="modal-overlay-detail">
           <div className="modal-detail-card">
@@ -963,7 +942,7 @@ export default function GroupDetailScreen() {
                 </div>
               </div>
 
-              {/* Screenshot */}
+              {/* Screenshot - CLICKABLE TO OPEN FULL SIZE */}
               <img
                 src={selectedProof.screenshot_url}
                 className="proof-preview"

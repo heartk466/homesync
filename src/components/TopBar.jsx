@@ -130,41 +130,41 @@ export default function TopBar({
   };
 
   /**
-   * Handle notification tap — works like Facebook notifications.
-   * Navigates to the linked screen and, if a link_query is stored,
-   * appends it so the destination screen can open the right modal.
-   *
-   * Notification rows in the DB should have these optional columns:
-   *   link_path  TEXT  — e.g. "/groups/abc-123"
-   *   link_state TEXT  — JSON string, e.g. '{"type":"group"}'
-   *   link_query TEXT  — e.g. "openProof=expense-id-here"
-   */
-  const handleNotificationClick = async (notification) => {
-    // Mark this notification as read
-    if (!notification.is_read) {
-      await supabase
-        .from('notifications')
-        .update({ is_read: true })
-        .eq('id', notification.id);
-      if (onMarkAllRead) onMarkAllRead(); // refresh parent counts
-    }
+ * Handle notification tap — works like Facebook notifications.
+ * Navigates to the linked screen and, if a link_query is stored,
+ * appends it so the destination screen can open the right modal.
+ *
+ * Notification rows in the DB should have these optional columns:
+ *   link_path  TEXT  — e.g. "/groups/abc-123"
+ *   link_state TEXT  — JSON string, e.g. '{"type":"group"}'
+ *   link_query TEXT  — e.g. "openProof=expense-id-here&proofId=proof-id-here"
+ */
+const handleNotificationClick = async (notification) => {
+  // Mark this notification as read
+  if (!notification.is_read) {
+    await supabase
+      .from('notifications')
+      .update({ is_read: true })
+      .eq('id', notification.id);
+    if (onMarkAllRead) onMarkAllRead(); // refresh parent counts
+  }
 
-    setShowNotifications(false);
+  setShowNotifications(false);
 
-    if (!notification.link_path) return;
+  if (!notification.link_path) return;
 
-    // Build destination URL with optional query string
-    const query = notification.link_query ? `?${notification.link_query}` : '';
-    const destination = `${notification.link_path}${query}`;
+  // Build destination URL with optional query string
+  const query = notification.link_query ? `?${notification.link_query}` : '';
+  const destination = `${notification.link_path}${query}`;
 
-    // Parse link_state back to object for react-router state
-    let state = {};
-    try {
-      if (notification.link_state) state = JSON.parse(notification.link_state);
-    } catch (_) {}
+  // Parse link_state back to object for react-router state
+  let state = {};
+  try {
+    if (notification.link_state) state = JSON.parse(notification.link_state);
+  } catch (_) {}
 
-    navigate(destination, { state });
-  };
+  navigate(destination, { state });
+};
 
   /** Icon/emoji per notification type for quick visual scanning */
   const getNotificationIcon = (type) => {
