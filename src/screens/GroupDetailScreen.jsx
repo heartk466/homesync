@@ -30,7 +30,6 @@ export default function GroupDetailScreen() {
   const openProofId = searchParams.get('proofId');
 
   const proofInputRef = useRef(null);
-  const fileInputRef = useRef(null);
 
   const [group, setGroup] = useState(null);
   const [members, setMembers] = useState([]);
@@ -206,7 +205,6 @@ export default function GroupDetailScreen() {
   useEffect(() => {
     if (!openProofExpenseId || allPaymentProofs.length === 0 || expenses.length === 0) return;
 
-    // Try to find by specific proof ID first, then by expense ID
     let proofToOpen = null;
     if (openProofId) {
       proofToOpen = allPaymentProofs.find(p => p.id === openProofId);
@@ -218,7 +216,6 @@ export default function GroupDetailScreen() {
     if (proofToOpen) {
       setSelectedProof(proofToOpen);
       setShowViewProofModal(true);
-      // Clean the URL so refreshing doesn't re-open it
       window.history.replaceState({}, '', window.location.pathname);
     }
   }, [openProofExpenseId, openProofId, allPaymentProofs, expenses]);
@@ -481,7 +478,6 @@ export default function GroupDetailScreen() {
     }).select().single();
 
     if (isOwnerSubmitting) {
-      // Auto-mark paid, no member approval needed
       await supabase.from('expenses').update({ status: 'paid' }).eq('id', selectedExpense.id);
 
       const splits = selectedExpense.members_split || {};
@@ -498,7 +494,6 @@ export default function GroupDetailScreen() {
         });
       }
     } else {
-      // Member submitted — needs owner verification
       await supabase.from('expenses').update({ status: 'verifying' }).eq('id', selectedExpense.id);
 
       await supabase.from('notifications').insert({
@@ -659,7 +654,6 @@ export default function GroupDetailScreen() {
             const splits = expense.members_split || {};
             const myShare = splits[currentUser?.id];
 
-            // Is this member (not owner) owed money?
             const isOwed = expense.paid_by !== currentUser?.id
               && expense.status !== 'paid'
               && expense.approval_status === 'approved'
@@ -668,7 +662,7 @@ export default function GroupDetailScreen() {
             // Find all proofs for this expense
             const proofsForExpense = allPaymentProofs.filter(p => p.expense_id === expense.id);
             
-            // Member pending proof (submitted by member, waiting for owner)
+            // Member pending proof (submitted by member, waiting for owner) - FIXED CONDITION
             const memberPendingProof = proofsForExpense.find(
               p => p.status === 'pending_verification' && p.submitted_by !== group?.created_by
             );
@@ -699,7 +693,7 @@ export default function GroupDetailScreen() {
                     {expense.expense_date}{expense.location ? ` • ${expense.location}` : ''}
                   </div>
 
-                  {/* OWNER: Member pending proof - CLICKABLE EYE ICON */}
+                  {/* FIXED: OWNER - Member pending proof with CLICKABLE EYE ICON */}
                   {isAdmin && memberPendingProof && (
                     <div className="owe-row" style={{ marginTop: 6 }}>
                       <button
@@ -712,7 +706,7 @@ export default function GroupDetailScreen() {
                     </div>
                   )}
 
-                  {/* OWNER: Owner's own verified proof */}
+                  {/* OWNER - Owner's own verified proof */}
                   {isAdmin && ownerVerifiedProof && (
                     <div className="owe-row" style={{ marginTop: 6 }}>
                       <button
@@ -725,7 +719,7 @@ export default function GroupDetailScreen() {
                     </div>
                   )}
 
-                  {/* MEMBER: Owner verified proof - clickable to view */}
+                  {/* MEMBER - Owner verified proof */}
                   {!isAdmin && anyVerifiedProof && (
                     <div className="owe-row" style={{ marginTop: 6 }}>
                       <button
@@ -738,7 +732,7 @@ export default function GroupDetailScreen() {
                     </div>
                   )}
 
-                  {/* MEMBER: Own pending proof */}
+                  {/* MEMBER - Own pending proof */}
                   {!isAdmin && mySubmittedProof && (
                     <div className="owe-row" style={{ marginTop: 6 }}>
                       <button
@@ -768,7 +762,7 @@ export default function GroupDetailScreen() {
                     </div>
                   )}
 
-                  {/* Owner: submit proof that they paid (for expenses they paid) */}
+                  {/* Owner: submit proof that they paid */}
                   {isAdmin && expense.paid_by === currentUser?.id && expense.status !== 'paid' && !ownerVerifiedProof && (
                     <div className="owe-row">
                       <button
@@ -810,7 +804,7 @@ export default function GroupDetailScreen() {
 
       {/* ── MODALS ── */}
 
-      {/* Add Expense */}
+      {/* Add Expense Modal */}
       {showAddExpense && (
         <div className="modal-overlay-detail">
           <div className="modal-detail-card">
@@ -859,7 +853,7 @@ export default function GroupDetailScreen() {
         </div>
       )}
 
-      {/* Member submits payment proof */}
+      {/* Member submits payment proof Modal */}
       {showPaymentProofModal && (
         <div className="modal-overlay-detail">
           <div className="modal-detail-card">
@@ -886,7 +880,7 @@ export default function GroupDetailScreen() {
         </div>
       )}
 
-      {/* Owner submits proof they paid → auto-confirms for all members */}
+      {/* Owner submits proof Modal */}
       {showOwnerProofModal && (
         <div className="modal-overlay-detail">
           <div className="modal-detail-card">
@@ -913,7 +907,7 @@ export default function GroupDetailScreen() {
         </div>
       )}
 
-      {/* View proof modal - WORKS FOR BOTH OWNER AND MEMBERS */}
+      {/* View proof Modal */}
       {showViewProofModal && selectedProof && (
         <div className="modal-overlay-detail">
           <div className="modal-detail-card">
@@ -942,7 +936,7 @@ export default function GroupDetailScreen() {
                 </div>
               </div>
 
-              {/* Screenshot - CLICKABLE TO OPEN FULL SIZE */}
+              {/* Screenshot - CLICKABLE */}
               <img
                 src={selectedProof.screenshot_url}
                 className="proof-preview"
@@ -969,7 +963,7 @@ export default function GroupDetailScreen() {
                 {selectedProof.status === 'verified' ? '✅ Payment Verified' : selectedProof.status === 'rejected' ? '❌ Proof Rejected' : '⏳ Pending Verification'}
               </div>
 
-              {/* Owner action buttons — only if proof is from a member and still pending */}
+              {/* Owner action buttons */}
               {isAdmin && selectedProof.status === 'pending_verification' && selectedProof.submitted_by !== currentUser?.id && (
                 <>
                   <button className="add-expense-btn" onClick={() => handleConfirmPayment(selectedProof)}>
@@ -987,7 +981,7 @@ export default function GroupDetailScreen() {
         </div>
       )}
 
-      {/* Reject expense */}
+      {/* Reject expense Modal */}
       {showRejectModal && (
         <div className="modal-overlay-detail">
           <div className="modal-detail-card">
@@ -1001,7 +995,7 @@ export default function GroupDetailScreen() {
         </div>
       )}
 
-      {/* Delete expense */}
+      {/* Delete expense Modal */}
       {showDeleteModal && (
         <div className="modal-overlay-detail">
           <div className="modal-detail-card">
@@ -1016,7 +1010,7 @@ export default function GroupDetailScreen() {
         </div>
       )}
 
-      {/* Reject proof */}
+      {/* Reject proof Modal */}
       {showRejectProofModal && (
         <div className="modal-overlay-detail">
           <div className="modal-detail-card">
@@ -1030,7 +1024,7 @@ export default function GroupDetailScreen() {
         </div>
       )}
 
-      {/* Delete group */}
+      {/* Delete group Modal */}
       {showDeleteGroupModal && (
         <div className="modal-overlay-detail">
           <div className="modal-detail-card">
@@ -1047,7 +1041,7 @@ export default function GroupDetailScreen() {
         </div>
       )}
 
-      {/* Kick member */}
+      {/* Kick member Modal */}
       {showKickMemberModal && selectedMember && (
         <div className="modal-overlay-detail">
           <div className="modal-detail-card">
