@@ -843,8 +843,8 @@ export default function GroupDetailScreen() {
                     </div>
                   )}
 
-                  {/* Owner: submit proof */}
-                  {isAdmin && expense.paid_by === currentUser?.id && expense.status !== 'paid' && !ownerVerifiedProof && (
+                  {/* Owner: submit proof — always visible regardless of expense status */}
+                  {isAdmin && !ownerVerifiedProof && (
                     <div className="owe-row">
                       <button
                         className="pay-btn-small"
