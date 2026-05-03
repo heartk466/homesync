@@ -210,7 +210,7 @@ export default function GroupDetailScreen() {
     if (proofToOpen) {
       setTimeout(() => {
         window.history.replaceState({}, '', window.location.pathname);
-        // If it's a rejected proof belonging to the current member → go straight to resubmit
+        // Rejected proof belonging to current member → open resubmit directly
         if (
           proofToOpen.status === 'rejected' &&
           currentUser &&
@@ -530,6 +530,58 @@ export default function GroupDetailScreen() {
     fetchGroupAndData();
   };
 
+  // Owner submits their OWN proof — immediately verified, member can only view it
+  const handleOwnerSubmitProof = async () => {
+    if (!proofForm.screenshot) { showToast('Please upload a screenshot', 'error'); return; }
+    setLoadingAction(true);
+
+    const fileExt = proofForm.screenshot.name.split('.').pop();
+    const fileName = `${currentUser.id}-${selectedExpense.id}-owner-${Date.now()}.${fileExt}`;
+    const { error: uploadError } = await supabase.storage
+      .from('payment-proofs')
+      .upload(fileName, proofForm.screenshot, { upsert: true });
+    if (uploadError) {
+      showToast('Upload failed', 'error');
+      setLoadingAction(false);
+      return;
+    }
+    const { data: urlData } = supabase.storage.from('payment-proofs').getPublicUrl(fileName);
+
+    // Insert as already verified — owner doesn't need approval
+    const { data: insertedProof } = await supabase.from('payment_proofs').insert({
+      expense_id: selectedExpense.id,
+      submitted_by: currentUser.id,
+      screenshot_url: urlData.publicUrl,
+      note: proofForm.note,
+      status: 'verified',
+    }).select().single();
+
+    // Immediately mark expense as paid
+    await supabase.from('expenses').update({ status: 'paid' }).eq('id', selectedExpense.id);
+
+    // Notify all members in the split that payment is confirmed
+    const splits = selectedExpense.members_split || {};
+    const memberIds = Object.keys(splits).filter(uid => uid !== currentUser.id);
+    for (const memberId of memberIds) {
+      await supabase.from('notifications').insert({
+        user_id: memberId,
+        title: '✅ Payment Confirmed by Owner',
+        message: `The owner has confirmed payment for "${selectedExpense.title}". Tap to view proof.`,
+        type: 'payment_confirmed',
+        link_path: `/groups/${id}`,
+        link_state: JSON.stringify({ type: contextType }),
+        link_query: `openProof=${selectedExpense.id}&proofId=${insertedProof.id}`,
+      });
+    }
+
+    setShowOwnerProofModal(false);
+    resetProofForm();
+    setSelectedExpense(null);
+    showToast('Payment confirmed and proof saved!');
+    setLoadingAction(false);
+    fetchGroupAndData();
+  };
+
   const handleRejectProof = async () => {
     if (!rejectProofReason.trim()) { showToast('Please provide a reason', 'error'); return; }
     await supabase.from('payment_proofs').update({
@@ -721,13 +773,13 @@ export default function GroupDetailScreen() {
                     </div>
                   )}
 
-                  {/* MEMBER: Owner verified proof */}
-                  {!isAdmin && anyVerifiedProof && (
+                  {/* MEMBER: View Owner's proof — only if owner submitted it */}
+                  {!isAdmin && ownerVerifiedProof && (
                     <div className="owe-row" style={{ marginTop: 6 }}>
                       <button
                         className="view-proof-btn"
                         style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#D1FAE5', color: '#065F46' }}
-                        onClick={() => openProofModal(anyVerifiedProof)}
+                        onClick={() => openProofModal(ownerVerifiedProof)}
                       >
                         <Eye size={14} /> View Owner's Payment Proof
                       </button>
@@ -747,7 +799,7 @@ export default function GroupDetailScreen() {
                     </div>
                   )}
 
-                  {/* MEMBER: Rejected proof — show notice + Resubmit button only, NO view of old proof */}
+                  {/* MEMBER: Rejected proof — show notice + Resubmit only, no view of old proof */}
                   {!isAdmin && myRejectedProof && expense.status !== 'paid' && (
                     <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
                       <div style={{ background: '#ffe5e5', borderRadius: 10, padding: '8px 12px' }}>
@@ -958,7 +1010,7 @@ export default function GroupDetailScreen() {
               <div style={{ background: '#F0EDFF', borderRadius: 12, padding: '10px 14px', fontSize: 12, color: '#3B2AAB', textAlign: 'center' }}>
                 📢 This will <strong>automatically mark the expense as paid</strong> for all members.
               </div>
-              <button className="add-expense-btn" onClick={() => handleSubmitProof(false)} disabled={loadingAction}>{loadingAction ? 'Confirming...' : 'Confirm Payment'}</button>
+              <button className="add-expense-btn" onClick={handleOwnerSubmitProof} disabled={loadingAction}>{loadingAction ? 'Confirming...' : 'Confirm Payment'}</button>
               <button className="cancel-btn" onClick={() => setShowOwnerProofModal(false)}>Cancel</button>
             </div>
           </div>
