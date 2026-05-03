@@ -24,7 +24,7 @@ export default function GroupDetailScreen() {
   const location = useLocation();
   const contextType = location.state?.type || 'group';
 
-  // Deep-link from notification: ?openProof=<expense_id>&proofId=<proof_id>
+  // Deep-link from notification
   const searchParams = new URLSearchParams(location.search);
   const openProofExpenseId = searchParams.get('openProof');
   const openProofId = searchParams.get('proofId');
@@ -40,7 +40,6 @@ export default function GroupDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // UI states for modals
   const [showAddExpense, setShowAddExpense] = useState(false);
   const [showPaymentProofModal, setShowPaymentProofModal] = useState(false);
   const [showViewProofModal, setShowViewProofModal] = useState(false);
@@ -61,7 +60,6 @@ export default function GroupDetailScreen() {
   const [toast, setToast] = useState(null);
   const [loadingAction, setLoadingAction] = useState(false);
 
-  // Add expense form
   const [expenseForm, setExpenseForm] = useState({
     title: '', amount: '', category: 'Food',
     expense_date: new Date().toISOString().split('T')[0],
@@ -70,7 +68,6 @@ export default function GroupDetailScreen() {
   });
   const [expenseErrors, setExpenseErrors] = useState({});
 
-  // Payment proof form
   const [proofForm, setProofForm] = useState({
     note: '', screenshot: null, screenshotPreview: null, submittedBy: 'member'
   });
@@ -80,7 +77,6 @@ export default function GroupDetailScreen() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  // ---------- Data fetching ----------
   const fetchGroupAndData = useCallback(async () => {
     try {
       setLoading(true);
@@ -117,7 +113,6 @@ export default function GroupDetailScreen() {
       }
       setGroup(groupData);
 
-      // Fetch members
       let membersData = [];
       if (contextType === 'household') {
         const { data, error } = await supabase
@@ -201,24 +196,30 @@ export default function GroupDetailScreen() {
     fetchGroupAndData();
   }, [fetchGroupAndData]);
 
-  // Deep-link: auto-open proof modal when navigated from a notification
+  // Deep-link: auto-open proof modal from notification
   useEffect(() => {
-    if (!openProofExpenseId || allPaymentProofs.length === 0 || expenses.length === 0) return;
-
+    if (allPaymentProofs.length === 0) return;
+    
+    console.log("Checking deep-link...", { openProofExpenseId, openProofId });
+    
     let proofToOpen = null;
     if (openProofId) {
       proofToOpen = allPaymentProofs.find(p => p.id === openProofId);
     }
-    if (!proofToOpen) {
+    if (!proofToOpen && openProofExpenseId) {
       proofToOpen = allPaymentProofs.find(p => p.expense_id === openProofExpenseId);
     }
 
     if (proofToOpen) {
-      setSelectedProof(proofToOpen);
-      setShowViewProofModal(true);
-      window.history.replaceState({}, '', window.location.pathname);
+      console.log("Found proof to open:", proofToOpen);
+      setTimeout(() => {
+        setSelectedProof(proofToOpen);
+        setShowViewProofModal(true);
+        // Clean URL
+        window.history.replaceState({}, '', window.location.pathname);
+      }, 500);
     }
-  }, [openProofExpenseId, openProofId, allPaymentProofs, expenses]);
+  }, [openProofExpenseId, openProofId, allPaymentProofs]);
 
   // Realtime subscriptions
   useEffect(() => {
@@ -237,7 +238,6 @@ export default function GroupDetailScreen() {
     return () => supabase.removeChannel(channel);
   }, [currentUser, group, id, contextType, fetchGroupAndData]);
 
-  // ---------- Helpers ----------
   const resetExpenseForm = () => {
     setExpenseForm({
       title: '', amount: '', category: 'Food',
@@ -277,13 +277,11 @@ export default function GroupDetailScreen() {
     }
   };
 
-  // Helper: open proof modal for a specific proof
   const openProofModal = (proof) => {
     setSelectedProof(proof);
     setShowViewProofModal(true);
   };
 
-  // ---------- Expense actions ----------
   const handleAddExpense = async () => {
     const errors = {};
     if (!expenseForm.title.trim()) errors.title = 'Title required';
@@ -347,7 +345,6 @@ export default function GroupDetailScreen() {
           type: 'approval_request',
           link_path: `/groups/${id}`,
           link_state: JSON.stringify({ type: contextType }),
-          link_query: `openExpense=${expenseForm.id}`,
         });
       }
       fetchGroupAndData();
@@ -364,7 +361,6 @@ export default function GroupDetailScreen() {
       type: 'approval',
       link_path: `/groups/${id}`,
       link_state: JSON.stringify({ type: contextType }),
-      link_query: `openExpense=${expense.id}`,
     });
     showToast('Expense approved');
     fetchGroupAndData();
@@ -555,7 +551,6 @@ export default function GroupDetailScreen() {
     fetchGroupAndData();
   };
 
-  // ---------- Render ----------
   if (loading) {
     return (
       <div className="group-detail-screen">
@@ -659,25 +654,20 @@ export default function GroupDetailScreen() {
               && expense.approval_status === 'approved'
               && myShare;
 
-            // Find all proofs for this expense
             const proofsForExpense = allPaymentProofs.filter(p => p.expense_id === expense.id);
             
-            // Member pending proof (submitted by member, waiting for owner) - FIXED CONDITION
             const memberPendingProof = proofsForExpense.find(
               p => p.status === 'pending_verification' && p.submitted_by !== group?.created_by
             );
             
-            // Owner submitted proof (verified)
             const ownerVerifiedProof = proofsForExpense.find(
               p => p.status === 'verified' && p.submitted_by === group?.created_by
             );
             
-            // Member's own submitted proof
             const mySubmittedProof = proofsForExpense.find(
               p => p.submitted_by === currentUser?.id && p.status === 'pending_verification'
             );
             
-            // Any verified proof that members can view
             const anyVerifiedProof = proofsForExpense.find(p => p.status === 'verified');
 
             return (
@@ -693,7 +683,7 @@ export default function GroupDetailScreen() {
                     {expense.expense_date}{expense.location ? ` • ${expense.location}` : ''}
                   </div>
 
-                  {/* FIXED: OWNER - Member pending proof with CLICKABLE EYE ICON */}
+                  {/* OWNER: Member pending proof with EYE ICON */}
                   {isAdmin && memberPendingProof && (
                     <div className="owe-row" style={{ marginTop: 6 }}>
                       <button
@@ -706,7 +696,7 @@ export default function GroupDetailScreen() {
                     </div>
                   )}
 
-                  {/* OWNER - Owner's own verified proof */}
+                  {/* OWNER: Owner's own verified proof */}
                   {isAdmin && ownerVerifiedProof && (
                     <div className="owe-row" style={{ marginTop: 6 }}>
                       <button
@@ -719,7 +709,7 @@ export default function GroupDetailScreen() {
                     </div>
                   )}
 
-                  {/* MEMBER - Owner verified proof */}
+                  {/* MEMBER: Owner verified proof */}
                   {!isAdmin && anyVerifiedProof && (
                     <div className="owe-row" style={{ marginTop: 6 }}>
                       <button
@@ -732,7 +722,7 @@ export default function GroupDetailScreen() {
                     </div>
                   )}
 
-                  {/* MEMBER - Own pending proof */}
+                  {/* MEMBER: Own pending proof */}
                   {!isAdmin && mySubmittedProof && (
                     <div className="owe-row" style={{ marginTop: 6 }}>
                       <button
@@ -801,8 +791,6 @@ export default function GroupDetailScreen() {
 
       {/* FAB */}
       <button className="fab-detail" onClick={() => setShowAddExpense(true)}><Plus size={24} /></button>
-
-      {/* ── MODALS ── */}
 
       {/* Add Expense Modal */}
       {showAddExpense && (
@@ -920,7 +908,6 @@ export default function GroupDetailScreen() {
               <button className="modal-close" onClick={() => setShowViewProofModal(false)}><X size={20} /></button>
             </div>
             <div className="modal-body-scroll">
-              {/* Submitter info */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: '#F8F6FF', borderRadius: 12, padding: '10px 14px', marginBottom: 4 }}>
                 <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#3B2AAB', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, flexShrink: 0 }}>
                   {selectedProof.profiles?.full_name?.[0]?.toUpperCase() || '?'}
@@ -936,7 +923,6 @@ export default function GroupDetailScreen() {
                 </div>
               </div>
 
-              {/* Screenshot - CLICKABLE */}
               <img
                 src={selectedProof.screenshot_url}
                 className="proof-preview"
@@ -946,14 +932,12 @@ export default function GroupDetailScreen() {
               />
               <p style={{ fontSize: 11, color: '#9E8FCC', textAlign: 'center', margin: '-4px 0 4px' }}>Tap image to open full size</p>
 
-              {/* Note */}
               {selectedProof.note && (
                 <div style={{ background: '#F8F6FF', borderRadius: 12, padding: '10px 14px', fontSize: 13, color: '#2D1A7A' }}>
                   💬 {selectedProof.note}
                 </div>
               )}
 
-              {/* Status */}
               <div style={{
                 textAlign: 'center', fontSize: 12, fontWeight: 600, padding: '8px',
                 borderRadius: 8,
@@ -963,7 +947,6 @@ export default function GroupDetailScreen() {
                 {selectedProof.status === 'verified' ? '✅ Payment Verified' : selectedProof.status === 'rejected' ? '❌ Proof Rejected' : '⏳ Pending Verification'}
               </div>
 
-              {/* Owner action buttons */}
               {isAdmin && selectedProof.status === 'pending_verification' && selectedProof.submitted_by !== currentUser?.id && (
                 <>
                   <button className="add-expense-btn" onClick={() => handleConfirmPayment(selectedProof)}>
