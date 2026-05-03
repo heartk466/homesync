@@ -210,7 +210,6 @@ export default function GroupDetailScreen() {
     if (proofToOpen) {
       setTimeout(() => {
         window.history.replaceState({}, '', window.location.pathname);
-        // Rejected proof belonging to current member → open resubmit directly
         if (
           proofToOpen.status === 'rejected' &&
           currentUser &&
@@ -329,6 +328,7 @@ export default function GroupDetailScreen() {
       title: expenseForm.title.trim(),
       amount: Number(expenseForm.amount),
       category: expenseForm.category,
+      expense_type: contextType === 'household' ? 'household' : 'group',
       expense_date: expenseForm.expense_date,
       location: expenseForm.location || group?.name,
       paid_by: expenseForm.who_paid,
@@ -547,7 +547,6 @@ export default function GroupDetailScreen() {
     }
     const { data: urlData } = supabase.storage.from('payment-proofs').getPublicUrl(fileName);
 
-    // Insert as already verified — owner doesn't need approval
     const { data: insertedProof } = await supabase.from('payment_proofs').insert({
       expense_id: selectedExpense.id,
       submitted_by: currentUser.id,
@@ -556,10 +555,8 @@ export default function GroupDetailScreen() {
       status: 'verified',
     }).select().single();
 
-    // Immediately mark expense as paid
     await supabase.from('expenses').update({ status: 'paid' }).eq('id', selectedExpense.id);
 
-    // Notify all members in the split that payment is confirmed
     const splits = selectedExpense.members_split || {};
     const memberIds = Object.keys(splits).filter(uid => uid !== currentUser.id);
     for (const memberId of memberIds) {
