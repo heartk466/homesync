@@ -44,11 +44,13 @@ export default function GroupDetailScreen() {
   const [showRejectProofModal, setShowRejectProofModal] = useState(false);
   const [showDeleteGroupModal, setShowDeleteGroupModal] = useState(false);
   const [showKickMemberModal, setShowKickMemberModal] = useState(false);
+  const [showOwnerProofModal, setShowOwnerProofModal] = useState(false);
   const [selectedMember, setSelectedMember] = useState(null);
   const [selectedExpense, setSelectedExpense] = useState(null);
   const [selectedProof, setSelectedProof] = useState(null);
   const [pendingApprovals, setPendingApprovals] = useState([]);
   const [pendingPaymentProofs, setPendingPaymentProofs] = useState([]);
+  const [allPaymentProofs, setAllPaymentProofs] = useState([]);
   const [rejectReason, setRejectReason] = useState('');
   const [rejectProofReason, setRejectProofReason] = useState('');
   const [toast, setToast] = useState(null);
@@ -65,7 +67,7 @@ export default function GroupDetailScreen() {
 
   // Payment proof form
   const [proofForm, setProofForm] = useState({
-    note: '', screenshot: null, screenshotPreview: null
+    note: '', screenshot: null, screenshotPreview: null, submittedBy: 'member' // 'member' or 'owner'
   });
 
   const showToast = (msg, type = 'success') => {
@@ -165,19 +167,22 @@ export default function GroupDetailScreen() {
       const allExpenses = expensesData || [];
       setExpenses(allExpenses);
 
+      // Fetch all payment proofs
+      if (allExpenses.length > 0) {
+        const { data: proofs } = await supabase
+          .from('payment_proofs')
+          .select(`*, profiles:submitted_by ( id, full_name, email, avatar_url )`)
+          .in('expense_id', allExpenses.map(e => e.id));
+        setAllPaymentProofs(proofs || []);
+      } else {
+        setAllPaymentProofs([]);
+      }
+
       // Admin: pending approvals and payment proofs
       if (adminStatus) {
         setPendingApprovals(allExpenses.filter(e => e.approval_status === 'pending_approval'));
-        if (allExpenses.length > 0) {
-          const { data: proofs } = await supabase
-            .from('payment_proofs')
-            .select(`*, profiles:submitted_by ( id, full_name, email, avatar_url )`)
-            .eq('status', 'pending_verification')
-            .in('expense_id', allExpenses.map(e => e.id));
-          setPendingPaymentProofs(proofs || []);
-        } else {
-          setPendingPaymentProofs([]);
-        }
+        const pendingProofs = (allExpenses.length > 0 ? allPaymentProofs : []).filter(p => p.status === 'pending_verification');
+        setPendingPaymentProofs(pendingProofs);
       } else {
         setPendingApprovals([]);
         setPendingPaymentProofs([]);
@@ -221,6 +226,7 @@ export default function GroupDetailScreen() {
       split_type: 'equal', selected_members: [], custom_splits: {}
     });
     setExpenseErrors({});
+    setProofForm({ note: '', screenshot: null, screenshotPreview: null, submittedBy: 'member' });
   };
 
   const getStatusBadge = (expense) => {
@@ -415,7 +421,7 @@ export default function GroupDetailScreen() {
     if (!proofForm.screenshot) { showToast('Please upload a screenshot', 'error'); return; }
     setLoadingAction(true);
     const fileExt = proofForm.screenshot.name.split('.').pop();
-    const fileName = `${currentUser.id}-${selectedExpense.id}.${fileExt}`;
+    const fileName = `${currentUser.id}-${selectedExpense.id}-${Date.now()}.${fileExt}`;
     const { error: uploadError } = await supabase.storage
       .from('payment-proofs')
       .upload(fileName, proofForm.screenshot, { upsert: true });
@@ -425,24 +431,50 @@ export default function GroupDetailScreen() {
       return;
     }
     const { data: urlData } = supabase.storage.from('payment-proofs').getPublicUrl(fileName);
+    
+    const isOwnerSubmitting = proofForm.submittedBy === 'owner' && isAdmin;
+    
     await supabase.from('payment_proofs').insert({
       expense_id: selectedExpense.id,
       submitted_by: currentUser.id,
       screenshot_url: urlData.publicUrl,
       note: proofForm.note,
-      status: 'pending_verification',
+      status: isOwnerSubmitting ? 'verified' : 'pending_verification',
     });
-    await supabase.from('expenses').update({ status: 'verifying' }).eq('id', selectedExpense.id);
-    await supabase.from('notifications').insert({
-      user_id: group?.created_by,
-      title: 'Payment Proof Submitted',
-      message: `${profile?.full_name} submitted proof for "${selectedExpense.title}"`,
-      type: 'payment_proof',
-    });
+    
+    // If owner submits, auto-confirm payment
+    if (isOwnerSubmitting) {
+      await supabase.from('expenses').update({ status: 'paid' }).eq('id', selectedExpense.id);
+      
+      // Notify all members who owe money
+      const splits = selectedExpense.members_split || {};
+      const memberIds = Object.keys(splits).filter(uid => uid !== currentUser.id);
+      for (const memberId of memberIds) {
+        await supabase.from('notifications').insert({
+          user_id: memberId,
+          title: '✅ Payment Confirmed by Owner',
+          message: `${profile?.full_name} confirmed payment for "${selectedExpense.title}"`,
+          type: 'payment_confirmed',
+        });
+      }
+    } else {
+      // Member submitted - set to verifying
+      await supabase.from('expenses').update({ status: 'verifying' }).eq('id', selectedExpense.id);
+      
+      // Notify owner
+      await supabase.from('notifications').insert({
+        user_id: group?.created_by,
+        title: 'Payment Proof Submitted',
+        message: `${profile?.full_name} submitted proof for "${selectedExpense.title}"`,
+        type: 'payment_proof',
+      });
+    }
+    
     setShowPaymentProofModal(false);
-    setProofForm({ note: '', screenshot: null, screenshotPreview: null });
+    setShowOwnerProofModal(false);
+    setProofForm({ note: '', screenshot: null, screenshotPreview: null, submittedBy: 'member' });
     setSelectedExpense(null);
-    showToast('Proof submitted for verification');
+    showToast(isOwnerSubmitting ? 'Payment confirmed!' : 'Proof submitted for verification');
     setLoadingAction(false);
     fetchGroupAndData();
   };
@@ -596,6 +628,7 @@ export default function GroupDetailScreen() {
             const myShare = splits[currentUser?.id];
             const isOwed = expense.paid_by !== currentUser?.id && expense.status !== 'paid' && expense.approval_status === 'approved' && myShare;
             const pendingProof = pendingPaymentProofs.find(p => p.expense_id === expense.id);
+            const ownerProof = allPaymentProofs.find(p => p.expense_id === expense.id && p.status === 'verified' && p.submitted_by === group?.created_by);
             return (
               <div key={expense.id} className="expense-item-detail">
                 <div className="expense-icon" style={{ background: CATEGORY_COLORS[expense.category] || '#3B2AAB' }}>
@@ -606,10 +639,21 @@ export default function GroupDetailScreen() {
                   <div className="expense-amount">₱{Number(expense.amount).toFixed(2)}</div>
                   <div className="expense-meta">{expense.expense_date}{expense.location ? ` • ${expense.location}` : ''}</div>
                   {pendingProof && <div className="pending-proof-indicator">📸 Proof pending verification</div>}
+                  {ownerProof && !isAdmin && <div className="pending-proof-indicator" style={{background:'#D1FAE5', color:'#065F46'}}>✅ Owner confirmed payment</div>}
+                  {ownerProof && !isAdmin && (
+                    <div className="owe-row">
+                      <button className="view-proof-btn" onClick={() => { setSelectedProof(ownerProof); setShowViewProofModal(true); }} style={{marginTop:4}}>View Proof</button>
+                    </div>
+                  )}
                   {isOwed && (
                     <div className="owe-row">
                       <span>You owe ₱{Number(myShare).toFixed(2)}</span>
-                      <button className="pay-btn-small" onClick={() => { setSelectedExpense(expense); setShowPaymentProofModal(true); }}>Pay</button>
+                      <button className="pay-btn-small" onClick={() => { setSelectedExpense(expense); setProofForm({...proofForm, submittedBy: 'member'}); setShowPaymentProofModal(true); }}>Pay</button>
+                    </div>
+                  )}
+                  {isAdmin && expense.paid_by === currentUser?.id && expense.status !== 'paid' && (
+                    <div className="owe-row">
+                      <button className="pay-btn-small" onClick={() => { setSelectedExpense(expense); setProofForm({...proofForm, submittedBy: 'owner'}); setShowOwnerProofModal(true); }}>Submit Proof</button>
                     </div>
                   )}
                 </div>
@@ -695,10 +739,33 @@ export default function GroupDetailScreen() {
             <div className="modal-header"><h2>Payment Proof</h2><button className="modal-close" onClick={() => setShowViewProofModal(false)}><X size={20} /></button></div>
             <div className="modal-body-scroll">
               <img src={selectedProof.screenshot_url} className="proof-preview" alt="proof" />
-              <p>{selectedProof.note}</p>
-              <button className="add-expense-btn" onClick={() => handleConfirmPayment(selectedProof)}>Confirm Payment</button>
-              <button className="delete-confirm-btn" onClick={() => { setShowViewProofModal(false); setShowRejectProofModal(true); }}>Reject Proof</button>
-              <button className="cancel-btn" onClick={() => setShowViewProofModal(false)}>Cancel</button>
+              <p style={{fontSize:13, color:'#2D1A7A'}}>{selectedProof.note || 'No note provided'}</p>
+              {selectedProof.status === 'pending_verification' && isAdmin && (
+                <>
+                  <button className="add-expense-btn" onClick={() => handleConfirmPayment(selectedProof)}>Confirm Payment</button>
+                  <button className="delete-confirm-btn" onClick={() => { setShowViewProofModal(false); setShowRejectProofModal(true); }}>Reject Proof</button>
+                </>
+              )}
+              {selectedProof.status === 'verified' && !isAdmin && (
+                <p style={{fontSize:12, color:'#038a3f', background:'#D1FAE5', padding:'8px', borderRadius:'8px', textAlign:'center'}}>✅ Payment confirmed by owner</p>
+              )}
+              <button className="cancel-btn" onClick={() => setShowViewProofModal(false)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showOwnerProofModal && (
+        <div className="modal-overlay-detail">
+          <div className="modal-detail-card">
+            <div className="modal-header"><h2>Confirm Payment</h2><button className="modal-close" onClick={() => setShowOwnerProofModal(false)}><X size={20} /></button></div>
+            <div className="modal-body-scroll">
+              {proofForm.screenshotPreview && <img src={proofForm.screenshotPreview} className="proof-preview" alt="proof" />}
+              <button className="upload-proof-btn" onClick={() => proofInputRef.current.click()}><Camera size={16} /> Upload Screenshot</button>
+              <textarea placeholder="Optional note" value={proofForm.note} onChange={e => setProofForm({...proofForm, note: e.target.value})} className="detail-textarea" />
+              <p style={{fontSize:12, color:'#9E8FCC', textAlign:'center'}}>This will automatically mark the payment as confirmed for all members</p>
+              <button className="add-expense-btn" onClick={handleSubmitProof} disabled={loadingAction}>{loadingAction ? 'Confirming...' : 'Confirm Payment'}</button>
+              <button className="cancel-btn" onClick={() => setShowOwnerProofModal(false)}>Cancel</button>
             </div>
           </div>
         </div>
