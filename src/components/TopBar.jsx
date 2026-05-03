@@ -129,6 +129,57 @@ export default function TopBar({
     navigate('/');
   };
 
+  /**
+   * Handle notification tap — works like Facebook notifications.
+   * Navigates to the linked screen and, if a link_query is stored,
+   * appends it so the destination screen can open the right modal.
+   *
+   * Notification rows in the DB should have these optional columns:
+   *   link_path  TEXT  — e.g. "/groups/abc-123"
+   *   link_state TEXT  — JSON string, e.g. '{"type":"group"}'
+   *   link_query TEXT  — e.g. "openProof=expense-id-here"
+   */
+  const handleNotificationClick = async (notification) => {
+    // Mark this notification as read
+    if (!notification.is_read) {
+      await supabase
+        .from('notifications')
+        .update({ is_read: true })
+        .eq('id', notification.id);
+      if (onMarkAllRead) onMarkAllRead(); // refresh parent counts
+    }
+
+    setShowNotifications(false);
+
+    if (!notification.link_path) return;
+
+    // Build destination URL with optional query string
+    const query = notification.link_query ? `?${notification.link_query}` : '';
+    const destination = `${notification.link_path}${query}`;
+
+    // Parse link_state back to object for react-router state
+    let state = {};
+    try {
+      if (notification.link_state) state = JSON.parse(notification.link_state);
+    } catch (_) {}
+
+    navigate(destination, { state });
+  };
+
+  /** Icon/emoji per notification type for quick visual scanning */
+  const getNotificationIcon = (type) => {
+    switch (type) {
+      case 'payment_proof':      return '📸';
+      case 'payment_confirmed':  return '✅';
+      case 'payment_rejected':   return '❌';
+      case 'approval_request':   return '⏳';
+      case 'approval':           return '✅';
+      case 'rejection':          return '❌';
+      case 'kicked':             return '🚪';
+      default:                   return '🔔';
+    }
+  };
+
   return (
     <>
       {/* Hidden file input */}
@@ -154,7 +205,6 @@ export default function TopBar({
               className="topbar-bell-btn"
               onClick={() => {
                 setShowNotifications(!showNotifications);
-                if (!showNotifications && onMarkAllRead) onMarkAllRead();
               }}
             >
               <Bell size={20}/>
@@ -182,7 +232,7 @@ export default function TopBar({
           <div className="topbar-notifications-panel" onClick={e => e.stopPropagation()}>
             <div className="notifications-header">
               <span>Notifications</span>
-              <button className="mark-read-btn" onClick={onMarkAllRead}>
+              <button className="mark-read-btn" onClick={() => { if (onMarkAllRead) onMarkAllRead(); }}>
                 Mark all read
               </button>
             </div>
@@ -190,12 +240,32 @@ export default function TopBar({
               <p className="no-notifications">No notifications yet</p>
             ) : (
               notifications.map(n => (
-                <div key={n.id} className={`notification-item ${!n.is_read ? 'unread' : ''}`}>
-                  <p className="notification-title">{n.title}</p>
-                  <p className="notification-msg">{n.message}</p>
-                  <p className="notification-time">
-                    {new Date(n.created_at).toLocaleString()}
-                  </p>
+                <div
+                  key={n.id}
+                  className={`notification-item ${!n.is_read ? 'unread' : ''} ${n.link_path ? 'notification-clickable' : ''}`}
+                  onClick={() => handleNotificationClick(n)}
+                  role={n.link_path ? 'button' : undefined}
+                  style={n.link_path ? { cursor: 'pointer' } : {}}
+                >
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                    <span style={{ fontSize: 18, flexShrink: 0, lineHeight: 1.3 }}>
+                      {getNotificationIcon(n.type)}
+                    </span>
+                    <div style={{ flex: 1 }}>
+                      <p className="notification-title">{n.title}</p>
+                      <p className="notification-msg">{n.message}</p>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <p className="notification-time">
+                          {new Date(n.created_at).toLocaleString()}
+                        </p>
+                        {n.link_path && (
+                          <span style={{ fontSize: 10, color: '#3B2AAB', fontWeight: 600, fontFamily: 'Poppins, sans-serif' }}>
+                            Tap to view →
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
                 </div>
               ))
             )}

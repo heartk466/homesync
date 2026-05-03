@@ -471,3 +471,16 @@
   font-size: 13px;
   cursor: pointer;
 }
+/* Clickable notification items (with link_path) — like Facebook */
+.notification-item.notification-clickable:hover {
+  background: #F0EDFF;
+  transition: background 0.15s ease;
+}
+
+.notification-item.notification-clickable:active {
+  background: #E0D9FF;
+}
+
+.notification-item.unread.notification-clickable:hover {
+  background: #E8E3FF;
+}
