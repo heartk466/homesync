@@ -785,7 +785,7 @@ export default function GroupDetailScreen() {
                       return (
                         <div key={split.id} className="member-split-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 0', borderTop: '1px solid #F0EDFF' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <div className="member-avatar-tooltip" style={{ width: 28, height: 28 }}>{getMemberAvatar(member || { profiles: split.profiles })}</div>
+                            <div className="member-avatar-tooltip" style={{ width: '28px', height: '28px', minWidth: '28px', minHeight: '28px' }}>{getMemberAvatar(member || { profiles: split.profiles })}</div>
                             <span style={{ fontSize: 12 }}>{split.profiles?.full_name}</span>
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
