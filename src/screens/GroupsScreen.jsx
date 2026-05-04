@@ -8,7 +8,7 @@ import {
 import TopBar from '../components/TopBar';
 import BottomNav from '../components/BottomNav';
 import './GroupsScreen.css';
-import { fetchHouseholdUtilitiesTotal } from '../utils/expenseUtils';
+import { UTILITY_CATEGORIES } from '../utils/expenseUtils';
 
 export default function GroupsScreen() {
   const navigate = useNavigate();
@@ -24,11 +24,9 @@ export default function GroupsScreen() {
   const [createLoading, setCreateLoading] = useState(false);
   const [joinLoading, setJoinLoading] = useState(false);
   const [toast, setToast] = useState(null);
-
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
 
-  // Keep a stable ref to fetchData so realtime callbacks always call the latest version
   const fetchDataRef = useRef(null);
 
   const showToast = (msg, type = 'success') => {
@@ -58,31 +56,90 @@ export default function GroupsScreen() {
     setUnreadCount(0);
   };
 
-  const fetchHouseholdSummary = useCallback(async (householdData, profileData) => {
+  // Helper to fetch expense splits
+  const fetchExpenseSplits = async (expenseIds) => {
+    if (!expenseIds.length) return {};
+    const { data, error } = await supabase
+      .from('expense_splits')
+      .select('expense_id, user_id, share_amount, status')
+      .in('expense_id', expenseIds);
+    if (error) {
+      console.error('Error fetching splits:', error);
+      return {};
+    }
+    const grouped = {};
+    data.forEach(split => {
+      if (!grouped[split.expense_id]) grouped[split.expense_id] = [];
+      grouped[split.expense_id].push(split);
+    });
+    return grouped;
+  };
+
+  const fetchHouseholdSummary = useCallback(async (householdData, profileData, user) => {
     if (!householdData || !profileData) return null;
+
     const now = new Date();
     const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
     const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
 
+    // Fetch expenses within the month
     const { data: expenses } = await supabase
       .from('expenses')
-      .select('amount, paid_by, status, members_split')
+      .select('id, amount, paid_by, status, approval_status, category')
       .eq('household_id', householdData.id)
-      .eq('approval_status', 'approved')
       .gte('expense_date', firstDay)
       .lte('expense_date', lastDay);
 
-    const total = (expenses || []).reduce((sum, e) => sum + Number(e.amount), 0);
-    let yourShare = 0, pendingOwed = 0;
-    (expenses || []).forEach(exp => {
-      const splits = exp.members_split || {};
-      const mySplit = splits[profileData.id];
-      if (mySplit) {
-        if (exp.paid_by !== profileData.id && exp.status !== 'paid') yourShare += Number(mySplit);
-        if (exp.paid_by === profileData.id && exp.status !== 'paid') pendingOwed += Number(mySplit);
+    if (!expenses || expenses.length === 0) {
+      const { count: memberCount } = await supabase
+        .from('household_members')
+        .select('*', { count: 'exact', head: true })
+        .eq('household_id', householdData.id)
+        .eq('status', 'active');
+      return {
+        id: householdData.id,
+        name: householdData.name,
+        code: householdData.code,
+        type: 'household',
+        memberCount: memberCount || 1,
+        totalExpenses: 0,
+        yourShare: 0,
+        pendingOwed: 0,
+        yourBalance: 0,
+        utilitiesTotal: 0,
+        role: householdData.created_by === profileData.id ? 'owner' : 'member',
+      };
+    }
+
+    const expenseIds = expenses.map(e => e.id);
+    const splitsMap = await fetchExpenseSplits(expenseIds);
+
+    let totalExpenses = 0;
+    let yourShare = 0;
+    let pendingOwed = 0;
+    let utilitiesTotal = 0;
+
+    for (const expense of expenses) {
+      const splits = splitsMap[expense.id] || [];
+      const mySplit = splits.find(s => s.user_id === user.id);
+      const hasApprovedSplit = splits.some(s => s.status === 'approved');
+      
+      // totalExpenses = sum of full expense amount if at least one split is approved
+      if (hasApprovedSplit) {
+        totalExpenses += Number(expense.amount);
       }
-    });
-    const balance = pendingOwed - yourShare;
+
+      if (mySplit) {
+        if (mySplit.status === 'approved') {
+          yourShare += Number(mySplit.share_amount);
+          if (UTILITY_CATEGORIES.includes(expense.category)) {
+            utilitiesTotal += Number(mySplit.share_amount);
+          }
+        } else {
+          pendingOwed += Number(mySplit.share_amount);
+        }
+      }
+    }
 
     const { count: memberCount } = await supabase
       .from('household_members')
@@ -96,10 +153,11 @@ export default function GroupsScreen() {
       code: householdData.code,
       type: 'household',
       memberCount: memberCount || 1,
-      totalExpenses: total,
+      totalExpenses,
       yourShare,
       pendingOwed,
-      yourBalance: balance,
+      yourBalance: pendingOwed - yourShare,
+      utilitiesTotal,
       role: householdData.created_by === profileData.id ? 'owner' : 'member',
     };
   }, []);
@@ -121,11 +179,69 @@ export default function GroupsScreen() {
 
     const householdsList = [];
     for (const hh of householdsData || []) {
-      const summary = await fetchHouseholdSummary(hh, profileData);
+      const summary = await fetchHouseholdSummary(hh, profileData, user);
       if (summary) householdsList.push(summary);
     }
     return householdsList;
   }, [fetchHouseholdSummary]);
+
+  const fetchGroupSpending = useCallback(async (group, user, firstDay, lastDay) => {
+    const { data: expenses } = await supabase
+      .from('expenses')
+      .select('id, amount, category')
+      .eq('group_id', group.id)
+      .gte('expense_date', firstDay)
+      .lte('expense_date', lastDay);
+
+    if (!expenses || expenses.length === 0) {
+      return {
+        ...group,
+        totalExpenses: 0,
+        yourShare: 0,
+        pendingOwed: 0,
+        yourBalance: 0,
+        utilitiesTotal: 0,
+      };
+    }
+
+    const expenseIds = expenses.map(e => e.id);
+    const splitsMap = await fetchExpenseSplits(expenseIds);
+
+    let totalExpenses = 0;
+    let yourShare = 0;
+    let pendingOwed = 0;
+    let utilitiesTotal = 0;
+
+    for (const expense of expenses) {
+      const splits = splitsMap[expense.id] || [];
+      const mySplit = splits.find(s => s.user_id === user.id);
+      const hasApprovedSplit = splits.some(s => s.status === 'approved');
+      
+      if (hasApprovedSplit) {
+        totalExpenses += Number(expense.amount);
+      }
+
+      if (mySplit) {
+        if (mySplit.status === 'approved') {
+          yourShare += Number(mySplit.share_amount);
+          if (UTILITY_CATEGORIES.includes(expense.category)) {
+            utilitiesTotal += Number(mySplit.share_amount);
+          }
+        } else {
+          pendingOwed += Number(mySplit.share_amount);
+        }
+      }
+    }
+
+    return {
+      ...group,
+      totalExpenses,
+      yourShare,
+      pendingOwed,
+      yourBalance: pendingOwed - yourShare,
+      utilitiesTotal,
+    };
+  }, []);
 
   const fetchData = useCallback(async () => {
     try {
@@ -145,114 +261,46 @@ export default function GroupsScreen() {
       const householdsList = await fetchAllHouseholds(user, profileData);
       setHouseholds(householdsList);
 
-      // Groups where user is a member
+      // Groups
       const { data: memberGroups } = await supabase
         .from('group_members')
         .select('group_id, role')
         .eq('user_id', user.id)
         .eq('status', 'active');
-
       const groupIds = (memberGroups || []).map(mg => mg.group_id);
-      let groupsData = [];
-      if (groupIds.length > 0) {
-        const { data } = await supabase
+      let groupsList = [];
+      if (groupIds.length) {
+        const { data: groupsData } = await supabase
           .from('groups')
           .select('*')
           .in('id', groupIds);
-        groupsData = data || [];
+        groupsList = groupsData || [];
       }
 
-      const groupsList = (memberGroups || []).map(mg => {
-        const group = groupsData?.find(g => g.id === mg.group_id);
-        return {
-          ...group,
-          role: mg.role,
-          memberCount: 0,
-          totalExpenses: 0,
-          yourShare: 0,
-          yourBalance: 0,
-          pendingOwed: 0,
-        };
-      }).filter(g => g.id);
-
-      // Fallback: groups created by user
-      const { data: createdGroups } = await supabase
-        .from('groups')
-        .select('*')
-        .eq('created_by', user.id);
-
-      if (createdGroups) {
-        createdGroups.forEach(cg => {
-          if (!groupsList.find(g => g.id === cg.id)) {
-            groupsList.push({
-              ...cg,
-              role: 'owner',
-              memberCount: 0,
-              totalExpenses: 0,
-              yourShare: 0,
-              yourBalance: 0,
-              pendingOwed: 0,
-            });
-          }
-        });
-      }
-
-      // Enrich groups with stats
       const now = new Date();
       const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
       const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
 
-      // Fetch utilities total for each group
-      const groupsWithUtilities = await Promise.all(
-        (groupsList || []).map(async (group) => {
-          const utilitiesTotal = await fetchHouseholdUtilitiesTotal(group.household_id || group.id);
-          return { ...group, utilitiesTotal };
+      const enrichedGroups = await Promise.all(
+        groupsList.map(async (group) => {
+          const { count: memberCount } = await supabase
+            .from('group_members')
+            .select('*', { count: 'exact', head: true })
+            .eq('group_id', group.id)
+            .eq('status', 'active');
+          const withStats = await fetchGroupSpending(group, user, firstDay, lastDay);
+          return { ...withStats, memberCount: memberCount || 0, role: 'member' };
         })
       );
 
-      for (const group of groupsWithUtilities) {
-        const { count: memberCount } = await supabase
-          .from('group_members')
-          .select('*', { count: 'exact', head: true })
-          .eq('group_id', group.id)
-          .eq('status', 'active');
-        group.memberCount = memberCount || 0;
-
-        const { data: groupExpenses } = await supabase
-          .from('expenses')
-          .select('amount, paid_by, status, members_split')
-          .eq('group_id', group.id)
-          .eq('approval_status', 'approved')
-          .gte('expense_date', firstDay)
-          .lte('expense_date', lastDay);
-
-        const total = (groupExpenses || []).reduce((sum, e) => sum + Number(e.amount), 0);
-        group.totalExpenses = total;
-
-        let yourShareTotal = 0;
-        let pendingOwedTotal = 0;
-        (groupExpenses || []).forEach(exp => {
-          const splits = exp.members_split || {};
-          const mySplit = splits[user.id];
-          if (mySplit) {
-            if (exp.paid_by !== user.id && exp.status !== 'paid') yourShareTotal += Number(mySplit);
-            if (exp.paid_by === user.id && exp.status !== 'paid') pendingOwedTotal += Number(mySplit);
-          }
-        });
-        group.yourShare = yourShareTotal;
-        group.pendingOwed = pendingOwedTotal;
-        group.yourBalance = pendingOwedTotal - yourShareTotal;
-      }
-
-      setGroups(groupsWithUtilities);
+      setGroups(enrichedGroups);
     } catch (err) {
       console.error(err);
     } finally {
       setLoading(false);
     }
-  }, [navigate, fetchHouseholdSummary, fetchAllHouseholds]);
+  }, [navigate, fetchAllHouseholds, fetchGroupSpending]);
 
-  // Keep ref in sync so realtime always calls latest fetchData
   useEffect(() => {
     fetchDataRef.current = fetchData;
   }, [fetchData]);
@@ -280,23 +328,22 @@ export default function GroupsScreen() {
     return () => supabase.removeChannel(channel);
   }, [profile?.id]);
 
-  // Realtime: expense changes → refresh groups/households stats
+  // Realtime: expense changes + split changes → refresh stats
   useEffect(() => {
     if (!profile?.id) return;
     const channel = supabase
       .channel('groups-expenses-watch')
-      .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'expenses',
-      }, () => {
-        // Use ref so we always call the latest fetchData without re-subscribing
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses' }, () => {
+        fetchDataRef.current?.();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'expense_splits' }, () => {
         fetchDataRef.current?.();
       })
       .subscribe();
     return () => supabase.removeChannel(channel);
-  }, [profile?.id]); // only re-subscribe when profile changes
+  }, [profile?.id]);
 
+  // ---------- Handlers (unchanged) ----------
   const handleCreateGroup = async () => {
     if (!createForm.name.trim()) {
       showToast('Group name is required', 'error');
@@ -306,32 +353,17 @@ export default function GroupsScreen() {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       const code = Math.random().toString(36).substring(2, 8).toUpperCase();
-
       const { data: group, error: groupError } = await supabase
         .from('groups')
-        .insert({
-          name: createForm.name.trim(),
-          description: createForm.description.trim() || null,
-          code,
-          created_by: user.id,
-        })
+        .insert({ name: createForm.name.trim(), description: createForm.description.trim() || null, code, created_by: user.id })
         .select()
         .single();
-
       if (groupError) throw groupError;
-
-      const { error: memberError } = await supabase.from('group_members').insert({
-        group_id: group.id,
-        user_id: user.id,
-        role: 'owner',
-        status: 'active',
-      });
-
+      const { error: memberError } = await supabase.from('group_members').insert({ group_id: group.id, user_id: user.id, role: 'owner', status: 'active' });
       if (memberError) {
         await supabase.from('groups').delete().eq('id', group.id);
         throw new Error('Failed to add you as member');
       }
-
       showToast(`Group "${group.name}" created! Code: ${code}`);
       setShowCreateModal(false);
       setCreateForm({ name: '', description: '' });
@@ -347,12 +379,10 @@ export default function GroupsScreen() {
       showToast('Enter a code', 'error');
       return;
     }
-
     if (joinType === 'household') {
       handleJoinHousehold();
       return;
     }
-
     setJoinLoading(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -361,35 +391,15 @@ export default function GroupsScreen() {
         .select('id, name')
         .eq('code', joinCode.trim().toUpperCase())
         .single();
-
-      if (findError || !group) {
-        showToast('Invalid group code', 'error');
-        return;
-      }
-
+      if (findError || !group) { showToast('Invalid group code', 'error'); return; }
       const { data: existing } = await supabase
         .from('group_members')
         .select('id')
         .eq('group_id', group.id)
         .eq('user_id', user.id);
-
-      if (existing && existing.length > 0) {
-        showToast('You are already a member of this group', 'error');
-        return;
-      }
-
-      const { error: insertError } = await supabase.from('group_members').insert({
-        group_id: group.id,
-        user_id: user.id,
-        role: 'member',
-        status: 'active',
-      });
-
-      if (insertError) {
-        showToast(`Failed to join: ${insertError.message}`, 'error');
-        return;
-      }
-
+      if (existing && existing.length > 0) { showToast('You are already a member of this group', 'error'); return; }
+      const { error: insertError } = await supabase.from('group_members').insert({ group_id: group.id, user_id: user.id, role: 'member', status: 'active' });
+      if (insertError) { showToast(`Failed to join: ${insertError.message}`, 'error'); return; }
       showToast(`Joined "${group.name}" successfully!`);
       setShowJoinModal(false);
       setJoinCode('');
@@ -414,35 +424,15 @@ export default function GroupsScreen() {
         .select('id, name')
         .eq('code', joinCode.trim().toUpperCase())
         .single();
-
-      if (findError || !householdData) {
-        showToast('Invalid household code', 'error');
-        return;
-      }
-
+      if (findError || !householdData) { showToast('Invalid household code', 'error'); return; }
       const { data: existing } = await supabase
         .from('household_members')
         .select('id')
         .eq('household_id', householdData.id)
         .eq('user_id', user.id);
-
-      if (existing && existing.length > 0) {
-        showToast('You are already a member of this household', 'error');
-        return;
-      }
-
-      const { error: insertError } = await supabase.from('household_members').insert({
-        household_id: householdData.id,
-        user_id: user.id,
-        role: 'member',
-        status: 'active',
-      });
-
-      if (insertError) {
-        showToast(`Failed to join: ${insertError.message}`, 'error');
-        return;
-      }
-
+      if (existing && existing.length > 0) { showToast('You are already a member of this household', 'error'); return; }
+      const { error: insertError } = await supabase.from('household_members').insert({ household_id: householdData.id, user_id: user.id, role: 'member', status: 'active' });
+      if (insertError) { showToast(`Failed to join: ${insertError.message}`, 'error'); return; }
       showToast(`Joined "${householdData.name}" successfully!`);
       setShowJoinModal(false);
       setJoinCode('');
@@ -460,15 +450,9 @@ export default function GroupsScreen() {
   };
 
   const handleShareCode = async (code, name) => {
-    const shareData = {
-      title: `Join ${name} on HomeSync`,
-      text: `Join my group "${name}" on HomeSync! Use code: ${code}`,
-    };
-    if (navigator.share) {
-      try { await navigator.share(shareData); } catch { handleCopyCode(code); }
-    } else {
-      handleCopyCode(code);
-    }
+    const shareData = { title: `Join ${name} on HomeSync`, text: `Join my group "${name}" on HomeSync! Use code: ${code}` };
+    if (navigator.share) { try { await navigator.share(shareData); } catch { handleCopyCode(code); } }
+    else { handleCopyCode(code); }
   };
 
   const getBalanceDisplay = (balance) => {
@@ -486,49 +470,23 @@ export default function GroupsScreen() {
         onClick={() => navigate(`/group-detail/${item.id}`, { state: { type: isHousehold ? 'household' : 'group' } })}
       >
         <div className="group-card-header">
-          <div className="group-icon">
-            {isHousehold ? <Home size={22} /> : <Users size={22} />}
-          </div>
+          <div className="group-icon">{isHousehold ? <Home size={22} /> : <Users size={22} />}</div>
           <div className="group-info">
             <h3 className="group-name">{item.name}</h3>
             <p className="group-meta">{item.memberCount} member{item.memberCount !== 1 ? 's' : ''}</p>
           </div>
           <div className="group-code-actions">
-            <button onClick={(e) => { e.stopPropagation(); handleCopyCode(item.code); }} className="icon-btn-sm">
-              <Copy size={14} />
-            </button>
-            <button onClick={(e) => { e.stopPropagation(); handleShareCode(item.code, item.name); }} className="icon-btn-sm">
-              <Share2 size={14} />
-            </button>
+            <button onClick={(e) => { e.stopPropagation(); handleCopyCode(item.code); }} className="icon-btn-sm"><Copy size={14} /></button>
+            <button onClick={(e) => { e.stopPropagation(); handleShareCode(item.code, item.name); }} className="icon-btn-sm"><Share2 size={14} /></button>
           </div>
         </div>
         <div className="group-stats">
-          <div className="stat">
-            <span className="stat-label">Total spent (this month)</span>
-            <span className="stat-value">₱{(item.totalExpenses || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span>
-          </div>
-          <div className="stat">
-            <span className="stat-label">Your share</span>
-            <span className="stat-value">₱{(item.yourShare || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span>
-          </div>
-          <div className="stat">
-            <span className="stat-label">Utilities</span>
-            <span className="stat-value">
-              ₱{(item.utilitiesTotal || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}
-            </span>
-          </div>
-          <div className="stat balance">
-            <span className="stat-label">Balance</span>
-            <span className="stat-value" style={{ color: balanceInfo.color }}>
-              {balanceInfo.arrow} {balanceInfo.text}
-            </span>
-          </div>
+          <div className="stat"><span className="stat-label">Total spent (this month)</span><span className="stat-value">₱{(item.totalExpenses || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span></div>
+          <div className="stat"><span className="stat-label">Your share</span><span className="stat-value">₱{(item.yourShare || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span></div>
+          <div className="stat"><span className="stat-label">Utilities</span><span className="stat-value">₱{(item.utilitiesTotal || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span></div>
+          <div className="stat balance"><span className="stat-label">Balance</span><span className="stat-value" style={{ color: balanceInfo.color }}>{balanceInfo.arrow} {balanceInfo.text}</span></div>
         </div>
-        {(item.pendingOwed || 0) > 0 && (
-          <div className="pending-badge-group">
-            <DollarSign size={12} /> ₱{item.pendingOwed.toFixed(2)} pending from you
-          </div>
-        )}
+        {(item.pendingOwed || 0) > 0 && <div className="pending-badge-group"><DollarSign size={12} /> ₱{item.pendingOwed.toFixed(2)} pending from you</div>}
       </div>
     );
   };
@@ -536,15 +494,7 @@ export default function GroupsScreen() {
   if (loading) {
     return (
       <div className="groups-screen">
-        <TopBar
-          profile={profile}
-          setProfile={setProfile}
-          title="Groups"
-          showBell
-          notifications={notifications}
-          unreadCount={unreadCount}
-          onMarkAllRead={markNotificationsRead}
-        />
+        <TopBar profile={profile} setProfile={setProfile} title="Groups" showBell notifications={notifications} unreadCount={unreadCount} onMarkAllRead={markNotificationsRead} />
         <div className="loading-spinner">Loading groups…</div>
         <BottomNav active="groups" />
       </div>
@@ -553,16 +503,7 @@ export default function GroupsScreen() {
 
   return (
     <div className="groups-screen">
-      <TopBar
-        profile={profile}
-        setProfile={setProfile}
-        title="Groups"
-        showBell
-        notifications={notifications}
-        unreadCount={unreadCount}
-        onMarkAllRead={markNotificationsRead}
-      />
-
+      <TopBar profile={profile} setProfile={setProfile} title="Groups" showBell notifications={notifications} unreadCount={unreadCount} onMarkAllRead={markNotificationsRead} />
       <div className="groups-content">
         {households.length > 0 && (
           <div className="household-section">
@@ -570,108 +511,49 @@ export default function GroupsScreen() {
             {households.map(household => renderGroupCard(household, true))}
           </div>
         )}
-
         <div className="groups-section">
           <h4 className="section-title">👥 Trip Groups</h4>
           {groups.length === 0 ? (
-            <div className="empty-state">
-              <p>No groups yet. Create or join one!</p>
-            </div>
+            <div className="empty-state"><p>No groups yet. Create or join one!</p></div>
           ) : (
             groups.map(group => renderGroupCard(group, false))
           )}
         </div>
       </div>
-
       <div className="fab-group">
-        <button className="fab-btn-group" onClick={() => setShowCreateModal(true)}>
-          <Plus size={24} />
-        </button>
-        <button className="fab-btn-join" onClick={() => setShowJoinModal(true)}>
-          <Users size={20} />
-        </button>
+        <button className="fab-btn-group" onClick={() => setShowCreateModal(true)}><Plus size={24} /></button>
+        <button className="fab-btn-join" onClick={() => setShowJoinModal(true)}><Users size={20} /></button>
       </div>
 
-      {/* Create Group Modal */}
       {showCreateModal && (
         <div className="modal-overlay-group">
           <div className="modal-group-card">
-            <div className="modal-header">
-              <h2>Create New Group</h2>
-              <button className="modal-close" onClick={() => setShowCreateModal(false)}>
-                <X size={20} />
-              </button>
-            </div>
+            <div className="modal-header"><h2>Create New Group</h2><button className="modal-close" onClick={() => setShowCreateModal(false)}><X size={20} /></button></div>
             <div className="modal-body">
-              <input
-                type="text"
-                placeholder="Group name *"
-                value={createForm.name}
-                onChange={e => setCreateForm({ ...createForm, name: e.target.value })}
-                className="group-input"
-              />
-              <textarea
-                placeholder="Description (optional)"
-                value={createForm.description}
-                onChange={e => setCreateForm({ ...createForm, description: e.target.value })}
-                className="group-textarea"
-                rows={3}
-              />
-              <button className="create-group-btn" onClick={handleCreateGroup} disabled={createLoading}>
-                {createLoading ? 'Creating…' : 'Create Group'}
-              </button>
+              <input type="text" placeholder="Group name *" value={createForm.name} onChange={e => setCreateForm({ ...createForm, name: e.target.value })} className="group-input" />
+              <textarea placeholder="Description (optional)" value={createForm.description} onChange={e => setCreateForm({ ...createForm, description: e.target.value })} className="group-textarea" rows={3} />
+              <button className="create-group-btn" onClick={handleCreateGroup} disabled={createLoading}>{createLoading ? 'Creating…' : 'Create Group'}</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Join Group or Household Modal */}
       {showJoinModal && (
         <div className="modal-overlay-group">
           <div className="modal-group-card">
-            <div className="modal-header">
-              <h2>Join {joinType === 'household' ? 'Household' : 'Group'}</h2>
-              <button className="modal-close" onClick={() => { setShowJoinModal(false); setJoinType('group'); setJoinCode(''); }}>
-                <X size={20} />
-              </button>
-            </div>
+            <div className="modal-header"><h2>Join {joinType === 'household' ? 'Household' : 'Group'}</h2><button className="modal-close" onClick={() => { setShowJoinModal(false); setJoinType('group'); setJoinCode(''); }}><X size={20} /></button></div>
             <div className="modal-body">
               <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
-                <button
-                  onClick={() => setJoinType('group')}
-                  style={{ flex: 1, padding: '10px', borderRadius: '50px', border: joinType === 'group' ? '2px solid #3B2AAB' : '1.5px solid #E0D9FF', background: joinType === 'group' ? '#F0EDFF' : 'white', color: joinType === 'group' ? '#3B2AAB' : '#9E8FCC', fontFamily: "'Poppins', sans-serif", fontWeight: 600, fontSize: '13px', cursor: 'pointer' }}
-                >
-                  👥 Group
-                </button>
-                <button
-                  onClick={() => setJoinType('household')}
-                  style={{ flex: 1, padding: '10px', borderRadius: '50px', border: joinType === 'household' ? '2px solid #3B2AAB' : '1.5px solid #E0D9FF', background: joinType === 'household' ? '#F0EDFF' : 'white', color: joinType === 'household' ? '#3B2AAB' : '#9E8FCC', fontFamily: "'Poppins', sans-serif", fontWeight: 600, fontSize: '13px', cursor: 'pointer' }}
-                >
-                  🏠 Household
-                </button>
+                <button onClick={() => setJoinType('group')} style={{ flex: 1, padding: '10px', borderRadius: '50px', border: joinType === 'group' ? '2px solid #3B2AAB' : '1.5px solid #E0D9FF', background: joinType === 'group' ? '#F0EDFF' : 'white', color: joinType === 'group' ? '#3B2AAB' : '#9E8FCC', fontFamily: "'Poppins', sans-serif", fontWeight: 600, fontSize: '13px', cursor: 'pointer' }}>👥 Group</button>
+                <button onClick={() => setJoinType('household')} style={{ flex: 1, padding: '10px', borderRadius: '50px', border: joinType === 'household' ? '2px solid #3B2AAB' : '1.5px solid #E0D9FF', background: joinType === 'household' ? '#F0EDFF' : 'white', color: joinType === 'household' ? '#3B2AAB' : '#9E8FCC', fontFamily: "'Poppins', sans-serif", fontWeight: 600, fontSize: '13px', cursor: 'pointer' }}>🏠 Household</button>
               </div>
-              <input
-                type="text"
-                placeholder={joinType === 'household' ? 'Enter household code (e.g. A1B2C3)' : 'Enter group code (e.g. A1B2C3)'}
-                value={joinCode}
-                onChange={e => setJoinCode(e.target.value.toUpperCase())}
-                className="group-input"
-              />
-              <button
-                className="join-group-btn"
-                onClick={handleJoinGroup}
-                disabled={joinLoading}
-                style={{ background: joinType === 'household' ? '#2C7A7B' : '#3B2AAB' }}
-              >
-                {joinLoading ? 'Joining…' : `Join ${joinType === 'household' ? 'Household' : 'Group'}`}
-              </button>
+              <input type="text" placeholder={joinType === 'household' ? 'Enter household code (e.g. A1B2C3)' : 'Enter group code (e.g. A1B2C3)'} value={joinCode} onChange={e => setJoinCode(e.target.value.toUpperCase())} className="group-input" />
+              <button className="join-group-btn" onClick={handleJoinGroup} disabled={joinLoading} style={{ background: joinType === 'household' ? '#2C7A7B' : '#3B2AAB' }}>{joinLoading ? 'Joining…' : `Join ${joinType === 'household' ? 'Household' : 'Group'}`}</button>
             </div>
           </div>
         </div>
       )}
-
       {toast && <div className={`toast-group toast-${toast.type}`}>{toast.msg}</div>}
-
       <BottomNav active="groups" />
     </div>
   );
