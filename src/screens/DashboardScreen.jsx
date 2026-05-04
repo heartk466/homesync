@@ -190,6 +190,26 @@ export default function DashboardScreen() {
     setEditLoading(false);
   };
 
+  // Helper to fetch expense splits for a list of expense IDs
+  const fetchExpenseSplits = async (expenseIds) => {
+    if (!expenseIds.length) return {};
+    const { data, error } = await supabase
+      .from('expense_splits')
+      .select('expense_id, user_id, share_amount, status')
+      .in('expense_id', expenseIds);
+    if (error) {
+      console.error(error);
+      return {};
+    }
+    // Group by expense_id for easier access
+    const grouped = {};
+    data.forEach(split => {
+      if (!grouped[split.expense_id]) grouped[split.expense_id] = [];
+      grouped[split.expense_id].push(split);
+    });
+    return grouped;
+  };
+
   const fetchData = async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -223,29 +243,51 @@ export default function DashboardScreen() {
         .toISOString().split('T')[0];
 
       const allExpenses = await fetchAllHouseholdExpenses(profileData?.household_id);
+      
+      // Fetch splits for these expenses
+      const expenseIds = allExpenses.map(e => e.id);
+      const splitsByExpense = await fetchExpenseSplits(expenseIds);
+      
+      // Only consider paid expenses for total spent (status = 'paid' on expense)
       const paidExpenses = (allExpenses || []).filter(e => e.status === 'paid');
       const monthPaidExpenses = paidExpenses.filter(e => e.expense_date >= firstDay && e.expense_date <= lastDay);
 
       const total = monthPaidExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
       setTotalSpent(total);
 
-      const myExpenses = monthPaidExpenses.filter(e => e.paid_by === user.id);
-      const myTotal = myExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
-      setYourShare(myTotal);
+      // Calculate YOUR share (approved splits for the current user)
+      let myApprovedTotal = 0;
+      let myPendingTotal = 0;
+      for (const expense of allExpenses) {
+        const splits = splitsByExpense[expense.id] || [];
+        const mySplit = splits.find(s => s.user_id === user.id);
+        if (mySplit) {
+          if (mySplit.status === 'approved') {
+            myApprovedTotal += Number(mySplit.share_amount);
+          } else if (mySplit.status === 'pending_verification' || mySplit.status === 'unpaid') {
+            myPendingTotal += Number(mySplit.share_amount);
+          }
+        }
+      }
+      // Your share shown on dashboard is the approved total (what you actually paid)
+      setYourShare(myApprovedTotal);
+      setPendingAmount(myPendingTotal);
 
-      const pending = (allExpenses || [])
-        .filter(e => e.status === 'pending' && e.paid_by === user.id)
-        .reduce((sum, e) => sum + Number(e.amount), 0);
-      setPendingAmount(pending);
-
+      // Category breakdown based on paid expenses and the user's approved splits
       const categories = {};
-      monthPaidExpenses.forEach(e => {
-        categories[e.category] = (categories[e.category] || 0) + Number(e.amount);
-      });
+      for (const expense of monthPaidExpenses) {
+        const splits = splitsByExpense[expense.id] || [];
+        const mySplit = splits.find(s => s.user_id === user.id);
+        // Only count if the user was part of this expense and their split is approved
+        if (mySplit && mySplit.status === 'approved') {
+          categories[expense.category] = (categories[expense.category] || 0) + Number(mySplit.share_amount);
+        }
+      }
       setCategoryData(
         Object.entries(categories).map(([name, value]) => ({ name, value }))
       );
 
+      // Group spending for groups (same as before but using splits)
       const { data: memberGroups } = await supabase
         .from('group_members')
         .select('group_id')
@@ -264,18 +306,29 @@ export default function DashboardScreen() {
 
       const groupsWithPaidTotals = await Promise.all(
         groupsList.map(async (group) => {
+          // Get expenses for this group
           const { data: groupExpenses } = await supabase
             .from('expenses')
-            .select('amount')
+            .select('id, amount')
             .eq('group_id', group.id)
             .eq('status', 'paid')
             .eq('approval_status', 'approved')
             .gte('expense_date', firstDay)
             .lte('expense_date', lastDay);
-
-          const paidTotal = (groupExpenses || [])
-            .reduce((sum, e) => sum + Number(e.amount), 0);
-
+          
+          // Get splits for those expenses
+          const groupExpenseIds = groupExpenses.map(e => e.id);
+          const splitsMap = await fetchExpenseSplits(groupExpenseIds);
+          
+          let paidTotal = 0;
+          for (const expense of groupExpenses) {
+            const splits = splitsMap[expense.id] || [];
+            const mySplit = splits.find(s => s.user_id === user.id);
+            if (mySplit && mySplit.status === 'approved') {
+              paidTotal += Number(mySplit.share_amount);
+            }
+          }
+          
           return {
             ...group,
             currentMonthPaid: paidTotal,
@@ -286,6 +339,7 @@ export default function DashboardScreen() {
       setGroupSpending(groupsWithPaidTotals);
       setTotalGroupPaid(groupsWithPaidTotals.reduce((sum, group) => sum + group.currentMonthPaid, 0));
 
+      // Monthly trend for the household total (all approved splits across all members)
       const months = [];
       for (let i = 5; i >= 0; i--) {
         const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
@@ -294,10 +348,15 @@ export default function DashboardScreen() {
         const last = new Date(d.getFullYear(), d.getMonth() + 1, 0)
           .toISOString().split('T')[0];
 
-        const monthTotal = monthPaidExpenses
-          .filter(e => e.expense_date >= first && e.expense_date <= last)
-          .reduce((sum, e) => sum + Number(e.amount), 0);
-
+        // Get paid expenses in that month
+        const monthExpenses = paidExpenses.filter(e => e.expense_date >= first && e.expense_date <= last);
+        let monthTotal = 0;
+        for (const expense of monthExpenses) {
+          const splits = splitsByExpense[expense.id] || [];
+          // For household total, sum all approved splits (or total expense amount if no splits? use total expense amount)
+          // Simpler: just sum expense.amount for paid expenses (gives household total spent)
+          monthTotal += Number(expense.amount);
+        }
         months.push({
           month: d.toLocaleString('default', { month: 'short' })[0],
           amount: monthTotal,
@@ -305,12 +364,13 @@ export default function DashboardScreen() {
       }
       setMonthlyData(months);
 
+      // Last month total (household total, not per-user)
       const lastMonthFirst = new Date(now.getFullYear(), now.getMonth() - 1, 1)
         .toISOString().split('T')[0];
       const lastMonthLast = new Date(now.getFullYear(), now.getMonth(), 0)
         .toISOString().split('T')[0];
 
-      const lastTotal = monthPaidExpenses
+      const lastTotal = paidExpenses
         .filter(e => e.expense_date >= lastMonthFirst && e.expense_date <= lastMonthLast)
         .reduce((sum, e) => sum + Number(e.amount), 0);
       setLastMonthSpent(lastTotal);
@@ -333,6 +393,9 @@ export default function DashboardScreen() {
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'expenses',
         filter: `household_id=eq.${household.id}`,
+      }, () => fetchData())
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'expense_splits',
       }, () => fetchData())
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'utilities',
@@ -358,20 +421,19 @@ export default function DashboardScreen() {
     <div className="dashboard">
 
       <TopBar
-  profile={profile}
-  setProfile={setProfile}
-  household={household}
-  currentUser={currentUser}
-  notifications={[]}
-  unreadCount={0}
-  title="Dashboard"
-  showBell={false}
-/>
+        profile={profile}
+        setProfile={setProfile}
+        household={household}
+        currentUser={currentUser}
+        notifications={[]}
+        unreadCount={0}
+        title="Dashboard"
+        showBell={false}
+      />
 
-      {/* Scrollable Content */}
       <div className="dash-content">
 
-        {/* Card 1 — Total Spent */}
+        {/* Card 1 — Total Spent (household total) */}
         <div className="dash-card">
           <div className="card-left">
             <p className="card-greeting">{getGreeting()}, {getFirstName()}!</p>
@@ -401,14 +463,14 @@ export default function DashboardScreen() {
           </div>
         </div>
 
-        {/* Card 2 — Your Share */}
+        {/* Card 2 — Your Share (approved splits only) */}
         <div className="dash-card">
           <div className="card-left">
             <p className="card-label">Your Share</p>
             <p className="card-amount">
               ₱ {yourShare.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
             </p>
-            <p className="card-sub">this month</p>
+            <p className="card-sub">paid this month</p>
             {pendingAmount > 0 && (
               <span className="pending-badge">
                 Pending: ₱{pendingAmount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
@@ -446,14 +508,14 @@ export default function DashboardScreen() {
           </div>
         </div>
 
-        {/* Card 3 — Group Spending */}
+        {/* Card 3 — Group Spending (your approved splits in groups) */}
         <div className="dash-card group-spending-card" onClick={() => setShowGroupModal(true)}>
           <div className="card-left">
             <p className="card-label">Group Spending</p>
             <p className="card-amount">
               ₱ {totalGroupPaid.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
             </p>
-            <p className="card-sub">paid across groups this month</p>
+            <p className="card-sub">your share across groups this month</p>
           </div>
           <div className="card-chart">
             <p className="group-card-action">View details</p>
@@ -484,9 +546,9 @@ export default function DashboardScreen() {
               <button className="modal-close" onClick={() => setShowGroupModal(false)}><X size={18} /></button>
             </div>
             <div className="group-modal-body">
-              <p className="modal-sub">Paid group expenses for this month.</p>
+              <p className="modal-sub">Your share of paid group expenses this month.</p>
               <div className="group-summary-row">
-                <span>Total paid across groups</span>
+                <span>Total your share across groups</span>
                 <strong>₱ {totalGroupPaid.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</strong>
               </div>
               <div className="group-list">

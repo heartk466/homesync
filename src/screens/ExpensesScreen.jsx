@@ -31,7 +31,7 @@ export default function ExpensesScreen() {
   const navigate = useNavigate();
   const fileInputRef = useRef(null);
   const proofInputRef = useRef(null);
-  const initialHouseholdSet = useRef(false);   // <-- FIX: prevent re‑select
+  const initialHouseholdSet = useRef(false);
 
   const [profile, setProfile] = useState(null);
   const [households, setHouseholds] = useState([]);
@@ -39,6 +39,7 @@ export default function ExpensesScreen() {
   const [currentUser, setCurrentUser] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [expenses, setExpenses] = useState([]);
+  const [expenseSplits, setExpenseSplits] = useState({}); // { expenseId: [split objects] }
   const [filteredExpenses, setFilteredExpenses] = useState([]);
   const [householdMembers, setHouseholdMembers] = useState([]);
   const [notifications, setNotifications] = useState([]);
@@ -62,6 +63,7 @@ export default function ExpensesScreen() {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showRejectProofModal, setShowRejectProofModal] = useState(false);
   const [selectedExpense, setSelectedExpense] = useState(null);
+  const [selectedSplit, setSelectedSplit] = useState(null);
   const [selectedProof, setSelectedProof] = useState(null);
   const [showDuplicateModal, setShowDuplicateModal] = useState(false);
   const [duplicateItem, setDuplicateItem] = useState(null);
@@ -101,108 +103,60 @@ export default function ExpensesScreen() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  // ===================== RESET FORM =====================
-  const resetExpenseForm = useCallback((household, user, adminStatus) => {
-    setExpenseForm({
-      title: '',
-      amount: '',
-      category: 'Rent',
-      expense_date: new Date().toISOString().split('T')[0],
-      location: household?.name || '',
-      who_paid: adminStatus && user ? user.id : '',
-      split_type: 'equal',
-      selected_members: [],
-      custom_splits: {},
-    });
-    setExpenseErrors({});
+  // ===================== FETCH EXPENSE SPLITS =====================
+  const fetchExpenseSplits = useCallback(async (expenseIds) => {
+    if (!expenseIds.length) return;
+    const { data, error } = await supabase
+      .from('expense_splits')
+      .select(`*, profiles:user_id (id, full_name, avatar_url)`)
+      .in('expense_id', expenseIds);
+    if (error) console.error(error);
+    else {
+      const grouped = {};
+      data.forEach(split => {
+        if (!grouped[split.expense_id]) grouped[split.expense_id] = [];
+        grouped[split.expense_id].push(split);
+      });
+      setExpenseSplits(grouped);
+    }
   }, []);
 
-  const proceedAddExpense = async () => {
-  setLoading(true);
-
-  const splits = {};
-  if (expenseForm.split_type === 'equal') {
-    const share = Number(expenseForm.amount) / expenseForm.selected_members.length;
-    expenseForm.selected_members.forEach(id => {
-      splits[id] = share.toFixed(2);
-    });
-  } else {
-    expenseForm.selected_members.forEach(id => {
-      splits[id] = expenseForm.custom_splits[id] || 0;
-    });
-  }
-
-  const { error } = await supabase.from('expenses').insert({
-    household_id: profile.household_id,
-    created_by: currentUser.id,
-    title: expenseForm.title.trim(),
-    amount: Number(expenseForm.amount),
-    category: expenseForm.category,
-    expense_type: expenseForm.expense_type,
-    expense_date: expenseForm.expense_date,
-    location: expenseForm.location,
-    paid_by: expenseForm.who_paid,
-    split_type: expenseForm.split_type,
-    members_split: splits,
-    status: 'pending',
-    approval_status: isAdmin ? 'approved' : 'pending_approval',
-    source: isUtilityCategory(expenseForm.category) ? 'expenses' : 'expenses',
-    is_merged: false,
-  });
-
-  if (error) {
-    showToast('Failed to add expense. Try again.', 'error');
-  } else {
-    showToast(isAdmin ? 'Expense added! ✅' : 'Expense submitted for approval! ⏳');
-    setShowAddExpense(false);
-    resetExpenseForm();
-
-    if (!isAdmin) {
-      await supabase.from('notifications').insert({
-        user_id: household?.created_by,
-        title: 'New Expense Pending Approval',
-        message: `${profile?.full_name} submitted "${expenseForm.title}" for ₱${expenseForm.amount}`,
-        type: 'approval_request',
-      });
-    }
-  }
-
-  setLoading(false);
-};
-
-  // ===================== FETCH EXPENSES =====================
-  const fetchExpenses = useCallback(async (profileData, user, adminStatus, memberData, householdId) => {
+  // ===================== FETCH EXPENSES (with splits) =====================
+  const fetchExpensesData = useCallback(async (profileData, user, adminStatus, memberData, householdId) => {
     const now = new Date();
     const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
     const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
 
     const expensesData = await fetchAllHouseholdExpenses(profileData.household_id);
-
     if (!expensesData) return;
 
     setExpenses(expensesData);
     setFilteredExpenses(expensesData);
+    await fetchExpenseSplits(expensesData.map(e => e.id));
 
-    if (adminStatus) {
-      const pending = expensesData.filter(e => e.approval_status === 'pending_approval');
-      setPendingApprovals(pending);
+    // Pending approvals (splits with status pending_verification)
+    let pendingSplits = [];
+    for (const exp of expensesData) {
+      const splits = expenseSplits[exp.id] || [];
+      const pending = splits.filter(s => s.status === 'pending_verification');
+      pendingSplits.push(...pending);
+    }
+    setPendingApprovals(pendingSplits);
 
-      const expenseIds = expensesData.map(e => e.id);
-      if (expenseIds.length > 0) {
-        const { data: proofs } = await supabase
-          .from('payment_proofs')
-          .select('*, profiles(*)')
-          .eq('status', 'pending_verification')
-          .in('expense_id', expenseIds);
-        setPendingPaymentProofs(proofs || []);
-      } else {
-        setPendingPaymentProofs([]);
-      }
+    // Also fetch payment proofs for pending view (optional)
+    const expenseIds = expensesData.map(e => e.id);
+    if (expenseIds.length > 0) {
+      const { data: proofs } = await supabase
+        .from('payment_proofs')
+        .select('*, profiles(*)')
+        .eq('status', 'pending_verification')
+        .in('expense_id', expenseIds);
+      setPendingPaymentProofs(proofs || []);
     } else {
-      setPendingApprovals([]);
       setPendingPaymentProofs([]);
     }
 
+    // Month paid expenses for summary
     const monthExpenses = expensesData.filter(e =>
       e.expense_date >= firstDay && e.expense_date <= lastDay &&
       e.status === 'paid'
@@ -215,29 +169,27 @@ export default function ExpensesScreen() {
     const reimburseList = [];
     let savedTotal = 0;
 
-    monthExpenses.forEach(e => {
-      if (e.members_split) {
-        const splits = e.members_split;
-        const myShare = splits[user.id];
-        if (myShare && e.paid_by !== user.id && e.status !== 'paid') {
-          reimburseTotal += Number(myShare);
-          const payer = memberData?.find(m => m.user_id === e.paid_by);
-          reimburseList.push({
-            expense: e,
-            amount: myShare,
-            payer: payer?.profiles,
-          });
-        }
-        if (myShare) {
-          savedTotal += Number(e.amount) - Number(myShare);
-        }
+    for (const expense of monthExpenses) {
+      const splits = expenseSplits[expense.id] || [];
+      const mySplit = splits.find(s => s.user_id === user.id);
+      if (mySplit && mySplit.status !== 'approved') {
+        reimburseTotal += Number(mySplit.share_amount);
+        const payer = memberData?.find(m => m.user_id === expense.paid_by);
+        reimburseList.push({
+          expense,
+          amount: mySplit.share_amount,
+          payer: payer?.profiles,
+        });
       }
-    });
+      if (mySplit) {
+        savedTotal += Number(expense.amount) - Number(mySplit.share_amount);
+      }
+    }
 
     setToReimburse(reimburseTotal);
     setReimburseDetails(reimburseList);
     setTotalSaved(savedTotal);
-  }, []);
+  }, [expenseSplits, fetchExpenseSplits]);
 
   const fetchNotifications = async (userId) => {
     const { data } = await supabase
@@ -289,11 +241,24 @@ export default function ExpensesScreen() {
     const adminStatus = userMember?.role === 'owner';
     setIsAdmin(adminStatus);
 
-    resetExpenseForm(household, activeUser, adminStatus);
-    await fetchExpenses(activeProfile, activeUser, adminStatus, membersList, household.id);
-  }, [currentUser, profile, fetchExpenses, resetExpenseForm]);
+    // Reset form
+    setExpenseForm({
+      title: '',
+      amount: '',
+      category: 'Rent',
+      expense_date: new Date().toISOString().split('T')[0],
+      location: household?.name || '',
+      who_paid: adminStatus && activeUser ? activeUser.id : '',
+      split_type: 'equal',
+      selected_members: [],
+      custom_splits: {},
+    });
+    setExpenseErrors({});
 
-  // ===================== INITIAL DATA FETCH (runs only once) =====================
+    await fetchExpensesData(activeProfile, activeUser, adminStatus, membersList, household.id);
+  }, [currentUser, profile, fetchExpensesData]);
+
+  // ===================== INITIAL DATA FETCH =====================
   const fetchData = useCallback(async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -324,7 +289,7 @@ export default function ExpensesScreen() {
       setHouseholds(householdsData || []);
       await fetchNotifications(user.id);
 
-      // Only auto-select the FIRST household ONCE
+      // Auto-select first household once
       if (householdsData && householdsData.length > 0 && !initialHouseholdSet.current) {
         const firstHH = householdsData[0];
         await handleHouseholdSelect(firstHH, user, profileData);
@@ -335,12 +300,11 @@ export default function ExpensesScreen() {
     }
   }, [navigate, handleHouseholdSelect]);
 
-  // Run fetchData only when component mounts
   useEffect(() => {
     fetchData();
-  }, []);   // <-- empty dependency array
+  }, []);
 
-  // Realtime subscriptions (keep as is)
+  // Realtime subscriptions
   useEffect(() => {
     if (!currentUser || !selectedHousehold) return;
 
@@ -349,6 +313,13 @@ export default function ExpensesScreen() {
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'expenses',
         filter: `household_id=eq.${selectedHousehold.id}`,
+      }, () => {
+        if (profile && currentUser) {
+          handleHouseholdSelect(selectedHousehold, currentUser, profile);
+        }
+      })
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'expense_splits',
       }, () => {
         if (profile && currentUser) {
           handleHouseholdSelect(selectedHousehold, currentUser, profile);
@@ -367,7 +338,7 @@ export default function ExpensesScreen() {
     return () => supabase.removeChannel(channel);
   }, [currentUser?.id, selectedHousehold?.id, profile?.id, handleHouseholdSelect]);
 
-  // Search & Filter effect (unchanged)
+  // Search & Filter effect
   useEffect(() => {
     let result = [...expenses];
     if (searchQuery) result = result.filter(e => e.title?.toLowerCase().includes(searchQuery.toLowerCase()));
@@ -378,45 +349,8 @@ export default function ExpensesScreen() {
     setFilteredExpenses(result);
   }, [searchQuery, filterStatus, filterCategory, filterFrom, filterTo, expenses]);
 
-  // ===================== EXPENSE ACTIONS (all unchanged) =====================
-  const handleAddExpense = async () => {
-    const errors = {};
-    if (!expenseForm.title.trim()) errors.title = 'Title is required';
-    if (!expenseForm.amount || isNaN(expenseForm.amount)) errors.amount = 'Valid amount is required';
-    if (!expenseForm.expense_date) errors.expense_date = 'Date is required';
-    if (!expenseForm.who_paid) errors.who_paid = 'Please select who paid';
-    if (expenseForm.selected_members.length === 0) errors.members = 'Select at least one member to split with';
-
-    if (Object.keys(errors).length > 0) {
-      setExpenseErrors(errors);
-      showToast(Object.values(errors)[0], 'error');
-      return;
-    }
-
-    if (!selectedHousehold) {
-      showToast('No household selected', 'error');
-      return;
-    }
-
-    setLoading(true);
-   
-    // Check for duplicates
-if (isUtilityCategory(expenseForm.category)) {
-  const dupes = await checkDuplicate(
-    profile.household_id,
-    expenseForm.category,
-    Number(expenseForm.amount),
-    expenseForm.expense_date
-  );
-
-  if (dupes.length > 0) {
-    setDuplicateItem(dupes[0]);
-    setShowDuplicateModal(true);
-    setLoading(false);
-    return;
-  }
-}
-
+  // ===================== EXPENSE ACTIONS =====================
+  const proceedAddExpense = async () => {
     const splits = {};
     const totalAmount = Number(expenseForm.amount);
     if (expenseForm.split_type === 'equal') {
@@ -458,7 +392,17 @@ if (isUtilityCategory(expenseForm.category)) {
     } else {
       showToast(isAdmin ? 'Expense added! ✅' : 'Expense submitted for approval! ⏳');
       setShowAddExpense(false);
-      resetExpenseForm(selectedHousehold, currentUser, isAdmin);
+      setExpenseForm({
+        title: '',
+        amount: '',
+        category: 'Rent',
+        expense_date: new Date().toISOString().split('T')[0],
+        location: selectedHousehold.name,
+        who_paid: isAdmin ? currentUser.id : '',
+        split_type: 'equal',
+        selected_members: [],
+        custom_splits: {},
+      });
 
       if (!isAdmin && selectedHousehold?.created_by) {
         await supabase.from('notifications').insert({
@@ -468,44 +412,103 @@ if (isUtilityCategory(expenseForm.category)) {
           type: 'approval_request',
         });
       }
-
       await handleHouseholdSelect(selectedHousehold, currentUser, profile);
+    }
+  };
+
+  const handleAddExpense = async () => {
+    const errors = {};
+    if (!expenseForm.title.trim()) errors.title = 'Title is required';
+    if (!expenseForm.amount || isNaN(expenseForm.amount)) errors.amount = 'Valid amount is required';
+    if (!expenseForm.expense_date) errors.expense_date = 'Date is required';
+    if (!expenseForm.who_paid) errors.who_paid = 'Please select who paid';
+    if (expenseForm.selected_members.length === 0) errors.members = 'Select at least one member to split with';
+
+    if (Object.keys(errors).length > 0) {
+      setExpenseErrors(errors);
+      showToast(Object.values(errors)[0], 'error');
+      return;
+    }
+
+    if (!selectedHousehold) {
+      showToast('No household selected', 'error');
+      return;
+    }
+
+    setLoading(true);
+
+    // Check for duplicates
+    if (isUtilityCategory(expenseForm.category)) {
+      const dupes = await checkDuplicate(
+        profile.household_id,
+        expenseForm.category,
+        Number(expenseForm.amount),
+        expenseForm.expense_date
+      );
+      if (dupes.length > 0) {
+        setDuplicateItem(dupes[0]);
+        setShowDuplicateModal(true);
+        setLoading(false);
+        return;
+      }
+    }
+
+    await proceedAddExpense();
+    setLoading(false);
+  };
+
+  // Approve a pending split (owner action)
+  const handleApproveSplit = async (split) => {
+    setLoading(true);
+    const { error } = await supabase
+      .from('expense_splits')
+      .update({ status: 'approved', updated_at: new Date().toISOString() })
+      .eq('id', split.id);
+    if (!error) {
+      // Check if all splits for this expense are approved
+      const { data: allSplits } = await supabase
+        .from('expense_splits')
+        .select('status')
+        .eq('expense_id', split.expense_id);
+      const allApproved = allSplits.every(s => s.status === 'approved');
+      if (allApproved) {
+        await supabase.from('expenses').update({ status: 'paid' }).eq('id', split.expense_id);
+      }
+      showToast('Payment approved!');
+      await handleHouseholdSelect(selectedHousehold, currentUser, profile);
+    } else {
+      showToast('Error approving payment', 'error');
     }
     setLoading(false);
   };
 
-  const handleApprove = async (expense) => {
-    await supabase.from('expenses').update({ approval_status: 'approved' }).eq('id', expense.id);
-    await supabase.from('notifications').insert({
-      user_id: expense.created_by,
-      title: 'Expense Approved! ✅',
-      message: `Your expense "${expense.title}" for ₱${expense.amount} has been approved!`,
-      type: 'approval',
-    });
-    showToast('Expense approved! ✅');
-    await handleHouseholdSelect(selectedHousehold, currentUser, profile);
-  };
-
-  const handleReject = async () => {
+  const handleRejectSplit = async () => {
     if (!rejectReason.trim()) { showToast('Please provide a rejection reason.', 'error'); return; }
-    await supabase.from('expenses').update({
-      approval_status: 'rejected',
-      rejection_reason: rejectReason,
-    }).eq('id', selectedExpense.id);
-    await supabase.from('notifications').insert({
-      user_id: selectedExpense.created_by,
-      title: 'Expense Rejected ❌',
-      message: `Your expense "${selectedExpense.title}" was rejected. Reason: ${rejectReason}`,
-      type: 'rejection',
-    });
-    setShowRejectModal(false);
-    setRejectReason('');
-    setSelectedExpense(null);
-    showToast('Expense rejected.');
-    await handleHouseholdSelect(selectedHousehold, currentUser, profile);
+    setLoading(true);
+    const { error } = await supabase
+      .from('expense_splits')
+      .update({ status: 'unpaid', rejection_reason: rejectReason, proof_id: null, updated_at: new Date().toISOString() })
+      .eq('id', selectedSplit.id);
+    if (!error) {
+      // Also mark payment_proof as rejected
+      if (selectedSplit.proof_id) {
+        await supabase
+          .from('payment_proofs')
+          .update({ status: 'rejected', rejection_reason: rejectReason })
+          .eq('id', selectedSplit.proof_id);
+      }
+      showToast('Payment rejected.');
+      setShowRejectModal(false);
+      setRejectReason('');
+      setSelectedSplit(null);
+      await handleHouseholdSelect(selectedHousehold, currentUser, profile);
+    } else {
+      showToast('Error rejecting payment', 'error');
+    }
+    setLoading(false);
   };
 
-  const handleDelete = async () => {
+  const handleDeleteExpense = async () => {
     await supabase.from('expenses').delete().eq('id', selectedExpense.id);
     setShowDeleteModal(false);
     setSelectedExpense(null);
@@ -523,14 +526,30 @@ if (isUtilityCategory(expenseForm.category)) {
       .upload(fileName, proofForm.screenshot, { upsert: true });
     if (uploadError) { showToast('Failed to upload screenshot.', 'error'); setLoading(false); return; }
     const { data: urlData } = supabase.storage.from('payment-proofs').getPublicUrl(fileName);
-    await supabase.from('payment_proofs').insert({
+
+    const { data: insertedProof, error: proofError } = await supabase.from('payment_proofs').insert({
       expense_id: selectedExpense.id,
       submitted_by: currentUser.id,
       screenshot_url: urlData.publicUrl,
       note: proofForm.note,
       status: 'pending_verification',
-    });
+    }).select().single();
+
+    if (proofError) {
+      showToast('Failed to save proof', 'error');
+      setLoading(false);
+      return;
+    }
+
+    // Update the split for this user
+    await supabase
+      .from('expense_splits')
+      .update({ status: 'pending_verification', proof_id: insertedProof.id, updated_at: new Date().toISOString() })
+      .eq('expense_id', selectedExpense.id)
+      .eq('user_id', currentUser.id);
+
     await supabase.from('expenses').update({ status: 'verifying' }).eq('id', selectedExpense.id);
+
     if (selectedHousehold?.created_by) {
       await supabase.from('notifications').insert({
         user_id: selectedHousehold.created_by,
@@ -547,9 +566,16 @@ if (isUtilityCategory(expenseForm.category)) {
     await handleHouseholdSelect(selectedHousehold, currentUser, profile);
   };
 
-  const handleConfirmPayment = async (proof) => {
+  const handleConfirmPayment = async (proof, split) => {
+    setLoading(true);
     await supabase.from('payment_proofs').update({ status: 'verified' }).eq('id', proof.id);
-    await supabase.from('expenses').update({ status: 'paid' }).eq('id', proof.expense_id);
+    await supabase.from('expense_splits').update({ status: 'approved', updated_at: new Date().toISOString() }).eq('id', split.id);
+    // Check if all splits are approved
+    const { data: allSplits } = await supabase.from('expense_splits').select('status').eq('expense_id', split.expense_id);
+    const allApproved = allSplits.every(s => s.status === 'approved');
+    if (allApproved) {
+      await supabase.from('expenses').update({ status: 'paid' }).eq('id', split.expense_id);
+    }
     await supabase.from('notifications').insert({
       user_id: proof.submitted_by,
       title: 'Payment Confirmed! ✅',
@@ -558,12 +584,15 @@ if (isUtilityCategory(expenseForm.category)) {
     });
     setShowViewProofModal(false);
     showToast('Payment confirmed! ✅');
+    setLoading(false);
     await handleHouseholdSelect(selectedHousehold, currentUser, profile);
   };
 
   const handleRejectProof = async () => {
     if (!rejectProofReason.trim()) { showToast('Please provide a rejection reason.', 'error'); return; }
+    setLoading(true);
     await supabase.from('payment_proofs').update({ status: 'rejected', rejection_reason: rejectProofReason }).eq('id', selectedProof.id);
+    await supabase.from('expense_splits').update({ status: 'unpaid', proof_id: null, rejection_reason: rejectProofReason, updated_at: new Date().toISOString() }).eq('id', selectedSplit.id);
     await supabase.from('expenses').update({ status: 'pending' }).eq('id', selectedProof.expense_id);
     await supabase.from('notifications').insert({
       user_id: selectedProof.submitted_by,
@@ -574,7 +603,9 @@ if (isUtilityCategory(expenseForm.category)) {
     setShowRejectProofModal(false);
     setRejectProofReason('');
     setSelectedProof(null);
+    setSelectedSplit(null);
     showToast('Payment proof rejected.');
+    setLoading(false);
     await handleHouseholdSelect(selectedHousehold, currentUser, profile);
   };
 
@@ -707,37 +738,27 @@ if (isUtilityCategory(expenseForm.category)) {
           </div>
         </div>
 
+        {/* Pending Approvals Section (Splits) */}
         {isAdmin && pendingApprovals.length > 0 && (
           <div className="pending-section">
-            <p className="pending-section-title">⏳ Pending Approvals ({pendingApprovals.length})</p>
-            {pendingApprovals.map(expense => (
-              <div key={expense.id} className="pending-item">
-                <div className="pending-info">
-                  <p className="pending-name">{expense.title}</p>
-                  <p className="pending-amount">₱{Number(expense.amount).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
-                  <p className="pending-date">{expense.expense_date}</p>
+            <p className="pending-section-title">⏳ Pending Payment Approvals ({pendingApprovals.length})</p>
+            {pendingApprovals.map(split => {
+              const expense = expenses.find(e => e.id === split.expense_id);
+              const proof = pendingPaymentProofs.find(p => p.id === split.proof_id);
+              return (
+                <div key={split.id} className="pending-item">
+                  <div className="pending-info">
+                    <p className="pending-name">{expense?.title} – {split.profiles?.full_name}</p>
+                    <p className="pending-amount">₱{Number(split.share_amount).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                  </div>
+                  <div className="pending-actions">
+                    <button className="approve-btn" onClick={() => handleApproveSplit(split)}><Check size={14} /> Approve</button>
+                    <button className="reject-btn" onClick={() => { setSelectedSplit(split); setShowRejectModal(true); }}><X size={14} /> Reject</button>
+                    {proof && <button className="view-proof-btn" onClick={() => { setSelectedProof(proof); setSelectedSplit(split); setShowViewProofModal(true); }}>View Proof</button>}
+                  </div>
                 </div>
-                <div className="pending-actions">
-                  <button className="approve-btn" onClick={() => handleApprove(expense)}><Check size={14} /> Approve</button>
-                  <button className="reject-btn" onClick={() => { setSelectedExpense(expense); setShowRejectModal(true); }}><X size={14} /> Reject</button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {isAdmin && pendingPaymentProofs.length > 0 && (
-          <div className="pending-section">
-            <p className="pending-section-title">📸 Payment Proofs to Verify ({pendingPaymentProofs.length})</p>
-            {pendingPaymentProofs.map(proof => (
-              <div key={proof.id} className="pending-item">
-                <div className="pending-info">
-                  <p className="pending-name">{proof.profiles?.full_name}</p>
-                  <p className="pending-date">{proof.note || 'No note'}</p>
-                </div>
-                <button className="view-proof-btn" onClick={() => { setSelectedProof(proof); setShowViewProofModal(true); }}>View Proof</button>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 
@@ -757,11 +778,14 @@ if (isUtilityCategory(expenseForm.category)) {
           </div>
         )}
         {filteredExpenses.map(expense => {
+          const splits = expenseSplits[expense.id] || [];
+          const mySplit = splits.find(s => s.user_id === currentUser?.id);
           const badge = getStatusBadge(expense);
-          const myReimburse = reimburseDetails.find(r => r.expense.id === expense.id);
-          const expenseMembers = expense.members_split
-            ? Object.keys(expense.members_split).map(uid => householdMembers.find(m => m.user_id === uid)).filter(Boolean)
-            : [];
+          const expenseMembers = splits.map(split => ({
+            user_id: split.user_id,
+            profiles: split.profiles
+          }));
+          const isOwed = mySplit && mySplit.status !== 'approved' && expense.status !== 'paid';
           return (
             <div key={expense.id} className={`expense-item ${expense.approval_status === 'pending_approval' ? 'needs-approval' : ''}`} style={{ borderLeftColor: CATEGORY_COLORS[expense.category] || '#3B2AAB' }}>
               <div className="expense-icon-circle" style={{ background: `${CATEGORY_COLORS[expense.category]}22` || '#F0EDFF' }}>
@@ -783,10 +807,20 @@ if (isUtilityCategory(expenseForm.category)) {
                   <span className="status-badge" style={{ color: badge.color, background: badge.bg }}>{badge.label}</span>
                 </div>
                 {expense.approval_status === 'rejected' && <p className="rejection-reason">Reason: {expense.rejection_reason}</p>}
-                {myReimburse && expense.status !== 'paid' && expense.status !== 'verifying' && (
+                {isOwed && (
                   <div className="reimburse-row">
-                    <span className="owe-text">You owe ₱{Number(myReimburse.amount).toFixed(2)} to {myReimburse.payer?.full_name}</span>
+                    <span className="owe-text">You owe ₱{Number(mySplit.share_amount).toFixed(2)}</span>
                     <button className="pay-btn" onClick={() => { setSelectedExpense(expense); setShowPaymentProofModal(true); }}>Pay</button>
+                  </div>
+                )}
+                {mySplit?.status === 'pending_verification' && (
+                  <div className="reimburse-row">
+                    <span className="owe-text">⏳ Proof submitted, awaiting approval</span>
+                  </div>
+                )}
+                {mySplit?.status === 'approved' && (
+                  <div className="reimburse-row">
+                    <span className="owe-text">✅ Paid</span>
                   </div>
                 )}
               </div>
@@ -802,16 +836,25 @@ if (isUtilityCategory(expenseForm.category)) {
 
       <button className="fab-btn" onClick={() => setShowAddExpense(true)}><Plus size={24} /></button>
 
-      {/* All modals remain exactly as in your original file */}
+      {/* Add Expense Modal */}
       {showAddExpense && (
         <div className="modal-overlay">
           <div className="add-expense-modal">
             <div className="modal-header">
               <h2>New Expense · {selectedHousehold?.name}</h2>
-              <button className="modal-close" onClick={() => { setShowAddExpense(false); resetExpenseForm(selectedHousehold, currentUser, isAdmin); }}><X size={18} /></button>
+              <button className="modal-close" onClick={() => { setShowAddExpense(false); setExpenseForm({
+                title: '',
+                amount: '',
+                category: 'Rent',
+                expense_date: new Date().toISOString().split('T')[0],
+                location: selectedHousehold?.name || '',
+                who_paid: isAdmin ? currentUser?.id : '',
+                split_type: 'equal',
+                selected_members: [],
+                custom_splits: {},
+              }); }}><X size={18} /></button>
             </div>
             <div className="modal-scroll">
-              {/* ... same form fields ... */}
               <div className="form-group">
                 <label>Amount</label>
                 <div className="amount-input-wrap">
@@ -899,11 +942,12 @@ if (isUtilityCategory(expenseForm.category)) {
         </div>
       )}
 
+      {/* Filter Modal */}
       {showFilter && (
         <div className="modal-overlay">
           <div className="filter-modal">
             <div className="modal-header"><h2>Filter</h2><button className="modal-close" onClick={() => setShowFilter(false)}><X size={18} /></button></div>
-            <div className="form-group"><label>Status</label><div className="checkbox-group">{['paid', 'pending', 'unpaid', 'verifying'].map(s => (<label key={s} className="checkbox-label"><input type="checkbox" checked={filterStatus.includes(s)} onChange={e => { if (e.target.checked) setFilterStatus([...filterStatus, s]); else setFilterStatus(filterStatus.filter(x => x !== s)); }} />{s.charAt(0).toUpperCase() + s.slice(1)}</label>))}</div></div>
+            <div className="form-group"><label>Status</label><div className="checkbox-group">{['paid', 'pending', 'verifying'].map(s => (<label key={s} className="checkbox-label"><input type="checkbox" checked={filterStatus.includes(s)} onChange={e => { if (e.target.checked) setFilterStatus([...filterStatus, s]); else setFilterStatus(filterStatus.filter(x => x !== s)); }} />{s.charAt(0).toUpperCase() + s.slice(1)}</label>))}</div></div>
             <div className="form-group"><label>Category</label><div className="checkbox-group">{Object.keys(CATEGORY_ICONS).map(c => (<label key={c} className="checkbox-label"><input type="checkbox" checked={filterCategory.includes(c)} onChange={e => { if (e.target.checked) setFilterCategory([...filterCategory, c]); else setFilterCategory(filterCategory.filter(x => x !== c)); }} />{c}</label>))}</div></div>
             <div className="form-group"><label>Date Range</label><div className="date-range-row"><input type="date" value={filterFrom} onChange={e => setFilterFrom(e.target.value)} /><span>to</span><input type="date" value={filterTo} onChange={e => setFilterTo(e.target.value)} /></div></div>
             <div className="filter-actions"><button className="filter-reset-btn" onClick={() => { setFilterStatus([]); setFilterCategory([]); setFilterFrom(''); setFilterTo(''); setShowFilter(false); }}>Reset</button><button className="filter-apply-btn" onClick={() => setShowFilter(false)}>Apply</button></div>
@@ -911,28 +955,31 @@ if (isUtilityCategory(expenseForm.category)) {
         </div>
       )}
 
+      {/* Reject Split Modal */}
       {showRejectModal && (
         <div className="modal-overlay">
           <div className="small-modal">
-            <h2>Reject Expense</h2>
+            <h2>Reject Payment</h2>
             <textarea placeholder="Reason" value={rejectReason} onChange={e => setRejectReason(e.target.value)} className="reject-textarea" />
-            <button className="add-expense-btn" onClick={handleReject}>Confirm</button>
+            <button className="add-expense-btn" onClick={handleRejectSplit}>Confirm</button>
             <button className="edit-cancel-btn" onClick={() => { setShowRejectModal(false); setRejectReason(''); }}>Cancel</button>
           </div>
         </div>
       )}
 
+      {/* Delete Expense Modal */}
       {showDeleteModal && (
         <div className="modal-overlay">
           <div className="small-modal">
             <AlertCircle size={40} color="#e53e3e" />
             <h2>Delete Expense?</h2>
-            <button className="delete-confirm-btn" onClick={handleDelete}>Yes, Delete</button>
+            <button className="delete-confirm-btn" onClick={handleDeleteExpense}>Yes, Delete</button>
             <button className="edit-cancel-btn" onClick={() => setShowDeleteModal(false)}>Cancel</button>
           </div>
         </div>
       )}
 
+      {/* Payment Proof Submission Modal */}
       {showPaymentProofModal && (
         <div className="modal-overlay">
           <div className="small-modal">
@@ -946,19 +993,21 @@ if (isUtilityCategory(expenseForm.category)) {
         </div>
       )}
 
+      {/* View Proof Modal */}
       {showViewProofModal && selectedProof && (
         <div className="modal-overlay">
           <div className="small-modal">
             <h2>Payment Proof</h2>
             <img src={selectedProof.screenshot_url} className="proof-preview" alt="proof" />
             <p className="proof-note">{selectedProof.note}</p>
-            <button className="add-expense-btn" onClick={() => handleConfirmPayment(selectedProof)}>Confirm Payment</button>
+            <button className="add-expense-btn" onClick={() => handleConfirmPayment(selectedProof, selectedSplit)}>Confirm Payment</button>
             <button className="delete-confirm-btn" onClick={() => { setShowViewProofModal(false); setShowRejectProofModal(true); }}>Reject Proof</button>
             <button className="edit-cancel-btn" onClick={() => setShowViewProofModal(false)}>Cancel</button>
           </div>
         </div>
       )}
 
+      {/* Reject Proof Modal */}
       {showRejectProofModal && (
         <div className="modal-overlay">
           <div className="small-modal">
@@ -993,6 +1042,7 @@ if (isUtilityCategory(expenseForm.category)) {
                 }
                 setShowDuplicateModal(false);
                 showToast('Items merged! ✅');
+                await handleHouseholdSelect(selectedHousehold, currentUser, profile);
               }}
             >
               Yes, Merge
@@ -1001,7 +1051,9 @@ if (isUtilityCategory(expenseForm.category)) {
               className="edit-cancel-btn"
               onClick={async () => {
                 setShowDuplicateModal(false);
+                setLoading(true);
                 await proceedAddExpense();
+                setLoading(false);
               }}
             >
               No, Keep Separate

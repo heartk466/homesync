@@ -36,6 +36,7 @@ export default function GroupDetailScreen() {
   const [profile, setProfile] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [expenses, setExpenses] = useState([]);
+  const [expenseSplits, setExpenseSplits] = useState({}); // { expenseId: [split objects] }
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -51,7 +52,7 @@ export default function GroupDetailScreen() {
   const [showResubmitModal, setShowResubmitModal] = useState(false);
   const [selectedMember, setSelectedMember] = useState(null);
   const [selectedExpense, setSelectedExpense] = useState(null);
-  const [selectedProof, setSelectedProof] = useState(null);
+  const [selectedSplit, setSelectedSplit] = useState(null); // For proof modals
   const [pendingApprovals, setPendingApprovals] = useState([]);
   const [pendingPaymentProofs, setPendingPaymentProofs] = useState([]);
   const [allPaymentProofs, setAllPaymentProofs] = useState([]);
@@ -76,6 +77,24 @@ export default function GroupDetailScreen() {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3000);
   };
+
+  // Fetch expense splits for given expense IDs
+  const fetchExpenseSplits = useCallback(async (expenseIds) => {
+    if (!expenseIds.length) return;
+    const { data, error } = await supabase
+      .from('expense_splits')
+      .select(`*, profiles:user_id (id, full_name, avatar_url)`)
+      .in('expense_id', expenseIds);
+    if (error) console.error(error);
+    else {
+      const grouped = {};
+      data.forEach(split => {
+        if (!grouped[split.expense_id]) grouped[split.expense_id] = [];
+        grouped[split.expense_id].push(split);
+      });
+      setExpenseSplits(grouped);
+    }
+  }, []);
 
   const fetchGroupAndData = useCallback(async () => {
     try {
@@ -163,11 +182,14 @@ export default function GroupDetailScreen() {
       const allExpenses = expensesData || [];
       setExpenses(allExpenses);
 
+      // Fetch splits for these expenses
+      await fetchExpenseSplits(allExpenses.map(e => e.id));
+
       let proofsData = [];
       if (allExpenses.length > 0) {
         const { data: proofs } = await supabase
           .from('payment_proofs')
-          .select(`*, profiles:submitted_by ( id, full_name, email, avatar_url )`)
+          .select(`*, profiles:submitted_by (id, full_name, email, avatar_url)`)
           .in('expense_id', allExpenses.map(e => e.id));
         proofsData = proofs || [];
         setAllPaymentProofs(proofsData);
@@ -175,60 +197,31 @@ export default function GroupDetailScreen() {
         setAllPaymentProofs([]);
       }
 
-      if (adminStatus) {
-        setPendingApprovals(allExpenses.filter(e => e.approval_status === 'pending_approval'));
-        const pendingProofs = proofsData.filter(p => p.status === 'pending_verification');
-        setPendingPaymentProofs(pendingProofs);
-      } else {
-        setPendingApprovals([]);
-        setPendingPaymentProofs([]);
+      // Pending approvals: splits with status 'pending_verification' where owner can act
+      let pending = [];
+      for (const exp of allExpenses) {
+        const splits = expenseSplits[exp.id] || [];
+        const pendingSplits = splits.filter(s => s.status === 'pending_verification');
+        pending.push(...pendingSplits);
       }
+      setPendingApprovals(pending);
 
+      // For backward compatibility, still keep pending payment proofs array for quick view
+      const pendingProofs = proofsData.filter(p => p.status === 'pending_verification');
+      setPendingPaymentProofs(pendingProofs);
     } catch (err) {
       console.error(err);
       setError(err.message);
     } finally {
       setLoading(false);
     }
-  }, [id, contextType, navigate]);
+  }, [id, contextType, navigate, fetchExpenseSplits, expenseSplits]);
 
   useEffect(() => {
     fetchGroupAndData();
   }, [fetchGroupAndData]);
 
-  useEffect(() => {
-    if (allPaymentProofs.length === 0) return;
-    
-    let proofToOpen = null;
-    if (openProofId) {
-      proofToOpen = allPaymentProofs.find(p => p.id === openProofId);
-    }
-    if (!proofToOpen && openProofExpenseId) {
-      proofToOpen = allPaymentProofs.find(p => p.expense_id === openProofExpenseId);
-    }
-
-    if (proofToOpen) {
-      setTimeout(() => {
-        window.history.replaceState({}, '', window.location.pathname);
-        if (
-          proofToOpen.status === 'rejected' &&
-          currentUser &&
-          proofToOpen.submitted_by === currentUser.id
-        ) {
-          const expense = expenses.find(e => e.id === proofToOpen.expense_id);
-          if (expense) {
-            setSelectedExpense(expense);
-            resetProofForm();
-            setShowResubmitModal(true);
-          }
-        } else {
-          setSelectedProof(proofToOpen);
-          setShowViewProofModal(true);
-        }
-      }, 500);
-    }
-  }, [openProofExpenseId, openProofId, allPaymentProofs, currentUser, expenses]);
-
+  // Realtime subscriptions
   useEffect(() => {
     if (!currentUser || !group) return;
     const expenseColumn = contextType === 'household' ? 'household_id' : 'group_id';
@@ -240,6 +233,10 @@ export default function GroupDetailScreen() {
       }, () => fetchGroupAndData())
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'payment_proofs',
+      }, () => fetchGroupAndData())
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'expense_splits',
+        filter: `expense_id=in.(...)` // broad refresh is simpler
       }, () => fetchGroupAndData())
       .subscribe();
     return () => supabase.removeChannel(channel);
@@ -259,12 +256,14 @@ export default function GroupDetailScreen() {
     setProofForm({ note: '', screenshot: null, screenshotPreview: null });
   };
 
-  const getStatusBadge = (expense) => {
+  const getStatusBadge = (expense, splits) => {
+    const paidCount = splits.filter(s => s.status === 'approved').length;
+    const total = splits.length;
     if (expense.approval_status === 'pending_approval') return { label: 'Waiting Approval', color: '#3B2AAB', bg: '#F0EDFF' };
     if (expense.approval_status === 'rejected') return { label: 'Rejected', color: '#e53e3e', bg: '#ffe5e5' };
-    if (expense.status === 'paid') return { label: 'Paid', color: '#38a169', bg: '#f0fff4' };
-    if (expense.status === 'verifying') return { label: 'Verifying', color: '#c05621', bg: '#fffaf0' };
-    return { label: 'Pending', color: '#856404', bg: '#fff3cd' };
+    if (total === 0) return { label: 'No splits', color: '#856404', bg: '#fff3cd' };
+    if (paidCount === total) return { label: 'Fully Paid', color: '#38a169', bg: '#f0fff4' };
+    return { label: `${paidCount}/${total} Paid`, color: '#856404', bg: '#fff3cd' };
   };
 
   const getMemberAvatar = (member) => {
@@ -287,8 +286,9 @@ export default function GroupDetailScreen() {
     }
   };
 
-  const openProofModal = (proof) => {
+  const openProofModal = (proof, split) => {
     setSelectedProof(proof);
+    setSelectedSplit(split);
     setShowViewProofModal(true);
   };
 
@@ -363,39 +363,43 @@ export default function GroupDetailScreen() {
     setLoadingAction(false);
   };
 
-  const handleApprove = async (expense) => {
-    await supabase.from('expenses').update({ approval_status: 'approved' }).eq('id', expense.id);
-    await supabase.from('notifications').insert({
-      user_id: expense.created_by,
-      title: 'Expense Approved',
-      message: `Your expense "${expense.title}" was approved.`,
-      type: 'approval',
-      link_path: `/groups/${id}`,
-      link_state: JSON.stringify({ type: contextType }),
-    });
-    showToast('Expense approved');
-    fetchGroupAndData();
+  // Approve a pending split (owner action)
+  const handleApproveSplit = async (split) => {
+    setLoadingAction(true);
+    const { error } = await supabase
+      .from('expense_splits')
+      .update({ status: 'approved', updated_at: new Date().toISOString() })
+      .eq('id', split.id);
+    if (!error) {
+      showToast('Payment approved!');
+      fetchGroupAndData();
+    } else {
+      showToast('Error approving payment', 'error');
+    }
+    setLoadingAction(false);
   };
 
-  const handleReject = async () => {
+  const handleRejectSplit = async (split) => {
     if (!rejectReason.trim()) { showToast('Please provide a reason', 'error'); return; }
-    await supabase.from('expenses').update({
-      approval_status: 'rejected',
-      rejection_reason: rejectReason
-    }).eq('id', selectedExpense.id);
-    await supabase.from('notifications').insert({
-      user_id: selectedExpense.created_by,
-      title: 'Expense Rejected',
-      message: `Your expense "${selectedExpense.title}" was rejected. Reason: ${rejectReason}`,
-      type: 'rejection',
-      link_path: `/groups/${id}`,
-      link_state: JSON.stringify({ type: contextType }),
-    });
-    setShowRejectModal(false);
-    setRejectReason('');
-    setSelectedExpense(null);
-    showToast('Expense rejected');
-    fetchGroupAndData();
+    setLoadingAction(true);
+    const { error } = await supabase
+      .from('expense_splits')
+      .update({ status: 'unpaid', rejection_reason: rejectReason, proof_id: null, updated_at: new Date().toISOString() })
+      .eq('id', split.id);
+    if (!error) {
+      // Also update the associated payment_proof if any (optional)
+      await supabase
+        .from('payment_proofs')
+        .update({ status: 'rejected', rejection_reason: rejectReason })
+        .eq('id', split.proof_id);
+      showToast('Payment rejected');
+      setShowRejectModal(false);
+      setRejectReason('');
+      fetchGroupAndData();
+    } else {
+      showToast('Error rejecting payment', 'error');
+    }
+    setLoadingAction(false);
   };
 
   const handleDeleteExpense = async () => {
@@ -474,23 +478,27 @@ export default function GroupDetailScreen() {
     }
     const { data: urlData } = supabase.storage.from('payment-proofs').getPublicUrl(fileName);
 
-    // If resubmitting, mark old rejected proofs as archived
-    if (isResubmit) {
-      await supabase
-        .from('payment_proofs')
-        .update({ status: 'archived' })
-        .eq('expense_id', selectedExpense.id)
-        .eq('submitted_by', currentUser.id)
-        .in('status', ['rejected', 'pending_verification']);
-    }
-
-    const { data: insertedProof } = await supabase.from('payment_proofs').insert({
+    // Insert payment proof
+    const { data: insertedProof, error: proofError } = await supabase.from('payment_proofs').insert({
       expense_id: selectedExpense.id,
       submitted_by: currentUser.id,
       screenshot_url: urlData.publicUrl,
       note: proofForm.note,
       status: 'pending_verification',
     }).select().single();
+
+    if (proofError) {
+      showToast('Failed to save proof', 'error');
+      setLoadingAction(false);
+      return;
+    }
+
+    // Update the expense split for this user (trigger will also run, but we can do manually)
+    await supabase
+      .from('expense_splits')
+      .update({ status: 'pending_verification', proof_id: insertedProof.id, updated_at: new Date().toISOString() })
+      .eq('expense_id', selectedExpense.id)
+      .eq('user_id', currentUser.id);
 
     await supabase.from('expenses').update({ status: 'verifying' }).eq('id', selectedExpense.id);
 
@@ -513,9 +521,15 @@ export default function GroupDetailScreen() {
     fetchGroupAndData();
   };
 
-  const handleConfirmPayment = async (proof) => {
+  const handleConfirmPayment = async (proof, split) => {
     await supabase.from('payment_proofs').update({ status: 'verified' }).eq('id', proof.id);
-    await supabase.from('expenses').update({ status: 'paid' }).eq('id', proof.expense_id);
+    await supabase.from('expense_splits').update({ status: 'approved', updated_at: new Date().toISOString() }).eq('id', split.id);
+    // Check if all splits are approved, then update expense status
+    const { data: splits } = await supabase.from('expense_splits').select('status').eq('expense_id', split.expense_id);
+    const allApproved = splits.every(s => s.status === 'approved');
+    if (allApproved) {
+      await supabase.from('expenses').update({ status: 'paid' }).eq('id', split.expense_id);
+    }
     await supabase.from('notifications').insert({
       user_id: proof.submitted_by,
       title: '✅ Payment Verified!',
@@ -523,14 +537,13 @@ export default function GroupDetailScreen() {
       type: 'payment_confirmed',
       link_path: `/groups/${id}`,
       link_state: JSON.stringify({ type: contextType }),
-      link_query: `openProof=${proof.expense_id}&proofId=${proof.id}`,
+      link_query: `openProof=${split.expense_id}&proofId=${proof.id}`,
     });
     setShowViewProofModal(false);
     showToast('Payment confirmed');
     fetchGroupAndData();
   };
 
-  // Owner submits their OWN proof — immediately verified, member can only view it
   const handleOwnerSubmitProof = async () => {
     if (!proofForm.screenshot) { showToast('Please upload a screenshot', 'error'); return; }
     setLoadingAction(true);
@@ -555,13 +568,25 @@ export default function GroupDetailScreen() {
       status: 'verified',
     }).select().single();
 
-    await supabase.from('expenses').update({ status: 'paid' }).eq('id', selectedExpense.id);
+    // Update the owner's split to approved
+    await supabase
+      .from('expense_splits')
+      .update({ status: 'approved', proof_id: insertedProof.id, updated_at: new Date().toISOString() })
+      .eq('expense_id', selectedExpense.id)
+      .eq('user_id', currentUser.id);
 
-    const splits = selectedExpense.members_split || {};
-    const memberIds = Object.keys(splits).filter(uid => uid !== currentUser.id);
-    for (const memberId of memberIds) {
+    // Check if all splits are approved
+    const { data: splits } = await supabase.from('expense_splits').select('status').eq('expense_id', selectedExpense.id);
+    const allApproved = splits.every(s => s.status === 'approved');
+    if (allApproved) {
+      await supabase.from('expenses').update({ status: 'paid' }).eq('id', selectedExpense.id);
+    }
+
+    // Notify other members
+    const otherSplits = splits.filter(s => s.user_id !== currentUser.id);
+    for (const split of otherSplits) {
       await supabase.from('notifications').insert({
-        user_id: memberId,
+        user_id: split.user_id,
         title: '✅ Payment Confirmed by Owner',
         message: `The owner has confirmed payment for "${selectedExpense.title}". Tap to view proof.`,
         type: 'payment_confirmed',
@@ -585,6 +610,12 @@ export default function GroupDetailScreen() {
       status: 'rejected',
       rejection_reason: rejectProofReason
     }).eq('id', selectedProof.id);
+    await supabase.from('expense_splits').update({
+      status: 'unpaid',
+      rejection_reason: rejectProofReason,
+      proof_id: null,
+      updated_at: new Date().toISOString()
+    }).eq('id', selectedSplit.id);
     await supabase.from('expenses').update({ status: 'pending' }).eq('id', selectedProof.expense_id);
     await supabase.from('notifications').insert({
       user_id: selectedProof.submitted_by,
@@ -598,6 +629,7 @@ export default function GroupDetailScreen() {
     setShowRejectProofModal(false);
     setRejectProofReason('');
     setSelectedProof(null);
+    setSelectedSplit(null);
     showToast('Payment proof rejected');
     fetchGroupAndData();
   };
@@ -673,63 +705,46 @@ export default function GroupDetailScreen() {
         )}
       </div>
 
-      {/* Pending approvals */}
+      {/* Pending approvals (splits) */}
       {isAdmin && pendingApprovals.length > 0 && (
         <div className="detail-pending-section">
-          <h3 className="section-title">⏳ Approvals Needed ({pendingApprovals.length})</h3>
-          {pendingApprovals.map(exp => (
-            <div key={exp.id} className="pending-item">
-              <div><strong>{exp.title}</strong><br />₱{Number(exp.amount).toFixed(2)}</div>
-              <div className="pending-actions">
-                <button className="approve-btn" onClick={() => handleApprove(exp)}><Check size={14} /> Approve</button>
-                <button className="reject-btn" onClick={() => { setSelectedExpense(exp); setShowRejectModal(true); }}><X size={14} /> Reject</button>
+          <h3 className="section-title">⏳ Pending Payment Approvals ({pendingApprovals.length})</h3>
+          {pendingApprovals.map(split => {
+            const expense = expenses.find(e => e.id === split.expense_id);
+            const proof = allPaymentProofs.find(p => p.id === split.proof_id);
+            return (
+              <div key={split.id} className="pending-item">
+                <div>
+                  <strong>{expense?.title}</strong><br />
+                  <span>{split.profiles?.full_name} – ₱{Number(split.share_amount).toFixed(2)}</span>
+                </div>
+                <div className="pending-actions">
+                  <button className="approve-btn" onClick={() => handleApproveSplit(split)}><Check size={14} /> Approve</button>
+                  <button className="reject-btn" onClick={() => { setSelectedSplit(split); setShowRejectModal(true); }}><X size={14} /> Reject</button>
+                  {proof && <button className="view-proof-btn" onClick={() => openProofModal(proof, split)}><Eye size={14} /> View Proof</button>}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
-      {/* Expenses list */}
+      {/* Expenses list with per-member splits */}
       <div className="detail-expenses-section">
         <h3 className="section-title">📋 Expenses ({expenses.length})</h3>
         {expenses.length === 0 ? (
           <div className="empty-state">No expenses yet. Tap + to add one!</div>
         ) : (
           expenses.map(expense => {
-            const badge = getStatusBadge(expense);
-            const splits = expense.members_split || {};
-            const myShare = splits[currentUser?.id];
-
-            const isOwed = expense.paid_by !== currentUser?.id
-              && expense.status !== 'paid'
-              && expense.approval_status === 'approved'
-              && myShare;
-
-            const proofsForExpense = allPaymentProofs.filter(p => p.expense_id === expense.id);
-            
-            const memberPendingProof = proofsForExpense.find(
-              p => p.status === 'pending_verification' && p.submitted_by !== group?.created_by
-            );
-            
-            const ownerVerifiedProof = proofsForExpense.find(
-              p => p.status === 'verified' && p.submitted_by === group?.created_by
-            );
-            
-            const myPendingProof = proofsForExpense.find(
-              p => p.submitted_by === currentUser?.id && p.status === 'pending_verification'
-            );
-            
-            // IMPORTANT: Check for rejected proof - THIS IS THE KEY
-            const myRejectedProof = proofsForExpense.find(
-              p => p.submitted_by === currentUser?.id && p.status === 'rejected'
-            );
-            
-            const anyVerifiedProof = proofsForExpense.find(p => p.status === 'verified');
-
-            // Debug log for rejected proof
-            if (myRejectedProof) {
-              console.log("🔴 Found rejected proof for expense:", expense.title, myRejectedProof);
-            }
+            const splits = expenseSplits[expense.id] || [];
+            const badge = getStatusBadge(expense, splits);
+            const mySplit = splits.find(s => s.user_id === currentUser?.id);
+            const isOwner = isAdmin; // admin can act
+            const ownerVerifiedProof = allPaymentProofs.find(p => p.expense_id === expense.id && p.submitted_by === group?.created_by && p.status === 'verified');
+            const myPendingProof = allPaymentProofs.find(p => p.expense_id === expense.id && p.submitted_by === currentUser?.id && p.status === 'pending_verification');
+            const myRejectedProof = allPaymentProofs.find(p => p.expense_id === expense.id && p.submitted_by === currentUser?.id && p.status === 'rejected');
+            const ownerSplit = splits.find(s => s.user_id === group?.created_by);
+            const isOwnerSplitApproved = ownerSplit?.status === 'approved';
 
             return (
               <div key={expense.id} className="expense-item-detail">
@@ -744,118 +759,58 @@ export default function GroupDetailScreen() {
                     {expense.expense_date}{expense.location ? ` • ${expense.location}` : ''}
                   </div>
 
-                  {/* OWNER: Member pending proof */}
-                  {isAdmin && memberPendingProof && (
-                    <div className="owe-row" style={{ marginTop: 6 }}>
-                      <button
-                        className="view-proof-btn"
-                        style={{ display: 'flex', alignItems: 'center', gap: 6 }}
-                        onClick={() => openProofModal(memberPendingProof)}
-                      >
-                        <Eye size={14} /> View Member's Proof
-                      </button>
-                    </div>
-                  )}
-
-                  {/* OWNER: Owner's own verified proof */}
-                  {isAdmin && ownerVerifiedProof && (
-                    <div className="owe-row" style={{ marginTop: 6 }}>
-                      <button
-                        className="view-proof-btn"
-                        style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#D1FAE5', color: '#065F46' }}
-                        onClick={() => openProofModal(ownerVerifiedProof)}
-                      >
-                        <Eye size={14} /> View Your Payment Proof
-                      </button>
-                    </div>
-                  )}
-
-                  {/* MEMBER: View Owner's proof — only if owner submitted it */}
-                  {!isAdmin && ownerVerifiedProof && (
-                    <div className="owe-row" style={{ marginTop: 6 }}>
-                      <button
-                        className="view-proof-btn"
-                        style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#D1FAE5', color: '#065F46' }}
-                        onClick={() => openProofModal(ownerVerifiedProof)}
-                      >
-                        <Eye size={14} /> View Owner's Payment Proof
-                      </button>
-                    </div>
-                  )}
-
-                  {/* MEMBER: Own pending proof */}
-                  {!isAdmin && myPendingProof && (
-                    <div className="owe-row" style={{ marginTop: 6 }}>
-                      <button
-                        className="view-proof-btn"
-                        style={{ display: 'flex', alignItems: 'center', gap: 6 }}
-                        onClick={() => openProofModal(myPendingProof)}
-                      >
-                        <Eye size={14} /> View Your Proof (Pending)
-                      </button>
-                    </div>
-                  )}
-
-                  {/* MEMBER: Rejected proof — show notice + Resubmit only, no view of old proof */}
-                  {!isAdmin && myRejectedProof && expense.status !== 'paid' && (
-                    <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      <div style={{ background: '#ffe5e5', borderRadius: 10, padding: '8px 12px' }}>
-                        <div style={{ fontSize: 12, fontWeight: 700, color: '#e53e3e', marginBottom: 2 }}>
-                          ❌ Your proof was rejected
-                        </div>
-                        {myRejectedProof.rejection_reason && (
-                          <div style={{ fontSize: 11, color: '#c53030', lineHeight: 1.4 }}>
-                            Reason: {myRejectedProof.rejection_reason}
+                  {/* Member splits list (expandable) */}
+                  <div className="member-splits-list" style={{ marginTop: 8 }}>
+                    {splits.map(split => {
+                      const member = members.find(m => m.user_id === split.user_id);
+                      const proof = allPaymentProofs.find(p => p.id === split.proof_id);
+                      return (
+                        <div key={split.id} className="member-split-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 0', borderTop: '1px solid #F0EDFF' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <div className="member-avatar-tooltip" style={{ width: 28, height: 28 }}>{getMemberAvatar(member || { profiles: split.profiles })}</div>
+                            <span style={{ fontSize: 12 }}>{split.profiles?.full_name}</span>
                           </div>
-                        )}
-                        <div style={{ fontSize: 11, color: '#9E8FCC', marginTop: 4 }}>
-                          Please submit a new, clear screenshot of your payment.
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ fontSize: 12, fontWeight: 600 }}>₱{Number(split.share_amount).toFixed(2)}</span>
+                            <span className={`status-badge-small`} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 50, background: split.status === 'approved' ? '#D1FAE5' : split.status === 'pending_verification' ? '#FFF3CD' : '#FEE2E2', color: split.status === 'approved' ? '#065F46' : split.status === 'pending_verification' ? '#856404' : '#e53e3e' }}>
+                              {split.status === 'approved' ? 'Paid' : split.status === 'pending_verification' ? 'Awaiting Approval' : 'Unpaid'}
+                            </span>
+                            {proof && split.status === 'pending_verification' && (
+                              <button className="view-proof-btn" style={{ padding: '2px 6px' }} onClick={() => openProofModal(proof, split)}><Eye size={12} /></button>
+                            )}
+                            {isOwner && split.status === 'pending_verification' && !proof && (
+                              <button className="approve-btn" style={{ padding: '2px 6px' }} onClick={() => handleApproveSplit(split)}>Approve</button>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                      <button
-                        className="pay-btn-small"
-                        style={{ background: '#e53e3e', display: 'flex', alignItems: 'center', gap: 6, alignSelf: 'flex-start' }}
-                        onClick={() => {
-                          setSelectedExpense(expense);
-                          resetProofForm();
-                          setShowResubmitModal(true);
-                        }}
-                      >
-                        <RefreshCw size={14} /> Resubmit New Proof
+                      );
+                    })}
+                  </div>
+
+                  {/* Owner actions */}
+                  {isOwner && !ownerVerifiedProof && (
+                    <div className="owe-row" style={{ marginTop: 8 }}>
+                      <button className="pay-btn-small" onClick={() => { setSelectedExpense(expense); resetProofForm(); setShowOwnerProofModal(true); }}>
+                        Submit Payment Proof (as Owner)
                       </button>
                     </div>
                   )}
 
-                  {/* Member: owe row with Pay button */}
-                  {isOwed && !memberPendingProof && !myPendingProof && !myRejectedProof && !anyVerifiedProof && (
-                    <div className="owe-row">
-                      <span>You owe ₱{Number(myShare).toFixed(2)}</span>
-                      <button
-                        className="pay-btn-small"
-                        onClick={() => {
-                          setSelectedExpense(expense);
-                          resetProofForm();
-                          setShowPaymentProofModal(true);
-                        }}
-                      >
+                  {/* Member actions */}
+                  {!isOwner && mySplit && mySplit.status === 'unpaid' && expense.status !== 'paid' && (
+                    <div className="owe-row" style={{ marginTop: 8 }}>
+                      <span>You owe ₱{Number(mySplit.share_amount).toFixed(2)}</span>
+                      <button className="pay-btn-small" onClick={() => { setSelectedExpense(expense); resetProofForm(); setShowPaymentProofModal(true); }}>
                         Pay
                       </button>
                     </div>
                   )}
 
-                  {/* Owner: submit proof — always visible regardless of expense status */}
-                  {isAdmin && !ownerVerifiedProof && (
-                    <div className="owe-row">
-                      <button
-                        className="pay-btn-small"
-                        onClick={() => {
-                          setSelectedExpense(expense);
-                          resetProofForm();
-                          setShowOwnerProofModal(true);
-                        }}
-                      >
-                        Submit Payment Proof
-                      </button>
+                  {!isOwner && myRejectedProof && (
+                    <div style={{ marginTop: 8, background: '#ffe5e5', borderRadius: 10, padding: '8px 12px' }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: '#e53e3e' }}>❌ Your proof was rejected</div>
+                      <div style={{ fontSize: 11, color: '#c53030' }}>Reason: {myRejectedProof.rejection_reason}</div>
+                      <button className="pay-btn-small" style={{ marginTop: 4, background: '#e53e3e' }} onClick={() => { setSelectedExpense(expense); resetProofForm(); setShowResubmitModal(true); }}>Resubmit New Proof</button>
                     </div>
                   )}
                 </div>
@@ -866,10 +821,7 @@ export default function GroupDetailScreen() {
 
                 {isAdmin && (
                   <div className="expense-admin-icons">
-                    <button
-                      className="icon-btn delete"
-                      onClick={() => { setSelectedExpense(expense); setShowDeleteModal(true); }}
-                    >
+                    <button className="icon-btn delete" onClick={() => { setSelectedExpense(expense); setShowDeleteModal(true); }}>
                       <Trash2 size={14} />
                     </button>
                   </div>
@@ -883,7 +835,7 @@ export default function GroupDetailScreen() {
       {/* FAB */}
       <button className="fab-detail" onClick={() => setShowAddExpense(true)}><Plus size={24} /></button>
 
-      {/* Add Expense Modal */}
+      {/* Add Expense Modal - same as before, but ensure members_split is built correctly */}
       {showAddExpense && (
         <div className="modal-overlay-detail">
           <div className="modal-detail-card">
@@ -892,6 +844,7 @@ export default function GroupDetailScreen() {
               <button className="modal-close" onClick={() => { setShowAddExpense(false); resetExpenseForm(); }}><X size={20} /></button>
             </div>
             <div className="modal-body-scroll">
+              {/* Input fields same as original */}
               <input type="text" placeholder="Description *" className="detail-input" value={expenseForm.title} onChange={e => setExpenseForm({ ...expenseForm, title: e.target.value })} />
               <div className="amount-input-wrap"><span className="peso-sign">₱</span><input type="number" placeholder="0.00" value={expenseForm.amount} onChange={e => setExpenseForm({ ...expenseForm, amount: e.target.value })} /></div>
               <input type="date" value={expenseForm.expense_date} onChange={e => setExpenseForm({ ...expenseForm, expense_date: e.target.value })} className="detail-input" />
@@ -932,7 +885,7 @@ export default function GroupDetailScreen() {
         </div>
       )}
 
-      {/* Member submits payment proof Modal */}
+      {/* Payment proof modals (same as before but using selectedSplit) */}
       {showPaymentProofModal && (
         <div className="modal-overlay-detail">
           <div className="modal-detail-card">
@@ -941,17 +894,9 @@ export default function GroupDetailScreen() {
               <button className="modal-close" onClick={() => { setShowPaymentProofModal(false); resetProofForm(); }}><X size={20} /></button>
             </div>
             <div className="modal-body-scroll">
-              {proofForm.screenshotPreview
-                ? <img src={proofForm.screenshotPreview} className="proof-preview" alt="proof" />
-                : <div style={{ textAlign: 'center', padding: '20px 0', color: '#9E8FCC', fontSize: 13 }}>No screenshot selected yet</div>
-              }
-              <button className="upload-proof-btn" onClick={() => proofInputRef.current.click()}>
-                <Camera size={16} /> {proofForm.screenshotPreview ? 'Change Screenshot' : 'Upload Screenshot'}
-              </button>
+              {proofForm.screenshotPreview ? <img src={proofForm.screenshotPreview} className="proof-preview" alt="proof" /> : <div style={{ textAlign: 'center', padding: '20px 0', color: '#9E8FCC', fontSize: 13 }}>No screenshot selected yet</div>}
+              <button className="upload-proof-btn" onClick={() => proofInputRef.current.click()}><Camera size={16} /> {proofForm.screenshotPreview ? 'Change Screenshot' : 'Upload Screenshot'}</button>
               <textarea placeholder="Optional note (e.g. GCash ref #)" value={proofForm.note} onChange={e => setProofForm({ ...proofForm, note: e.target.value })} className="detail-textarea" rows={3} />
-              <p style={{ fontSize: 11, color: '#9E8FCC', textAlign: 'center', margin: '0 0 4px' }}>
-                The owner will review your proof before marking it as paid.
-              </p>
               <button className="add-expense-btn" onClick={() => handleSubmitProof(false)} disabled={loadingAction}>{loadingAction ? 'Submitting...' : 'Submit Proof'}</button>
               <button className="cancel-btn" onClick={() => { setShowPaymentProofModal(false); resetProofForm(); }}>Cancel</button>
             </div>
@@ -959,7 +904,6 @@ export default function GroupDetailScreen() {
         </div>
       )}
 
-      {/* Resubmit Proof Modal */}
       {showResubmitModal && (
         <div className="modal-overlay-detail">
           <div className="modal-detail-card">
@@ -968,17 +912,9 @@ export default function GroupDetailScreen() {
               <button className="modal-close" onClick={() => { setShowResubmitModal(false); resetProofForm(); }}><X size={20} /></button>
             </div>
             <div className="modal-body-scroll">
-              <div style={{ background: '#FFF3CD', borderRadius: 12, padding: '12px 14px', marginBottom: 12, fontSize: 12, color: '#856404', textAlign: 'center' }}>
-                ⚠️ Your previous proof was rejected.<br/>
-                Please upload a new, clear screenshot of your payment.
-              </div>
-              {proofForm.screenshotPreview
-                ? <img src={proofForm.screenshotPreview} className="proof-preview" alt="proof" />
-                : <div style={{ textAlign: 'center', padding: '20px 0', color: '#9E8FCC', fontSize: 13 }}>Upload a new screenshot</div>
-              }
-              <button className="upload-proof-btn" onClick={() => proofInputRef.current.click()}>
-                <Camera size={16} /> {proofForm.screenshotPreview ? 'Change Screenshot' : 'Upload New Screenshot'}
-              </button>
+              <div style={{ background: '#FFF3CD', borderRadius: 12, padding: '12px 14px', marginBottom: 12, fontSize: 12, color: '#856404', textAlign: 'center' }}>⚠️ Your previous proof was rejected. Please upload a new, clear screenshot.</div>
+              {proofForm.screenshotPreview ? <img src={proofForm.screenshotPreview} className="proof-preview" alt="proof" /> : <div style={{ textAlign: 'center', padding: '20px 0', color: '#9E8FCC', fontSize: 13 }}>Upload a new screenshot</div>}
+              <button className="upload-proof-btn" onClick={() => proofInputRef.current.click()}><Camera size={16} /> {proofForm.screenshotPreview ? 'Change Screenshot' : 'Upload New Screenshot'}</button>
               <textarea placeholder="Optional note (e.g. GCash ref #)" value={proofForm.note} onChange={e => setProofForm({ ...proofForm, note: e.target.value })} className="detail-textarea" rows={3} />
               <button className="add-expense-btn" onClick={() => handleSubmitProof(true)} disabled={loadingAction}>{loadingAction ? 'Submitting...' : 'Resubmit Proof'}</button>
               <button className="cancel-btn" onClick={() => { setShowResubmitModal(false); resetProofForm(); }}>Cancel</button>
@@ -987,7 +923,6 @@ export default function GroupDetailScreen() {
         </div>
       )}
 
-      {/* Owner submits proof Modal */}
       {showOwnerProofModal && (
         <div className="modal-overlay-detail">
           <div className="modal-detail-card">
@@ -996,17 +931,10 @@ export default function GroupDetailScreen() {
               <button className="modal-close" onClick={() => setShowOwnerProofModal(false)}><X size={20} /></button>
             </div>
             <div className="modal-body-scroll">
-              {proofForm.screenshotPreview
-                ? <img src={proofForm.screenshotPreview} className="proof-preview" alt="proof" />
-                : <div style={{ textAlign: 'center', padding: '20px 0', color: '#9E8FCC', fontSize: 13 }}>No screenshot selected yet</div>
-              }
-              <button className="upload-proof-btn" onClick={() => proofInputRef.current.click()}>
-                <Camera size={16} /> {proofForm.screenshotPreview ? 'Change Screenshot' : 'Upload Screenshot'}
-              </button>
+              {proofForm.screenshotPreview ? <img src={proofForm.screenshotPreview} className="proof-preview" alt="proof" /> : <div style={{ textAlign: 'center', padding: '20px 0', color: '#9E8FCC', fontSize: 13 }}>No screenshot selected yet</div>}
+              <button className="upload-proof-btn" onClick={() => proofInputRef.current.click()}><Camera size={16} /> {proofForm.screenshotPreview ? 'Change Screenshot' : 'Upload Screenshot'}</button>
               <textarea placeholder="Optional note" value={proofForm.note} onChange={e => setProofForm({ ...proofForm, note: e.target.value })} className="detail-textarea" rows={3} />
-              <div style={{ background: '#F0EDFF', borderRadius: 12, padding: '10px 14px', fontSize: 12, color: '#3B2AAB', textAlign: 'center' }}>
-                📢 This will <strong>automatically mark the expense as paid</strong> for all members.
-              </div>
+              <div style={{ background: '#F0EDFF', borderRadius: 12, padding: '10px 14px', fontSize: 12, color: '#3B2AAB', textAlign: 'center' }}>📢 This will automatically mark the expense as paid for all members.</div>
               <button className="add-expense-btn" onClick={handleOwnerSubmitProof} disabled={loadingAction}>{loadingAction ? 'Confirming...' : 'Confirm Payment'}</button>
               <button className="cancel-btn" onClick={() => setShowOwnerProofModal(false)}>Cancel</button>
             </div>
@@ -1014,110 +942,47 @@ export default function GroupDetailScreen() {
         </div>
       )}
 
-      {/* View proof Modal */}
       {showViewProofModal && selectedProof && (
         <div className="modal-overlay-detail">
           <div className="modal-detail-card">
             <div className="modal-header">
-              <h2>
-                {selectedProof.submitted_by === group?.created_by
-                  ? '✅ Owner Payment Proof'
-                  : selectedProof.status === 'rejected'
-                    ? '❌ Rejected Proof'
-                    : '📸 Payment Proof'}
-              </h2>
+              <h2>Payment Proof</h2>
               <button className="modal-close" onClick={() => setShowViewProofModal(false)}><X size={20} /></button>
             </div>
             <div className="modal-body-scroll">
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: '#F8F6FF', borderRadius: 12, padding: '10px 14px', marginBottom: 4 }}>
-                <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#3B2AAB', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, flexShrink: 0 }}>
-                  {selectedProof.profiles?.full_name?.[0]?.toUpperCase() || '?'}
-                </div>
-                <div>
-                  <div style={{ fontWeight: 600, fontSize: 13, color: '#2D1A7A' }}>
-                    {selectedProof.profiles?.full_name || 'Unknown'}
-                    {selectedProof.submitted_by === group?.created_by ? ' (Owner)' : ''}
-                  </div>
-                  <div style={{ fontSize: 10, color: '#9E8FCC' }}>
-                    {new Date(selectedProof.created_at).toLocaleString()}
-                  </div>
-                </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: '#F8F6FF', borderRadius: 12, padding: '10px 14px' }}>
+                <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#3B2AAB', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700 }}>{selectedProof.profiles?.full_name?.[0]?.toUpperCase()}</div>
+                <div><div style={{ fontWeight: 600, fontSize: 13 }}>{selectedProof.profiles?.full_name}</div><div style={{ fontSize: 10, color: '#9E8FCC' }}>{new Date(selectedProof.created_at).toLocaleString()}</div></div>
               </div>
-
-              <img
-                src={selectedProof.screenshot_url}
-                className="proof-preview"
-                alt="payment proof"
-                style={{ cursor: 'pointer' }}
-                onClick={() => window.open(selectedProof.screenshot_url, '_blank')}
-              />
-              <p style={{ fontSize: 11, color: '#9E8FCC', textAlign: 'center', margin: '-4px 0 4px' }}>Tap image to open full size</p>
-
-              {selectedProof.note && (
-                <div style={{ background: '#F8F6FF', borderRadius: 12, padding: '10px 14px', fontSize: 13, color: '#2D1A7A' }}>
-                  💬 {selectedProof.note}
-                </div>
-              )}
-
-              {selectedProof.rejection_reason && (
-                <div style={{ background: '#ffe5e5', borderRadius: 12, padding: '10px 14px', fontSize: 12, color: '#e53e3e' }}>
-                  ❌ Rejection reason: {selectedProof.rejection_reason}
-                </div>
-              )}
-
-              <div style={{
-                textAlign: 'center', fontSize: 12, fontWeight: 600, padding: '8px',
-                borderRadius: 8,
-                background: selectedProof.status === 'verified' ? '#D1FAE5' : selectedProof.status === 'rejected' ? '#ffe5e5' : '#fff3cd',
-                color: selectedProof.status === 'verified' ? '#065F46' : selectedProof.status === 'rejected' ? '#e53e3e' : '#856404',
-              }}>
+              <img src={selectedProof.screenshot_url} className="proof-preview" alt="payment proof" style={{ cursor: 'pointer' }} onClick={() => window.open(selectedProof.screenshot_url, '_blank')} />
+              {selectedProof.note && <div style={{ background: '#F8F6FF', borderRadius: 12, padding: '10px 14px', fontSize: 13 }}>💬 {selectedProof.note}</div>}
+              {selectedProof.rejection_reason && <div style={{ background: '#ffe5e5', borderRadius: 12, padding: '10px 14px', fontSize: 12, color: '#e53e3e' }}>❌ Rejection reason: {selectedProof.rejection_reason}</div>}
+              <div style={{ textAlign: 'center', fontSize: 12, fontWeight: 600, padding: 8, borderRadius: 8, background: selectedProof.status === 'verified' ? '#D1FAE5' : selectedProof.status === 'rejected' ? '#ffe5e5' : '#fff3cd', color: selectedProof.status === 'verified' ? '#065F46' : selectedProof.status === 'rejected' ? '#e53e3e' : '#856404' }}>
                 {selectedProof.status === 'verified' ? '✅ Payment Verified' : selectedProof.status === 'rejected' ? '❌ Proof Rejected' : '⏳ Pending Verification'}
               </div>
-
               {isAdmin && selectedProof.status === 'pending_verification' && selectedProof.submitted_by !== currentUser?.id && (
                 <>
-                  <button className="add-expense-btn" onClick={() => handleConfirmPayment(selectedProof)}>
-                    ✅ Confirm Payment
-                  </button>
-                  <button className="delete-confirm-btn" onClick={() => { setShowViewProofModal(false); setShowRejectProofModal(true); }}>
-                    ❌ Reject Proof
-                  </button>
+                  <button className="add-expense-btn" onClick={() => handleConfirmPayment(selectedProof, selectedSplit)}>✅ Confirm Payment</button>
+                  <button className="delete-confirm-btn" onClick={() => { setShowViewProofModal(false); setShowRejectProofModal(true); }}>❌ Reject Proof</button>
                 </>
               )}
-
-              {/* Resubmit button inside proof modal for rejected proofs */}
               {!isAdmin && selectedProof.status === 'rejected' && selectedProof.submitted_by === currentUser?.id && (
-                <button 
-                  className="pay-btn-small" 
-                  style={{ width: '100%', marginTop: 8, background: '#e53e3e', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
-                  onClick={() => {
-                    setShowViewProofModal(false);
-                    const expense = expenses.find(e => e.id === selectedProof.expense_id);
-                    if (expense) {
-                      setSelectedExpense(expense);
-                      resetProofForm();
-                      setShowResubmitModal(true);
-                    }
-                  }}
-                >
-                  <RefreshCw size={14} /> Resubmit New Proof
-                </button>
+                <button className="pay-btn-small" style={{ width: '100%', marginTop: 8, background: '#e53e3e' }} onClick={() => { setShowViewProofModal(false); const expense = expenses.find(e => e.id === selectedProof.expense_id); if (expense) { setSelectedExpense(expense); resetProofForm(); setShowResubmitModal(true); } }}>Resubmit New Proof</button>
               )}
-
               <button className="cancel-btn" onClick={() => setShowViewProofModal(false)}>Close</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Reject expense Modal */}
+      {/* Reject expense Modal (for owner rejecting an expense) */}
       {showRejectModal && (
         <div className="modal-overlay-detail">
           <div className="modal-detail-card">
-            <div className="modal-header"><h2>Reject Expense</h2><button className="modal-close" onClick={() => setShowRejectModal(false)}><X size={20} /></button></div>
+            <div className="modal-header"><h2>Reject Payment</h2><button className="modal-close" onClick={() => setShowRejectModal(false)}><X size={20} /></button></div>
             <div className="modal-body-scroll">
               <textarea placeholder="Reason *" value={rejectReason} onChange={e => setRejectReason(e.target.value)} className="detail-textarea" />
-              <button className="add-expense-btn" onClick={handleReject}>Confirm Reject</button>
+              <button className="add-expense-btn" onClick={() => handleRejectSplit(selectedSplit)}>Confirm Reject</button>
               <button className="cancel-btn" onClick={() => setShowRejectModal(false)}>Cancel</button>
             </div>
           </div>
@@ -1187,16 +1052,7 @@ export default function GroupDetailScreen() {
       )}
 
       {/* Hidden file input */}
-      <input
-        type="file"
-        ref={proofInputRef}
-        style={{ display: 'none' }}
-        accept="image/*"
-        onChange={e => {
-          const file = e.target.files[0];
-          if (file) setProofForm({ ...proofForm, screenshot: file, screenshotPreview: URL.createObjectURL(file) });
-        }}
-      />
+      <input type="file" ref={proofInputRef} style={{ display: 'none' }} accept="image/*" onChange={e => { const file = e.target.files[0]; if (file) setProofForm({ ...proofForm, screenshot: file, screenshotPreview: URL.createObjectURL(file) }); }} />
 
       {toast && <div className={`toast-detail toast-${toast.type}`}>{toast.msg}</div>}
     </div>
