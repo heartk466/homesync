@@ -13,9 +13,8 @@ import {
   checkDuplicate,
   mergeItems,
   markItemAsPaid,
-  adminConfirmPayment,
+  UTILITY_CATEGORIES,
 } from '../utils/expenseUtils';
-import { fetchAllUtilityItems, UTILITY_CATEGORIES } from '../utils/expenseUtils';
 
 const UTILITY_TYPES = ['Power', 'Water', 'Gas', 'Internet', 'Other'];
 
