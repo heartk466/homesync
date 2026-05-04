@@ -36,7 +36,7 @@ export default function GroupDetailScreen() {
   const [profile, setProfile] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [expenses, setExpenses] = useState([]);
-  const [expenseSplits, setExpenseSplits] = useState({}); // { expenseId: [split objects] }
+  const [expenseSplits, setExpenseSplits] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -52,7 +52,7 @@ export default function GroupDetailScreen() {
   const [showResubmitModal, setShowResubmitModal] = useState(false);
   const [selectedMember, setSelectedMember] = useState(null);
   const [selectedExpense, setSelectedExpense] = useState(null);
-  const [selectedSplit, setSelectedSplit] = useState(null); // For proof modals
+  const [selectedSplit, setSelectedSplit] = useState(null);
   const [pendingApprovals, setPendingApprovals] = useState([]);
   const [pendingPaymentProofs, setPendingPaymentProofs] = useState([]);
   const [allPaymentProofs, setAllPaymentProofs] = useState([]);
@@ -78,22 +78,23 @@ export default function GroupDetailScreen() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  // Fetch expense splits for given expense IDs
+  // -------------------- STABLE FETCH FUNCTIONS --------------------
   const fetchExpenseSplits = useCallback(async (expenseIds) => {
-    if (!expenseIds.length) return;
+    if (!expenseIds.length) return {};
     const { data, error } = await supabase
       .from('expense_splits')
       .select(`*, profiles:user_id (id, full_name, avatar_url)`)
       .in('expense_id', expenseIds);
-    if (error) console.error(error);
-    else {
-      const grouped = {};
-      data.forEach(split => {
-        if (!grouped[split.expense_id]) grouped[split.expense_id] = [];
-        grouped[split.expense_id].push(split);
-      });
-      setExpenseSplits(grouped);
+    if (error) {
+      console.error(error);
+      return {};
     }
+    const grouped = {};
+    data.forEach(split => {
+      if (!grouped[split.expense_id]) grouped[split.expense_id] = [];
+      grouped[split.expense_id].push(split);
+    });
+    return grouped;
   }, []);
 
   const fetchGroupAndData = useCallback(async () => {
@@ -182,9 +183,6 @@ export default function GroupDetailScreen() {
       const allExpenses = expensesData || [];
       setExpenses(allExpenses);
 
-      // Fetch splits for these expenses
-      await fetchExpenseSplits(allExpenses.map(e => e.id));
-
       let proofsData = [];
       if (allExpenses.length > 0) {
         const { data: proofs } = await supabase
@@ -196,27 +194,38 @@ export default function GroupDetailScreen() {
       } else {
         setAllPaymentProofs([]);
       }
-
-      // Pending approvals: splits with status 'pending_verification' where owner can act
-      let pending = [];
-      for (const exp of allExpenses) {
-        const splits = expenseSplits[exp.id] || [];
-        const pendingSplits = splits.filter(s => s.status === 'pending_verification');
-        pending.push(...pendingSplits);
-      }
-      setPendingApprovals(pending);
-
-      // For backward compatibility, still keep pending payment proofs array for quick view
-      const pendingProofs = proofsData.filter(p => p.status === 'pending_verification');
-      setPendingPaymentProofs(pendingProofs);
     } catch (err) {
       console.error(err);
       setError(err.message);
     } finally {
       setLoading(false);
     }
-  }, [id, contextType, navigate, fetchExpenseSplits, expenseSplits]);
+  }, [id, contextType, navigate]);
 
+  // Load splits when expenses change
+  useEffect(() => {
+    const loadSplits = async () => {
+      if (expenses.length === 0) {
+        setExpenseSplits({});
+        setPendingApprovals([]);
+        return;
+      }
+      const splitsMap = await fetchExpenseSplits(expenses.map(e => e.id));
+      setExpenseSplits(splitsMap);
+      
+      // Compute pending approvals (splits with status 'pending_verification')
+      const pending = [];
+      for (const exp of expenses) {
+        const splits = splitsMap[exp.id] || [];
+        const pendingSplits = splits.filter(s => s.status === 'pending_verification');
+        pending.push(...pendingSplits);
+      }
+      setPendingApprovals(pending);
+    };
+    loadSplits();
+  }, [expenses, fetchExpenseSplits]);
+
+  // Initial load
   useEffect(() => {
     fetchGroupAndData();
   }, [fetchGroupAndData]);
@@ -236,12 +245,17 @@ export default function GroupDetailScreen() {
       }, () => fetchGroupAndData())
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'expense_splits',
-        filter: `expense_id=in.(...)` // broad refresh is simpler
-      }, () => fetchGroupAndData())
+      }, () => {
+        // Only refresh splits, not the entire page
+        if (expenses.length) {
+          fetchExpenseSplits(expenses.map(e => e.id)).then(setExpenseSplits);
+        }
+      })
       .subscribe();
     return () => supabase.removeChannel(channel);
-  }, [currentUser, group, id, contextType, fetchGroupAndData]);
+  }, [currentUser, group, id, contextType, fetchGroupAndData, fetchExpenseSplits, expenses.length]);
 
+  // -------------------- HANDLERS --------------------
   const resetExpenseForm = () => {
     setExpenseForm({
       title: '', amount: '', category: 'Food',
@@ -257,10 +271,10 @@ export default function GroupDetailScreen() {
   };
 
   const getStatusBadge = (expense, splits) => {
-    const paidCount = splits.filter(s => s.status === 'approved').length;
-    const total = splits.length;
     if (expense.approval_status === 'pending_approval') return { label: 'Waiting Approval', color: '#3B2AAB', bg: '#F0EDFF' };
     if (expense.approval_status === 'rejected') return { label: 'Rejected', color: '#e53e3e', bg: '#ffe5e5' };
+    const paidCount = splits.filter(s => s.status === 'approved').length;
+    const total = splits.length;
     if (total === 0) return { label: 'No splits', color: '#856404', bg: '#fff3cd' };
     if (paidCount === total) return { label: 'Fully Paid', color: '#38a169', bg: '#f0fff4' };
     return { label: `${paidCount}/${total} Paid`, color: '#856404', bg: '#fff3cd' };
@@ -363,7 +377,6 @@ export default function GroupDetailScreen() {
     setLoadingAction(false);
   };
 
-  // Approve a pending split (owner action)
   const handleApproveSplit = async (split) => {
     setLoadingAction(true);
     const { error } = await supabase
@@ -372,6 +385,10 @@ export default function GroupDetailScreen() {
       .eq('id', split.id);
     if (!error) {
       showToast('Payment approved!');
+      // Refresh splits only
+      const newSplitsMap = await fetchExpenseSplits(expenses.map(e => e.id));
+      setExpenseSplits(newSplitsMap);
+      // Also refresh expenses to update status badge
       fetchGroupAndData();
     } else {
       showToast('Error approving payment', 'error');
@@ -379,22 +396,25 @@ export default function GroupDetailScreen() {
     setLoadingAction(false);
   };
 
-  const handleRejectSplit = async (split) => {
+  const handleRejectSplit = async () => {
     if (!rejectReason.trim()) { showToast('Please provide a reason', 'error'); return; }
     setLoadingAction(true);
     const { error } = await supabase
       .from('expense_splits')
       .update({ status: 'unpaid', rejection_reason: rejectReason, proof_id: null, updated_at: new Date().toISOString() })
-      .eq('id', split.id);
+      .eq('id', selectedSplit.id);
     if (!error) {
-      // Also update the associated payment_proof if any (optional)
-      await supabase
-        .from('payment_proofs')
-        .update({ status: 'rejected', rejection_reason: rejectReason })
-        .eq('id', split.proof_id);
+      if (selectedSplit.proof_id) {
+        await supabase
+          .from('payment_proofs')
+          .update({ status: 'rejected', rejection_reason: rejectReason })
+          .eq('id', selectedSplit.proof_id);
+      }
       showToast('Payment rejected');
       setShowRejectModal(false);
       setRejectReason('');
+      const newSplitsMap = await fetchExpenseSplits(expenses.map(e => e.id));
+      setExpenseSplits(newSplitsMap);
       fetchGroupAndData();
     } else {
       showToast('Error rejecting payment', 'error');
@@ -478,7 +498,6 @@ export default function GroupDetailScreen() {
     }
     const { data: urlData } = supabase.storage.from('payment-proofs').getPublicUrl(fileName);
 
-    // Insert payment proof
     const { data: insertedProof, error: proofError } = await supabase.from('payment_proofs').insert({
       expense_id: selectedExpense.id,
       submitted_by: currentUser.id,
@@ -493,7 +512,6 @@ export default function GroupDetailScreen() {
       return;
     }
 
-    // Update the expense split for this user (trigger will also run, but we can do manually)
     await supabase
       .from('expense_splits')
       .update({ status: 'pending_verification', proof_id: insertedProof.id, updated_at: new Date().toISOString() })
@@ -522,9 +540,10 @@ export default function GroupDetailScreen() {
   };
 
   const handleConfirmPayment = async (proof, split) => {
+    setLoadingAction(true);
     await supabase.from('payment_proofs').update({ status: 'verified' }).eq('id', proof.id);
     await supabase.from('expense_splits').update({ status: 'approved', updated_at: new Date().toISOString() }).eq('id', split.id);
-    // Check if all splits are approved, then update expense status
+    // Check if all splits are approved
     const { data: splits } = await supabase.from('expense_splits').select('status').eq('expense_id', split.expense_id);
     const allApproved = splits.every(s => s.status === 'approved');
     if (allApproved) {
@@ -541,6 +560,7 @@ export default function GroupDetailScreen() {
     });
     setShowViewProofModal(false);
     showToast('Payment confirmed');
+    setLoadingAction(false);
     fetchGroupAndData();
   };
 
@@ -568,21 +588,18 @@ export default function GroupDetailScreen() {
       status: 'verified',
     }).select().single();
 
-    // Update the owner's split to approved
     await supabase
       .from('expense_splits')
       .update({ status: 'approved', proof_id: insertedProof.id, updated_at: new Date().toISOString() })
       .eq('expense_id', selectedExpense.id)
       .eq('user_id', currentUser.id);
 
-    // Check if all splits are approved
     const { data: splits } = await supabase.from('expense_splits').select('status').eq('expense_id', selectedExpense.id);
     const allApproved = splits.every(s => s.status === 'approved');
     if (allApproved) {
       await supabase.from('expenses').update({ status: 'paid' }).eq('id', selectedExpense.id);
     }
 
-    // Notify other members
     const otherSplits = splits.filter(s => s.user_id !== currentUser.id);
     for (const split of otherSplits) {
       await supabase.from('notifications').insert({
@@ -606,6 +623,7 @@ export default function GroupDetailScreen() {
 
   const handleRejectProof = async () => {
     if (!rejectProofReason.trim()) { showToast('Please provide a reason', 'error'); return; }
+    setLoadingAction(true);
     await supabase.from('payment_proofs').update({
       status: 'rejected',
       rejection_reason: rejectProofReason
@@ -631,9 +649,11 @@ export default function GroupDetailScreen() {
     setSelectedProof(null);
     setSelectedSplit(null);
     showToast('Payment proof rejected');
+    setLoadingAction(false);
     fetchGroupAndData();
   };
 
+  // -------------------- RENDER --------------------
   if (loading) {
     return (
       <div className="group-detail-screen">
@@ -705,7 +725,7 @@ export default function GroupDetailScreen() {
         )}
       </div>
 
-      {/* Pending approvals (splits) */}
+      {/* Pending Approvals (splits) */}
       {isAdmin && pendingApprovals.length > 0 && (
         <div className="detail-pending-section">
           <h3 className="section-title">⏳ Pending Payment Approvals ({pendingApprovals.length})</h3>
@@ -729,7 +749,7 @@ export default function GroupDetailScreen() {
         </div>
       )}
 
-      {/* Expenses list with per-member splits */}
+      {/* Expenses List */}
       <div className="detail-expenses-section">
         <h3 className="section-title">📋 Expenses ({expenses.length})</h3>
         {expenses.length === 0 ? (
@@ -739,12 +759,10 @@ export default function GroupDetailScreen() {
             const splits = expenseSplits[expense.id] || [];
             const badge = getStatusBadge(expense, splits);
             const mySplit = splits.find(s => s.user_id === currentUser?.id);
-            const isOwner = isAdmin; // admin can act
+            const isOwner = isAdmin;
             const ownerVerifiedProof = allPaymentProofs.find(p => p.expense_id === expense.id && p.submitted_by === group?.created_by && p.status === 'verified');
             const myPendingProof = allPaymentProofs.find(p => p.expense_id === expense.id && p.submitted_by === currentUser?.id && p.status === 'pending_verification');
             const myRejectedProof = allPaymentProofs.find(p => p.expense_id === expense.id && p.submitted_by === currentUser?.id && p.status === 'rejected');
-            const ownerSplit = splits.find(s => s.user_id === group?.created_by);
-            const isOwnerSplitApproved = ownerSplit?.status === 'approved';
 
             return (
               <div key={expense.id} className="expense-item-detail">
@@ -759,7 +777,7 @@ export default function GroupDetailScreen() {
                     {expense.expense_date}{expense.location ? ` • ${expense.location}` : ''}
                   </div>
 
-                  {/* Member splits list (expandable) */}
+                  {/* Member splits list */}
                   <div className="member-splits-list" style={{ marginTop: 8 }}>
                     {splits.map(split => {
                       const member = members.find(m => m.user_id === split.user_id);
@@ -787,7 +805,7 @@ export default function GroupDetailScreen() {
                     })}
                   </div>
 
-                  {/* Owner actions */}
+                  {/* Owner submit proof button */}
                   {isOwner && !ownerVerifiedProof && (
                     <div className="owe-row" style={{ marginTop: 8 }}>
                       <button className="pay-btn-small" onClick={() => { setSelectedExpense(expense); resetProofForm(); setShowOwnerProofModal(true); }}>
@@ -796,7 +814,7 @@ export default function GroupDetailScreen() {
                     </div>
                   )}
 
-                  {/* Member actions */}
+                  {/* Member pay button */}
                   {!isOwner && mySplit && mySplit.status === 'unpaid' && expense.status !== 'paid' && (
                     <div className="owe-row" style={{ marginTop: 8 }}>
                       <span>You owe ₱{Number(mySplit.share_amount).toFixed(2)}</span>
@@ -806,6 +824,7 @@ export default function GroupDetailScreen() {
                     </div>
                   )}
 
+                  {/* Rejected proof notice */}
                   {!isOwner && myRejectedProof && (
                     <div style={{ marginTop: 8, background: '#ffe5e5', borderRadius: 10, padding: '8px 12px' }}>
                       <div style={{ fontSize: 12, fontWeight: 700, color: '#e53e3e' }}>❌ Your proof was rejected</div>
@@ -833,9 +852,9 @@ export default function GroupDetailScreen() {
       </div>
 
       {/* FAB */}
-      <button className="fab-detail" onClick={() => setShowAddExpense(true)}><Plus size={24} /></button>
+      <button className="fab-detail" onClick={() => { resetExpenseForm(); setShowAddExpense(true); }}><Plus size={24} /></button>
 
-      {/* Add Expense Modal - same as before, but ensure members_split is built correctly */}
+      {/* Add Expense Modal */}
       {showAddExpense && (
         <div className="modal-overlay-detail">
           <div className="modal-detail-card">
@@ -844,7 +863,6 @@ export default function GroupDetailScreen() {
               <button className="modal-close" onClick={() => { setShowAddExpense(false); resetExpenseForm(); }}><X size={20} /></button>
             </div>
             <div className="modal-body-scroll">
-              {/* Input fields same as original */}
               <input type="text" placeholder="Description *" className="detail-input" value={expenseForm.title} onChange={e => setExpenseForm({ ...expenseForm, title: e.target.value })} />
               <div className="amount-input-wrap"><span className="peso-sign">₱</span><input type="number" placeholder="0.00" value={expenseForm.amount} onChange={e => setExpenseForm({ ...expenseForm, amount: e.target.value })} /></div>
               <input type="date" value={expenseForm.expense_date} onChange={e => setExpenseForm({ ...expenseForm, expense_date: e.target.value })} className="detail-input" />
@@ -885,7 +903,7 @@ export default function GroupDetailScreen() {
         </div>
       )}
 
-      {/* Payment proof modals (same as before but using selectedSplit) */}
+      {/* Member Payment Proof Modal */}
       {showPaymentProofModal && (
         <div className="modal-overlay-detail">
           <div className="modal-detail-card">
@@ -904,6 +922,7 @@ export default function GroupDetailScreen() {
         </div>
       )}
 
+      {/* Resubmit Modal */}
       {showResubmitModal && (
         <div className="modal-overlay-detail">
           <div className="modal-detail-card">
@@ -923,6 +942,7 @@ export default function GroupDetailScreen() {
         </div>
       )}
 
+      {/* Owner Proof Modal */}
       {showOwnerProofModal && (
         <div className="modal-overlay-detail">
           <div className="modal-detail-card">
@@ -942,6 +962,7 @@ export default function GroupDetailScreen() {
         </div>
       )}
 
+      {/* View Proof Modal */}
       {showViewProofModal && selectedProof && (
         <div className="modal-overlay-detail">
           <div className="modal-detail-card">
@@ -975,21 +996,21 @@ export default function GroupDetailScreen() {
         </div>
       )}
 
-      {/* Reject expense Modal (for owner rejecting an expense) */}
+      {/* Reject Split Modal */}
       {showRejectModal && (
         <div className="modal-overlay-detail">
           <div className="modal-detail-card">
             <div className="modal-header"><h2>Reject Payment</h2><button className="modal-close" onClick={() => setShowRejectModal(false)}><X size={20} /></button></div>
             <div className="modal-body-scroll">
               <textarea placeholder="Reason *" value={rejectReason} onChange={e => setRejectReason(e.target.value)} className="detail-textarea" />
-              <button className="add-expense-btn" onClick={() => handleRejectSplit(selectedSplit)}>Confirm Reject</button>
+              <button className="add-expense-btn" onClick={handleRejectSplit}>Confirm Reject</button>
               <button className="cancel-btn" onClick={() => setShowRejectModal(false)}>Cancel</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Delete expense Modal */}
+      {/* Delete Expense Modal */}
       {showDeleteModal && (
         <div className="modal-overlay-detail">
           <div className="modal-detail-card">
@@ -1004,7 +1025,7 @@ export default function GroupDetailScreen() {
         </div>
       )}
 
-      {/* Reject proof Modal */}
+      {/* Reject Proof Modal */}
       {showRejectProofModal && (
         <div className="modal-overlay-detail">
           <div className="modal-detail-card">
@@ -1018,7 +1039,7 @@ export default function GroupDetailScreen() {
         </div>
       )}
 
-      {/* Delete group Modal */}
+      {/* Delete Group Modal */}
       {showDeleteGroupModal && (
         <div className="modal-overlay-detail">
           <div className="modal-detail-card">
@@ -1035,7 +1056,7 @@ export default function GroupDetailScreen() {
         </div>
       )}
 
-      {/* Kick member Modal */}
+      {/* Kick Member Modal */}
       {showKickMemberModal && selectedMember && (
         <div className="modal-overlay-detail">
           <div className="modal-detail-card">
