@@ -834,17 +834,16 @@ export default function GroupDetailScreen() {
                   )}
                 </div>
 
-                <div className="expense-badge" style={{ background: badge.bg, color: badge.color }}>
-                  {badge.label}
-                </div>
-
-                {isAdmin && (
-                  <div className="expense-admin-icons">
+                <div className="expense-right-col">
+                  <div className="expense-badge" style={{ background: badge.bg, color: badge.color }}>
+                    {badge.label}
+                  </div>
+                  {isAdmin && (
                     <button className="icon-btn delete" onClick={() => { setSelectedExpense(expense); setShowDeleteModal(true); }}>
                       <Trash2 size={14} />
                     </button>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
             );
           })
