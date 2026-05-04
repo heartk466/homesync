@@ -12,7 +12,7 @@ import {
 import './DashboardScreen.css';
 import TopBar from '../components/TopBar';
 import BottomNav from '../components/BottomNav';
-import { fetchAllHouseholdExpenses } from '../utils/expenseUtils';
+import { fetchAllHouseholdExpenses, UTILITY_CATEGORIES } from '../utils/expenseUtils';
 
 const COLORS = ['#3B2AAB', '#AE96FF', '#D4C5FF'];
 
@@ -22,9 +22,9 @@ export default function DashboardScreen() {
 
   const [profile, setProfile] = useState(null);
   const [household, setHousehold] = useState(null);
-  const [totalSpent, setTotalSpent] = useState(0);
+  const [totalSpent, setTotalSpent] = useState(0);        // User's approved share this month
+  const [utilitiesTotal, setUtilitiesTotal] = useState(0); // User's approved share for utilities
   const [lastMonthSpent, setLastMonthSpent] = useState(0);
-  const [yourShare, setYourShare] = useState(0);
   const [monthlyData, setMonthlyData] = useState([]);
   const [categoryData, setCategoryData] = useState([]);
   const [pendingAmount, setPendingAmount] = useState(0);
@@ -190,7 +190,7 @@ export default function DashboardScreen() {
     setEditLoading(false);
   };
 
-  // Helper to fetch expense splits for a list of expense IDs
+  // Helper to fetch expense splits
   const fetchExpenseSplits = async (expenseIds) => {
     if (!expenseIds.length) return {};
     const { data, error } = await supabase
@@ -201,7 +201,6 @@ export default function DashboardScreen() {
       console.error(error);
       return {};
     }
-    // Group by expense_id for easier access
     const grouped = {};
     data.forEach(split => {
       if (!grouped[split.expense_id]) grouped[split.expense_id] = [];
@@ -223,9 +222,7 @@ export default function DashboardScreen() {
         .single();
       setProfile(profileData);
 
-      if (profileData?.avatar_url) {
-        setAvatarUrl(profileData.avatar_url);
-      }
+      if (profileData?.avatar_url) setAvatarUrl(profileData.avatar_url);
 
       if (profileData?.household_id) {
         const { data: householdData } = await supabase
@@ -237,172 +234,139 @@ export default function DashboardScreen() {
       }
 
       const now = new Date();
-      const firstDay = new Date(now.getFullYear(), now.getMonth(), 1)
-        .toISOString().split('T')[0];
-      const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0)
-        .toISOString().split('T')[0];
+      const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+      const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
 
       const allExpenses = await fetchAllHouseholdExpenses(profileData?.household_id);
-      
-      // Fetch splits for these expenses
       const expenseIds = allExpenses.map(e => e.id);
       const splitsByExpense = await fetchExpenseSplits(expenseIds);
-      
-      // Only consider paid expenses for total spent (status = 'paid' on expense)
-      const paidExpenses = (allExpenses || []).filter(e => e.status === 'paid');
-      const monthPaidExpenses = paidExpenses.filter(e => e.expense_date >= firstDay && e.expense_date <= lastDay);
 
-      const total = monthPaidExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
-      setTotalSpent(total);
-
-      // Calculate YOUR share (approved splits for the current user)
+      // Calculate user's approved share for this month
       let myApprovedTotal = 0;
+      let myUtilitiesTotal = 0;
       let myPendingTotal = 0;
+      let lastMonthTotal = 0;
+
+      const utilityCategories = UTILITY_CATEGORIES;
+
       for (const expense of allExpenses) {
         const splits = splitsByExpense[expense.id] || [];
         const mySplit = splits.find(s => s.user_id === user.id);
         if (mySplit) {
+          const amount = Number(mySplit.share_amount);
           if (mySplit.status === 'approved') {
-            myApprovedTotal += Number(mySplit.share_amount);
-          } else if (mySplit.status === 'pending_verification' || mySplit.status === 'unpaid') {
-            myPendingTotal += Number(mySplit.share_amount);
+            // Only count if expense is paid and approved (we already have status paid on expense, but use split status)
+            if (expense.expense_date >= firstDay && expense.expense_date <= lastDay) {
+              myApprovedTotal += amount;
+              if (utilityCategories.includes(expense.category)) {
+                myUtilitiesTotal += amount;
+              }
+            }
+            // For last month comparison (household total, not used here but keep logic)
+            const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().split('T')[0];
+            const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0).toISOString().split('T')[0];
+            if (expense.expense_date >= lastMonthStart && expense.expense_date <= lastMonthEnd) {
+              lastMonthTotal += amount;
+            }
+          } else if (mySplit.status !== 'approved') {
+            if (expense.expense_date >= firstDay && expense.expense_date <= lastDay) {
+              myPendingTotal += amount;
+            }
           }
         }
       }
-      // Your share shown on dashboard is the approved total (what you actually paid)
-      setYourShare(myApprovedTotal);
+      setTotalSpent(myApprovedTotal);
+      setUtilitiesTotal(myUtilitiesTotal);
       setPendingAmount(myPendingTotal);
+      setLastMonthSpent(lastMonthTotal);
 
-      // Category breakdown based on paid expenses and the user's approved splits
+      // Category breakdown (only user's approved shares this month)
       const categories = {};
-      for (const expense of monthPaidExpenses) {
+      for (const expense of allExpenses) {
+        if (!(expense.expense_date >= firstDay && expense.expense_date <= lastDay)) continue;
         const splits = splitsByExpense[expense.id] || [];
         const mySplit = splits.find(s => s.user_id === user.id);
-        // Only count if the user was part of this expense and their split is approved
         if (mySplit && mySplit.status === 'approved') {
-          categories[expense.category] = (categories[expense.category] || 0) + Number(mySplit.share_amount);
+          const category = expense.category;
+          categories[category] = (categories[category] || 0) + Number(mySplit.share_amount);
         }
       }
-      setCategoryData(
-        Object.entries(categories).map(([name, value]) => ({ name, value }))
-      );
+      setCategoryData(Object.entries(categories).map(([name, value]) => ({ name, value })));
 
-      // Group spending for groups (same as before but using splits)
+      // Group spending
       const { data: memberGroups } = await supabase
         .from('group_members')
         .select('group_id')
         .eq('user_id', user.id)
         .eq('status', 'active');
-
       const groupIds = (memberGroups || []).map(mg => mg.group_id);
       let groupsList = [];
-      if (groupIds.length > 0) {
-        const { data: groupsData } = await supabase
-          .from('groups')
-          .select('*')
-          .in('id', groupIds);
+      if (groupIds.length) {
+        const { data: groupsData } = await supabase.from('groups').select('*').in('id', groupIds);
         groupsList = groupsData || [];
       }
 
       const groupsWithPaidTotals = await Promise.all(
         groupsList.map(async (group) => {
-          // Get expenses for this group
           const { data: groupExpenses } = await supabase
             .from('expenses')
-            .select('id, amount')
+            .select('id, amount, category')
             .eq('group_id', group.id)
             .eq('status', 'paid')
             .eq('approval_status', 'approved')
             .gte('expense_date', firstDay)
             .lte('expense_date', lastDay);
-          
-          // Get splits for those expenses
           const groupExpenseIds = groupExpenses.map(e => e.id);
-          const splitsMap = await fetchExpenseSplits(groupExpenseIds);
-          
+          const groupSplitsMap = await fetchExpenseSplits(groupExpenseIds);
           let paidTotal = 0;
-          for (const expense of groupExpenses) {
-            const splits = splitsMap[expense.id] || [];
+          for (const exp of groupExpenses) {
+            const splits = groupSplitsMap[exp.id] || [];
             const mySplit = splits.find(s => s.user_id === user.id);
             if (mySplit && mySplit.status === 'approved') {
               paidTotal += Number(mySplit.share_amount);
             }
           }
-          
-          return {
-            ...group,
-            currentMonthPaid: paidTotal,
-          };
+          return { ...group, currentMonthPaid: paidTotal };
         })
       );
-
       setGroupSpending(groupsWithPaidTotals);
-      setTotalGroupPaid(groupsWithPaidTotals.reduce((sum, group) => sum + group.currentMonthPaid, 0));
+      setTotalGroupPaid(groupsWithPaidTotals.reduce((sum, g) => sum + g.currentMonthPaid, 0));
 
-      // Monthly trend for the household total (all approved splits across all members)
+      // Monthly trend (user's approved shares only)
       const months = [];
       for (let i = 5; i >= 0; i--) {
         const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-        const first = new Date(d.getFullYear(), d.getMonth(), 1)
-          .toISOString().split('T')[0];
-        const last = new Date(d.getFullYear(), d.getMonth() + 1, 0)
-          .toISOString().split('T')[0];
-
-        // Get paid expenses in that month
-        const monthExpenses = paidExpenses.filter(e => e.expense_date >= first && e.expense_date <= last);
+        const first = new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0];
+        const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().split('T')[0];
         let monthTotal = 0;
-        for (const expense of monthExpenses) {
-          const splits = splitsByExpense[expense.id] || [];
-          // For household total, sum all approved splits (or total expense amount if no splits? use total expense amount)
-          // Simpler: just sum expense.amount for paid expenses (gives household total spent)
-          monthTotal += Number(expense.amount);
+        for (const expense of allExpenses) {
+          if (expense.expense_date >= first && expense.expense_date <= last) {
+            const splits = splitsByExpense[expense.id] || [];
+            const mySplit = splits.find(s => s.user_id === user.id);
+            if (mySplit && mySplit.status === 'approved') {
+              monthTotal += Number(mySplit.share_amount);
+            }
+          }
         }
-        months.push({
-          month: d.toLocaleString('default', { month: 'short' })[0],
-          amount: monthTotal,
-        });
+        months.push({ month: d.toLocaleString('default', { month: 'short' })[0], amount: monthTotal });
       }
       setMonthlyData(months);
-
-      // Last month total (household total, not per-user)
-      const lastMonthFirst = new Date(now.getFullYear(), now.getMonth() - 1, 1)
-        .toISOString().split('T')[0];
-      const lastMonthLast = new Date(now.getFullYear(), now.getMonth(), 0)
-        .toISOString().split('T')[0];
-
-      const lastTotal = paidExpenses
-        .filter(e => e.expense_date >= lastMonthFirst && e.expense_date <= lastMonthLast)
-        .reduce((sum, e) => sum + Number(e.amount), 0);
-      setLastMonthSpent(lastTotal);
-
     } catch (err) {
       console.error(err);
     }
   };
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     fetchData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     if (!currentUser?.id || !household?.id) return;
     const channel = supabase
       .channel(`dashboard-realtime-${household.id}`)
-      .on('postgres_changes', {
-        event: '*', schema: 'public', table: 'expenses',
-        filter: `household_id=eq.${household.id}`,
-      }, () => fetchData())
-      .on('postgres_changes', {
-        event: '*', schema: 'public', table: 'expense_splits',
-      }, () => fetchData())
-      .on('postgres_changes', {
-        event: '*', schema: 'public', table: 'utilities',
-        filter: `household_id=eq.${household.id}`,
-      }, () => fetchData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses', filter: `household_id=eq.${household.id}` }, () => fetchData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'expense_splits' }, () => fetchData())
       .subscribe();
-
     return () => supabase.removeChannel(channel);
   }, [currentUser?.id, household?.id]);
 
@@ -419,102 +383,51 @@ export default function DashboardScreen() {
 
   return (
     <div className="dashboard">
-
-      <TopBar
-        profile={profile}
-        setProfile={setProfile}
-        household={household}
-        currentUser={currentUser}
-        notifications={[]}
-        unreadCount={0}
-        title="Dashboard"
-        showBell={false}
-      />
-
+      <TopBar profile={profile} setProfile={setProfile} household={household} currentUser={currentUser} notifications={[]} unreadCount={0} title="Dashboard" showBell={false} />
       <div className="dash-content">
-
-        {/* Card 1 — Total Spent (household total) */}
+        {/* Card 1 — Your Total Spent This Month */}
         <div className="dash-card">
           <div className="card-left">
             <p className="card-greeting">{getGreeting()}, {getFirstName()}!</p>
-            <p className="card-label">Total Spent</p>
-            <p className="card-amount">
-              ₱ {totalSpent.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
-            </p>
+            <p className="card-label">Your Total Spent</p>
+            <p className="card-amount">₱ {totalSpent.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
             <p className="card-sub">this month</p>
             {percentChange !== null && (
               <p className={`card-change ${Number(percentChange) > 0 ? 'up' : 'down'}`}>
                 {Number(percentChange) > 0 ? '↑' : '↓'} {Math.abs(percentChange)}% vs last month
               </p>
             )}
+            {pendingAmount > 0 && (
+              <span className="pending-badge">Pending: ₱{pendingAmount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span>
+            )}
           </div>
           <div className="card-chart">
             <ResponsiveContainer width={120} height={80}>
               <BarChart data={monthlyData}>
-                <XAxis
-                  dataKey="month"
-                  tick={{ fontSize: 10, fill: '#3B2AAB' }}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <Bar dataKey="amount" fill="#3B2AAB" radius={[4, 4, 0, 0]}/>
+                <XAxis dataKey="month" tick={{ fontSize: 10, fill: '#3B2AAB' }} axisLine={false} tickLine={false} />
+                <Bar dataKey="amount" fill="#3B2AAB" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
         </div>
 
-        {/* Card 2 — Your Share (approved splits only) */}
+        {/* Card 2 — Utilities Paid (Approved shares for utility categories) */}
         <div className="dash-card">
           <div className="card-left">
-            <p className="card-label">Your Share</p>
-            <p className="card-amount">
-              ₱ {yourShare.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
-            </p>
-            <p className="card-sub">paid this month</p>
-            {pendingAmount > 0 && (
-              <span className="pending-badge">
-                Pending: ₱{pendingAmount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
-              </span>
-            )}
+            <p className="card-label">Utilities Paid</p>
+            <p className="card-amount">₱ {utilitiesTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+            <p className="card-sub">your share of utilities this month</p>
           </div>
           <div className="card-chart">
-            {categoryData.length > 0 ? (
-              <ResponsiveContainer width={130} height={100}>
-                <PieChart>
-                  <Pie
-                    data={categoryData}
-                    cx={50}
-                    cy={45}
-                    innerRadius={28}
-                    outerRadius={42}
-                    dataKey="value"
-                  >
-                    {categoryData.map((_, index) => (
-                      <Cell key={index} fill={COLORS[index % COLORS.length]}/>
-                    ))}
-                  </Pie>
-                  <Legend
-                    iconSize={8}
-                    iconType="circle"
-                    formatter={(value) => (
-                      <span style={{ fontSize: 10, color: '#3B2AAB' }}>{value}</span>
-                    )}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
-            ) : (
-              <p className="no-data">No data yet</p>
-            )}
+            <Zap size={32} color="#3B2AAB" />
           </div>
         </div>
 
-        {/* Card 3 — Group Spending (your approved splits in groups) */}
+        {/* Card 3 — Group Spending (your share) */}
         <div className="dash-card group-spending-card" onClick={() => setShowGroupModal(true)}>
           <div className="card-left">
             <p className="card-label">Group Spending</p>
-            <p className="card-amount">
-              ₱ {totalGroupPaid.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
-            </p>
+            <p className="card-amount">₱ {totalGroupPaid.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
             <p className="card-sub">your share across groups this month</p>
           </div>
           <div className="card-chart">
@@ -525,91 +438,51 @@ export default function DashboardScreen() {
         {/* Card 4 — Quick Actions */}
         <div className="dash-card quick-actions">
           <p className="quick-title">Quick Actions</p>
-          <button className="quick-btn" onClick={() => navigate('/expenses')}>
-            Add Expense
-          </button>
-          <button className="quick-btn" onClick={() => navigate('/groups')}>
-            Create Group
-          </button>
-          <button className="quick-btn" onClick={() => navigate('/reports')}>
-            View Reports
-          </button>
+          <button className="quick-btn" onClick={() => navigate('/expenses')}>Add Expense</button>
+          <button className="quick-btn" onClick={() => navigate('/groups')}>Create Group</button>
+          <button className="quick-btn" onClick={() => navigate('/reports')}>View Reports</button>
         </div>
-
       </div>
 
       {showGroupModal && (
         <div className="group-modal-overlay" onClick={() => setShowGroupModal(false)}>
           <div className="group-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2>Group Spending</h2>
-              <button className="modal-close" onClick={() => setShowGroupModal(false)}><X size={18} /></button>
-            </div>
+            <div className="modal-header"><h2>Group Spending</h2><button className="modal-close" onClick={() => setShowGroupModal(false)}><X size={18} /></button></div>
             <div className="group-modal-body">
               <p className="modal-sub">Your share of paid group expenses this month.</p>
-              <div className="group-summary-row">
-                <span>Total your share across groups</span>
-                <strong>₱ {totalGroupPaid.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</strong>
-              </div>
+              <div className="group-summary-row"><span>Total your share across groups</span><strong>₱ {totalGroupPaid.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</strong></div>
               <div className="group-list">
-                {groupSpending.length === 0 ? (
-                  <p className="no-data">No active groups with paid expenses yet.</p>
-                ) : groupSpending.map(group => (
-                  <div key={group.id} className="group-row">
-                    <div>
-                      <p className="group-name">{group.name}</p>
-                      <p className="group-role">{group.role || 'Member'}</p>
-                    </div>
-                    <span className="group-amount">₱ {group.currentMonthPaid.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span>
-                  </div>
+                {groupSpending.length === 0 ? <p className="no-data">No active groups with paid expenses yet.</p> : groupSpending.map(group => (
+                  <div key={group.id} className="group-row"><div><p className="group-name">{group.name}</p><p className="group-role">{group.role || 'Member'}</p></div><span className="group-amount">₱ {group.currentMonthPaid.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span></div>
                 ))}
               </div>
-              <button className="quick-btn" onClick={() => { setShowGroupModal(false); navigate('/groups'); }}>
-                Open Groups
-              </button>
+              <button className="quick-btn" onClick={() => { setShowGroupModal(false); navigate('/groups'); }}>Open Groups</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Floating Household Code */}
       <div className="floating-code-wrap">
         {showHouseholdCode && (
           <div className="household-code-card">
             <p className="code-household-name">{household?.name}</p>
             <p className="code-value">{household?.code}</p>
             <div className="code-actions">
-              <button className="code-copy-btn" onClick={handleCopyCode}>
-                <Copy size={14}/> {copied ? 'Copied!' : 'Copy'}
-              </button>
-              <button className="code-share-btn" onClick={handleShare}>
-                <Share2 size={14}/> Share
-              </button>
+              <button className="code-copy-btn" onClick={handleCopyCode}><Copy size={14}/> {copied ? 'Copied!' : 'Copy'}</button>
+              <button className="code-share-btn" onClick={handleShare}><Share2 size={14}/> Share</button>
             </div>
           </div>
         )}
-        <button
-          className="floating-code-btn"
-          onClick={() => setShowHouseholdCode(!showHouseholdCode)}
-        >
-          🏠 Your Code
-        </button>
+        <button className="floating-code-btn" onClick={() => setShowHouseholdCode(!showHouseholdCode)}>🏠 Your Code</button>
       </div>
 
-      {/* Bottom Navigation */}
       <div className="bottom-nav">
         {navItems.map(item => (
-          <button
-            key={item.id}
-            className={`nav-item ${activeNav === item.id ? 'active' : ''}`}
-            onClick={() => { setActiveNav(item.id); navigate(item.path); }}
-          >
-            <item.icon size={20}/>
-            <span>{item.label}</span>
+          <button key={item.id} className={`nav-item ${activeNav === item.id ? 'active' : ''}`} onClick={() => { setActiveNav(item.id); navigate(item.path); }}>
+            <item.icon size={20}/><span>{item.label}</span>
           </button>
         ))}
       </div>
-
     </div>
   );
 }
