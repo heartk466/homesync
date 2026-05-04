@@ -144,16 +144,24 @@
 .member-avatar-tooltip {
   width: 44px;
   height: 44px;
-  border-radius: 50%;
+  min-width: 44px;
+  min-height: 44px;
+  border-radius: 50% !important;
   overflow: hidden;
   border: 2px solid white;
   box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .detail-avatar-img {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  display: block;
+  border-radius: 50%;
 }
 
 .detail-avatar-initials {
@@ -166,6 +174,7 @@
   justify-content: center;
   font-size: 16px;
   font-weight: 700;
+  border-radius: 50%;
 }
 
 .member-more {
@@ -211,10 +220,14 @@
 /* Expense items */
 .expense-item-detail {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
-  padding: 12px 0;
-  border-bottom: 1px solid #F0EDFF;
+  padding: 14px;
+  background: white;
+  border-radius: 20px;
+  margin-bottom: 12px;
+  box-shadow: 0 2px 12px rgba(59,42,171,0.08);
+  overflow: hidden;
 }
 
 .expense-icon {
@@ -285,9 +298,13 @@
   white-space: nowrap;
 }
 
-.expense-admin-icons {
+.expense-right-col {
   display: flex;
-  gap: 6px;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 .icon-btn {
@@ -298,7 +315,43 @@
   cursor: pointer;
 }
 
-.icon-btn.delete { background: #ffe5e5; color: #e53e3e; }
+.icon-btn.delete {
+  background: #ffe5e5;
+  color: #e53e3e;
+}
+
+/* Member split row (inside expense) */
+.member-split-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-top: 1px solid #F0EDFF;
+}
+
+.member-split-row .member-avatar-tooltip {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  border-radius: 50% !important;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.member-split-row .detail-avatar-img,
+.member-split-row .detail-avatar-initials {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.status-badge-small {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 50px;
+}
 
 /* FAB – fixed inside the container */
 .fab-detail {
@@ -308,12 +361,15 @@
   margin-right: 20px;
   margin-top: 16px;
   width: 52px;
+  min-width: 52px;
   height: 52px;
+  min-height: 52px;
+  padding: 0;
   border-radius: 50%;
   background: #3B2AAB;
   color: white;
   border: none;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
@@ -495,4 +551,19 @@
   text-align: center;
   padding: 40px;
   color: #3B2AAB;
+}
+
+/* Force all avatars to be perfect circles – override any previous */
+.member-avatar-tooltip,
+.member-split-row .member-avatar-tooltip,
+.member-row .member-avatar-tooltip {
+  border-radius: 50% !important;
+  aspect-ratio: 1 / 1;
+}
+
+.member-avatar-tooltip .detail-avatar-img,
+.member-avatar-tooltip .detail-avatar-initials {
+  border-radius: 50% !important;
+  width: 100%;
+  height: 100%;
 }
