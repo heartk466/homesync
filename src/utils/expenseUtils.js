@@ -1,6 +1,7 @@
 import { supabase } from '../supabaseClient';
 
-export const UTILITY_CATEGORIES = ['Electricity', 'Water', 'Internet', 'Entertainment'];
+// Add any other utility category names you actually use in your expenses
+export const UTILITY_CATEGORIES = ['Electricity', 'Water', 'Internet', 'Entertainment', 'Power', 'Gas'];
 
 export const isUtilityCategory = (category) => UTILITY_CATEGORIES.includes(category);
 
@@ -82,7 +83,6 @@ export async function checkDuplicate(householdId, category, amount, date) {
 }
 
 export async function mergeItems(duplicateId, newId) {
-  // For demonstration - you can implement merging logic as needed
   console.log('Merging', duplicateId, newId);
   return true;
 }

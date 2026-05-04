@@ -236,6 +236,8 @@ export default function DashboardScreen() {
       const now = new Date();
       const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
       const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
+      const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().split('T')[0];
+      const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0).toISOString().split('T')[0];
 
       const allExpenses = await fetchAllHouseholdExpenses(profileData?.household_id);
       const expenseIds = allExpenses.map(e => e.id);
@@ -247,29 +249,25 @@ export default function DashboardScreen() {
       let myPendingTotal = 0;
       let lastMonthTotal = 0;
 
-      const utilityCategories = UTILITY_CATEGORIES;
-
       for (const expense of allExpenses) {
         const splits = splitsByExpense[expense.id] || [];
         const mySplit = splits.find(s => s.user_id === user.id);
         if (mySplit) {
           const amount = Number(mySplit.share_amount);
+          const expenseDate = expense.expense_date;
           if (mySplit.status === 'approved') {
-            // Only count if expense is paid and approved (we already have status paid on expense, but use split status)
-            if (expense.expense_date >= firstDay && expense.expense_date <= lastDay) {
+            if (expenseDate >= firstDay && expenseDate <= lastDay) {
               myApprovedTotal += amount;
-              if (utilityCategories.includes(expense.category)) {
+              if (UTILITY_CATEGORIES.includes(expense.category)) {
                 myUtilitiesTotal += amount;
               }
             }
-            // For last month comparison (household total, not used here but keep logic)
-            const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().split('T')[0];
-            const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0).toISOString().split('T')[0];
-            if (expense.expense_date >= lastMonthStart && expense.expense_date <= lastMonthEnd) {
+            if (expenseDate >= lastMonthStart && expenseDate <= lastMonthEnd) {
               lastMonthTotal += amount;
             }
           } else if (mySplit.status !== 'approved') {
-            if (expense.expense_date >= firstDay && expense.expense_date <= lastDay) {
+            // Pending or awaiting approval
+            if (expenseDate >= firstDay && expenseDate <= lastDay) {
               myPendingTotal += amount;
             }
           }
@@ -287,13 +285,13 @@ export default function DashboardScreen() {
         const splits = splitsByExpense[expense.id] || [];
         const mySplit = splits.find(s => s.user_id === user.id);
         if (mySplit && mySplit.status === 'approved') {
-          const category = expense.category;
-          categories[category] = (categories[category] || 0) + Number(mySplit.share_amount);
+          const cat = expense.category;
+          categories[cat] = (categories[cat] || 0) + Number(mySplit.share_amount);
         }
       }
       setCategoryData(Object.entries(categories).map(([name, value]) => ({ name, value })));
 
-      // Group spending
+      // Group spending (same logic)
       const { data: memberGroups } = await supabase
         .from('group_members')
         .select('group_id')

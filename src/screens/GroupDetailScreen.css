@@ -144,7 +144,7 @@
 .member-avatar-tooltip {
   width: 44px;
   height: 44px;
-  border-radius: 50%;
+  border-radius: 50% !important;
   overflow: hidden;
   border: 2px solid white;
   box-shadow: 0 2px 6px rgba(0,0,0,0.1);
@@ -219,7 +219,6 @@
   border-radius: 20px;
   margin-bottom: 12px;
   box-shadow: 0 2px 12px rgba(59,42,171,0.08);
-  position: relative;
 }
 
 .expense-icon {
@@ -293,7 +292,7 @@
 .expense-admin-icons {
   display: flex;
   gap: 6px;
-  margin-left: auto;
+  margin-left: auto;          /* Push to the right */
   flex-shrink: 0;
   align-self: center;
 }
@@ -316,14 +315,14 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 4px 0;
+  padding: 6px 0;
   border-top: 1px solid #F0EDFF;
 }
 
 .member-split-row .member-avatar-tooltip {
   width: 32px;
   height: 32px;
-  border-radius: 50%;
+  border-radius: 50% !important;
   overflow: hidden;
   flex-shrink: 0;
 }
@@ -540,4 +539,13 @@
   text-align: center;
   padding: 40px;
   color: #3B2AAB;
+}
+
+/* Force all avatars to be perfect circles – override any previous */
+.member-avatar-tooltip,
+.member-split-row .member-avatar-tooltip,
+.member-row .member-avatar-tooltip,
+.member-avatar-tooltip .detail-avatar-img,
+.member-avatar-tooltip .detail-avatar-initials {
+  border-radius: 50% !important;
 }
