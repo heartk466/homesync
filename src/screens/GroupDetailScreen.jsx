@@ -482,6 +482,7 @@ export default function GroupDetailScreen() {
     setLoadingAction(false);
   };
 
+  // FIXED: handleSubmitProof with fallback to create missing split
   const handleSubmitProof = async (isResubmit = false) => {
     if (!proofForm.screenshot) { showToast('Please upload a screenshot', 'error'); return; }
     setLoadingAction(true);
@@ -512,11 +513,49 @@ export default function GroupDetailScreen() {
       return;
     }
 
-    await supabase
+    // --- CHECK IF SPLIT EXISTS, IF NOT CREATE IT ---
+    const { data: existingSplit, error: fetchError } = await supabase
       .from('expense_splits')
-      .update({ status: 'pending_verification', proof_id: insertedProof.id, updated_at: new Date().toISOString() })
+      .select('id')
       .eq('expense_id', selectedExpense.id)
-      .eq('user_id', currentUser.id);
+      .eq('user_id', currentUser.id)
+      .maybeSingle();
+
+    let splitUpdateError = null;
+    if (!existingSplit) {
+      // Create missing split from members_split
+      const myShare = selectedExpense.members_split?.[currentUser.id];
+      if (!myShare) {
+        showToast('Error: Your share not found in expense.', 'error');
+        setLoadingAction(false);
+        return;
+      }
+      const { error: insertError } = await supabase
+        .from('expense_splits')
+        .insert({
+          expense_id: selectedExpense.id,
+          user_id: currentUser.id,
+          share_amount: Number(myShare),
+          status: 'pending_verification',
+          proof_id: insertedProof.id,
+          updated_at: new Date().toISOString(),
+        });
+      splitUpdateError = insertError;
+    } else {
+      const { error: updateError } = await supabase
+        .from('expense_splits')
+        .update({ status: 'pending_verification', proof_id: insertedProof.id, updated_at: new Date().toISOString() })
+        .eq('id', existingSplit.id);
+      splitUpdateError = updateError;
+    }
+
+    if (splitUpdateError) {
+      showToast('Failed to update payment status', 'error');
+      setLoadingAction(false);
+      return;
+    }
+
+    console.log('✅ Split updated to pending_verification for user', currentUser.id);
 
     await supabase.from('expenses').update({ status: 'verifying' }).eq('id', selectedExpense.id);
 
