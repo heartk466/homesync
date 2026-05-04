@@ -308,12 +308,15 @@
   margin-right: 20px;
   margin-top: 16px;
   width: 52px;
+  min-width: 52px;
   height: 52px;
+  min-height: 52px;
+  padding: 0;
   border-radius: 50%;
   background: #3B2AAB;
   color: white;
   border: none;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;

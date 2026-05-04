@@ -12,6 +12,7 @@ import {
 import './DashboardScreen.css';
 import TopBar from '../components/TopBar';
 import BottomNav from '../components/BottomNav';
+import { fetchAllHouseholdExpenses } from '../utils/expenseUtils';
 
 const COLORS = ['#3B2AAB', '#AE96FF', '#D4C5FF'];
 
@@ -27,6 +28,9 @@ export default function DashboardScreen() {
   const [monthlyData, setMonthlyData] = useState([]);
   const [categoryData, setCategoryData] = useState([]);
   const [pendingAmount, setPendingAmount] = useState(0);
+  const [groupSpending, setGroupSpending] = useState([]);
+  const [totalGroupPaid, setTotalGroupPaid] = useState(0);
+  const [showGroupModal, setShowGroupModal] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [showHouseholdCode, setShowHouseholdCode] = useState(false);
   const [showSignOutModal, setShowSignOutModal] = useState(false);
@@ -218,34 +222,69 @@ export default function DashboardScreen() {
       const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0)
         .toISOString().split('T')[0];
 
-      const { data: expenses } = await supabase
-        .from('expenses')
-        .select('*')
-        .eq('household_id', profileData?.household_id)
-        .gte('expense_date', firstDay)
-        .lte('expense_date', lastDay);
+      const allExpenses = await fetchAllHouseholdExpenses(profileData?.household_id);
+      const paidExpenses = (allExpenses || []).filter(e => e.status === 'paid');
+      const monthPaidExpenses = paidExpenses.filter(e => e.expense_date >= firstDay && e.expense_date <= lastDay);
 
-      if (expenses) {
-        const total = expenses.reduce((sum, e) => sum + Number(e.amount), 0);
-        setTotalSpent(total);
+      const total = monthPaidExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
+      setTotalSpent(total);
 
-        const myExpenses = expenses.filter(e => e.paid_by === user.id);
-        const myTotal = myExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
-        setYourShare(myTotal);
+      const myExpenses = monthPaidExpenses.filter(e => e.paid_by === user.id);
+      const myTotal = myExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
+      setYourShare(myTotal);
 
-        const pending = expenses
-          .filter(e => e.status === 'pending' && e.paid_by === user.id)
-          .reduce((sum, e) => sum + Number(e.amount), 0);
-        setPendingAmount(pending);
+      const pending = (allExpenses || [])
+        .filter(e => e.status === 'pending' && e.paid_by === user.id)
+        .reduce((sum, e) => sum + Number(e.amount), 0);
+      setPendingAmount(pending);
 
-        const categories = {};
-        expenses.forEach(e => {
-          categories[e.category] = (categories[e.category] || 0) + Number(e.amount);
-        });
-        setCategoryData(
-          Object.entries(categories).map(([name, value]) => ({ name, value }))
-        );
+      const categories = {};
+      monthPaidExpenses.forEach(e => {
+        categories[e.category] = (categories[e.category] || 0) + Number(e.amount);
+      });
+      setCategoryData(
+        Object.entries(categories).map(([name, value]) => ({ name, value }))
+      );
+
+      const { data: memberGroups } = await supabase
+        .from('group_members')
+        .select('group_id')
+        .eq('user_id', user.id)
+        .eq('status', 'active');
+
+      const groupIds = (memberGroups || []).map(mg => mg.group_id);
+      let groupsList = [];
+      if (groupIds.length > 0) {
+        const { data: groupsData } = await supabase
+          .from('groups')
+          .select('*')
+          .in('id', groupIds);
+        groupsList = groupsData || [];
       }
+
+      const groupsWithPaidTotals = await Promise.all(
+        groupsList.map(async (group) => {
+          const { data: groupExpenses } = await supabase
+            .from('expenses')
+            .select('amount')
+            .eq('group_id', group.id)
+            .eq('status', 'paid')
+            .eq('approval_status', 'approved')
+            .gte('expense_date', firstDay)
+            .lte('expense_date', lastDay);
+
+          const paidTotal = (groupExpenses || [])
+            .reduce((sum, e) => sum + Number(e.amount), 0);
+
+          return {
+            ...group,
+            currentMonthPaid: paidTotal,
+          };
+        })
+      );
+
+      setGroupSpending(groupsWithPaidTotals);
+      setTotalGroupPaid(groupsWithPaidTotals.reduce((sum, group) => sum + group.currentMonthPaid, 0));
 
       const months = [];
       for (let i = 5; i >= 0; i--) {
@@ -255,14 +294,8 @@ export default function DashboardScreen() {
         const last = new Date(d.getFullYear(), d.getMonth() + 1, 0)
           .toISOString().split('T')[0];
 
-        const { data: monthExpenses } = await supabase
-          .from('expenses')
-          .select('amount')
-          .eq('household_id', profileData?.household_id)
-          .gte('expense_date', first)
-          .lte('expense_date', last);
-
-        const monthTotal = (monthExpenses || [])
+        const monthTotal = monthPaidExpenses
+          .filter(e => e.expense_date >= first && e.expense_date <= last)
           .reduce((sum, e) => sum + Number(e.amount), 0);
 
         months.push({
@@ -277,14 +310,8 @@ export default function DashboardScreen() {
       const lastMonthLast = new Date(now.getFullYear(), now.getMonth(), 0)
         .toISOString().split('T')[0];
 
-      const { data: lastMonthExpenses } = await supabase
-        .from('expenses')
-        .select('amount')
-        .eq('household_id', profileData?.household_id)
-        .gte('expense_date', lastMonthFirst)
-        .lte('expense_date', lastMonthLast);
-
-      const lastTotal = (lastMonthExpenses || [])
+      const lastTotal = monthPaidExpenses
+        .filter(e => e.expense_date >= lastMonthFirst && e.expense_date <= lastMonthLast)
         .reduce((sum, e) => sum + Number(e.amount), 0);
       setLastMonthSpent(lastTotal);
 
@@ -298,6 +325,23 @@ export default function DashboardScreen() {
     fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!currentUser?.id || !household?.id) return;
+    const channel = supabase
+      .channel(`dashboard-realtime-${household.id}`)
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'expenses',
+        filter: `household_id=eq.${household.id}`,
+      }, () => fetchData())
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'utilities',
+        filter: `household_id=eq.${household.id}`,
+      }, () => fetchData())
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
+  }, [currentUser?.id, household?.id]);
 
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: Home, path: '/dashboard' },
@@ -402,7 +446,21 @@ export default function DashboardScreen() {
           </div>
         </div>
 
-        {/* Card 3 — Quick Actions */}
+        {/* Card 3 — Group Spending */}
+        <div className="dash-card group-spending-card" onClick={() => setShowGroupModal(true)}>
+          <div className="card-left">
+            <p className="card-label">Group Spending</p>
+            <p className="card-amount">
+              ₱ {totalGroupPaid.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+            </p>
+            <p className="card-sub">paid across groups this month</p>
+          </div>
+          <div className="card-chart">
+            <p className="group-card-action">View details</p>
+          </div>
+        </div>
+
+        {/* Card 4 — Quick Actions */}
         <div className="dash-card quick-actions">
           <p className="quick-title">Quick Actions</p>
           <button className="quick-btn" onClick={() => navigate('/expenses')}>
@@ -417,6 +475,40 @@ export default function DashboardScreen() {
         </div>
 
       </div>
+
+      {showGroupModal && (
+        <div className="group-modal-overlay" onClick={() => setShowGroupModal(false)}>
+          <div className="group-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Group Spending</h2>
+              <button className="modal-close" onClick={() => setShowGroupModal(false)}><X size={18} /></button>
+            </div>
+            <div className="group-modal-body">
+              <p className="modal-sub">Paid group expenses for this month.</p>
+              <div className="group-summary-row">
+                <span>Total paid across groups</span>
+                <strong>₱ {totalGroupPaid.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</strong>
+              </div>
+              <div className="group-list">
+                {groupSpending.length === 0 ? (
+                  <p className="no-data">No active groups with paid expenses yet.</p>
+                ) : groupSpending.map(group => (
+                  <div key={group.id} className="group-row">
+                    <div>
+                      <p className="group-name">{group.name}</p>
+                      <p className="group-role">{group.role || 'Member'}</p>
+                    </div>
+                    <span className="group-amount">₱ {group.currentMonthPaid.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                ))}
+              </div>
+              <button className="quick-btn" onClick={() => { setShowGroupModal(false); navigate('/groups'); }}>
+                Open Groups
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Floating Household Code */}
       <div className="floating-code-wrap">

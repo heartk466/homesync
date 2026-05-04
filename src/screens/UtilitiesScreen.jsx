@@ -163,10 +163,10 @@ export default function UtilitiesScreen() {
     setFilteredUtilities(allUtilityItems);
 
     // Summary
-    const uniqueProviders = new Set(utilitiesData?.map(u => u.provider_name) || []);
+    const uniqueProviders = new Set(allUtilityItems.map(u => u.provider_name || u.title || '').filter(Boolean));
     setProviderCount(uniqueProviders.size);
 
-    const active = utilitiesData?.filter(u => u.status !== 'paid').length || 0;
+    const active = allUtilityItems.filter(u => u.status !== 'paid').length || 0;
     setActiveSubscriptions(active);
 
     // Fetch confirmations

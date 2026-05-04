@@ -205,7 +205,7 @@ export default function ExpensesScreen() {
 
     const monthExpenses = expensesData.filter(e =>
       e.expense_date >= firstDay && e.expense_date <= lastDay &&
-      e.approval_status === 'approved'
+      e.status === 'paid'
     );
 
     const total = monthExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
@@ -763,7 +763,7 @@ if (isUtilityCategory(expenseForm.category)) {
             ? Object.keys(expense.members_split).map(uid => householdMembers.find(m => m.user_id === uid)).filter(Boolean)
             : [];
           return (
-            <div key={expense.id} className="expense-item" style={{ borderLeftColor: CATEGORY_COLORS[expense.category] || '#3B2AAB' }}>
+            <div key={expense.id} className={`expense-item ${expense.approval_status === 'pending_approval' ? 'needs-approval' : ''}`} style={{ borderLeftColor: CATEGORY_COLORS[expense.category] || '#3B2AAB' }}>
               <div className="expense-icon-circle" style={{ background: `${CATEGORY_COLORS[expense.category]}22` || '#F0EDFF' }}>
                 <span style={{ fontSize: 20 }}>{CATEGORY_ICONS[expense.category] || '📦'}</span>
               </div>

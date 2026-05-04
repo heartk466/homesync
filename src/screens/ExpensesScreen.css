@@ -549,12 +549,19 @@
 }
 
 .status-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-size: 10px;
   font-weight: 700;
   padding: 4px 10px;
   border-radius: 50px;
   white-space: nowrap;
   flex-shrink: 0;
+}
+
+.expense-item.needs-approval {
+  border-left-color: #F6AD55;
 }
 
 .expense-members {

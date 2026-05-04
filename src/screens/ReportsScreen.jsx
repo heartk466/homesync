@@ -8,6 +8,7 @@ import {
 import { Search, Filter, X, ChevronDown, FileText, Eye, Download } from 'lucide-react';
 import TopBar from '../components/TopBar';
 import BottomNav from '../components/BottomNav';
+import { fetchAllHouseholdExpenses } from '../utils/expenseUtils';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import './ReportsScreen.css';
@@ -127,7 +128,7 @@ export default function ReportsScreen() {
     }
   };
 
-  const fetchReportData = async (houseData, user) => {
+  const fetchReportData = async (houseData) => {
     if (!houseData) return;
 
     const now = new Date();
@@ -136,36 +137,24 @@ export default function ReportsScreen() {
     const lastYearStart = new Date(now.getFullYear() - 1, 0, 1).toISOString().split('T')[0];
     const lastYearEnd = new Date(now.getFullYear() - 1, 11, 31).toISOString().split('T')[0];
 
-    // Fetch this year expenses
-    const { data: thisYearExpenses } = await supabase
-      .from('expenses')
-      .select('*')
-      .eq('household_id', houseData.id)
-      .eq('approval_status', 'approved')
-      .gte('expense_date', yearStart)
-      .lte('expense_date', yearEnd);
-
-    // Fetch last year expenses
-    const { data: lastYearExpenses } = await supabase
-      .from('expenses')
-      .select('*')
-      .eq('household_id', houseData.id)
-      .eq('approval_status', 'approved')
-      .gte('expense_date', lastYearStart)
-      .lte('expense_date', lastYearEnd);
+    const allExpenses = await fetchAllHouseholdExpenses(houseData.id);
+    const thisYearExpenses = (allExpenses || []).filter(e =>
+      e.status === 'paid' && e.expense_date >= yearStart && e.expense_date <= yearEnd
+    );
+    const lastYearExpenses = (allExpenses || []).filter(e => {
+      return e.status === 'paid' && e.expense_date >= lastYearStart && e.expense_date <= lastYearEnd;
+    });
 
     // Yearly total
-    const total = (thisYearExpenses || [])
-      .reduce((sum, e) => sum + Number(e.amount), 0);
+    const total = thisYearExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
     setYearlyTotal(total);
 
-    const lastTotal = (lastYearExpenses || [])
-      .reduce((sum, e) => sum + Number(e.amount), 0);
+    const lastTotal = lastYearExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
     setLastYearTotal(lastTotal);
 
     // Monthly data for bar chart
     const monthly = MONTHS.map((month, i) => {
-      const monthExpenses = (thisYearExpenses || []).filter(e => {
+      const monthExpenses = thisYearExpenses.filter(e => {
         const d = new Date(e.expense_date);
         return d.getMonth() === i;
       });
@@ -178,7 +167,7 @@ export default function ReportsScreen() {
 
     // Category breakdown
     const categories = {};
-    (thisYearExpenses || []).forEach(e => {
+    thisYearExpenses.forEach(e => {
       categories[e.category] = (categories[e.category] || 0) + Number(e.amount);
     });
     setCategoryData(
@@ -187,13 +176,15 @@ export default function ReportsScreen() {
         .sort((a, b) => b.value - a.value)
     );
 
-    // Pending balances
-    const pending = (thisYearExpenses || [])
+    // Pending balances are still based on current year spending that is not paid yet
+    const pending = (allExpenses || [])
+      .filter(e => e.expense_date >= yearStart && e.expense_date <= yearEnd)
       .filter(e => e.status === 'pending' || e.status === 'unpaid')
       .reduce((sum, e) => sum + Number(e.amount), 0);
     setPendingBalances(pending);
 
-    const lastPending = (lastYearExpenses || [])
+    const lastPending = (allExpenses || [])
+      .filter(e => e.expense_date >= lastYearStart && e.expense_date <= lastYearEnd)
       .filter(e => e.status === 'pending' || e.status === 'unpaid')
       .reduce((sum, e) => sum + Number(e.amount), 0);
     setLastYearPending(lastPending);
@@ -267,6 +258,23 @@ export default function ReportsScreen() {
     fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!currentUser?.id || !selectedHousehold?.id) return;
+    const channel = supabase
+      .channel(`reports-realtime-${selectedHousehold.id}`)
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'expenses',
+        filter: `household_id=eq.${selectedHousehold.id}`,
+      }, () => fetchReportData(selectedHousehold, currentUser))
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'utilities',
+        filter: `household_id=eq.${selectedHousehold.id}`,
+      }, () => fetchReportData(selectedHousehold, currentUser))
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
+  }, [currentUser?.id, selectedHousehold?.id]);
 
   const getYoYChange = (current, last) => {
     if (last === 0) return null;
