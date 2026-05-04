@@ -59,6 +59,20 @@ export async function fetchAllUtilityItems(householdId) {
   return { utilities: utilities || [], fromExpenses };
 }
 
+export async function fetchHouseholdUtilitiesTotal(householdId) {
+  if (!householdId) return 0;
+  const { data, error } = await supabase
+    .from('utilities')
+    .select('amount')
+    .eq('household_id', householdId)
+    .eq('status', 'paid');
+  if (error) {
+    console.error(error);
+    return 0;
+  }
+  return (data || []).reduce((sum, u) => sum + Number(u.amount), 0);
+}
+
 export async function checkDuplicate(householdId, category, amount, date) {
   const { data: existingExpenses } = await supabase
     .from('expenses')
