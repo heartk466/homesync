@@ -822,7 +822,12 @@ export default function GroupDetailScreen() {
                   <div className="member-splits-list" style={{ marginTop: 8 }}>
                     {splits.map(split => {
                       const member = members.find(m => m.user_id === split.user_id);
-                      const proof = allPaymentProofs.find(p => p.id === split.proof_id);
+                      const proof = allPaymentProofs.find(p => p.id === split.proof_id)
+  || allPaymentProofs.find(p =>
+      p.expense_id === split.expense_id &&
+      p.submitted_by === split.user_id &&
+      p.status === 'pending_verification'
+    );
                       return (
                         <div key={split.id} className="member-split-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 0', borderTop: '1px solid #F0EDFF' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -834,12 +839,14 @@ export default function GroupDetailScreen() {
                             <span className={`status-badge-small`} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 50, background: split.status === 'approved' ? '#D1FAE5' : split.status === 'pending_verification' ? '#FFF3CD' : '#FEE2E2', color: split.status === 'approved' ? '#065F46' : split.status === 'pending_verification' ? '#856404' : '#e53e3e' }}>
                               {split.status === 'approved' ? 'Paid' : split.status === 'pending_verification' ? 'Awaiting Approval' : 'Unpaid'}
                             </span>
-                            {proof && split.status === 'pending_verification' && (
-                              <button className="view-proof-btn" style={{ padding: '2px 6px' }} onClick={() => openProofModal(proof, split)}><Eye size={12} /></button>
-                            )}
-                            {isOwner && split.status === 'pending_verification' && !proof && (
-                              <button className="approve-btn" style={{ padding: '2px 6px' }} onClick={() => handleApproveSplit(split)}>Approve</button>
-                            )}
+                            {proof && (
+  <button className="view-proof-btn" style={{ padding: '2px 6px' }} onClick={() => openProofModal(proof, split)}>
+    <Eye size={12} />
+  </button>
+)}
+{isOwner && split.status === 'pending_verification' && !proof && (
+  <button className="approve-btn" style={{ padding: '2px 6px' }} onClick={() => handleApproveSplit(split)}>Approve</button>
+)}
                           </div>
                         </div>
                       );
