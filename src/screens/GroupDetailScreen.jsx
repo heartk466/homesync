@@ -914,9 +914,9 @@ setLoadingAction(false);
                 </div>
 
                 <div className="expense-right-col">
-                  <div className="expense-badge" style={{ background: badge.bg, color: badge.color }}>
-                    {badge.label}
-                  </div>
+  <div className="expense-badge" style={{ background: badge.bg, color: badge.color, maxWidth: 70, textAlign: 'center', whiteSpace: 'normal', lineHeight: 1.3 }}>
+    {badge.label}
+  </div>
                   {isAdmin && (
                     <button className="icon-btn delete" onClick={() => { setSelectedExpense(expense); setShowDeleteModal(true); }}>
                       <Trash2 size={14} />

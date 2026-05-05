@@ -227,7 +227,7 @@
   border-radius: 20px;
   margin-bottom: 12px;
   box-shadow: 0 2px 12px rgba(59,42,171,0.08);
-  overflow: hidden;
+  overflow: visible;
 }
 
 .expense-icon {
