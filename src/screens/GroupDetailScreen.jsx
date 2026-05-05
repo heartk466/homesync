@@ -356,26 +356,50 @@ export default function GroupDetailScreen() {
     if (contextType === 'household') insertData.household_id = id;
     else insertData.group_id = id;
 
-    const { error } = await supabase.from('expenses').insert(insertData);
-    if (error) {
-      showToast(`Failed: ${error.message}`, 'error');
-    } else {
-      showToast(isAdmin ? 'Expense added!' : 'Submitted for approval');
-      setShowAddExpense(false);
-      resetExpenseForm();
-      if (!isAdmin && group?.created_by) {
-        await supabase.from('notifications').insert({
-          user_id: group.created_by,
-          title: 'New Expense Pending',
-          message: `${profile?.full_name} added "${expenseForm.title}" for ₱${expenseForm.amount}`,
-          type: 'approval_request',
-          link_path: `/groups/${id}`,
-          link_state: JSON.stringify({ type: contextType }),
-        });
-      }
-      fetchGroupAndData();
-    }
-    setLoadingAction(false);
+    const { data: insertedExpense, error } = await supabase
+  .from('expenses')
+  .insert(insertData)
+  .select()
+  .single();
+
+if (error) {
+  showToast(`Failed: ${error.message}`, 'error');
+} else {
+  // ✅ Insert expense_splits rows for each selected member
+  const splitRows = expenseForm.selected_members.map(uid => ({
+    expense_id: insertedExpense.id,
+    user_id: uid,
+    share_amount: Number(splits[uid]),
+    status: uid === expenseForm.who_paid ? 'approved' : 'unpaid',
+    updated_at: new Date().toISOString(),
+  }));
+
+  const { error: splitError } = await supabase
+    .from('expense_splits')
+    .insert(splitRows);
+
+  if (splitError) {
+    console.error('Split insert error:', splitError);
+    showToast('Expense added but splits failed to save', 'error');
+  }
+
+  showToast(isAdmin ? 'Expense added!' : 'Submitted for approval');
+  setShowAddExpense(false);
+  resetExpenseForm();
+
+  if (!isAdmin && group?.created_by) {
+    await supabase.from('notifications').insert({
+      user_id: group.created_by,
+      title: 'New Expense Pending',
+      message: `${profile?.full_name} added "${expenseForm.title}" for ₱${expenseForm.amount}`,
+      type: 'approval_request',
+      link_path: `/groups/${id}`,
+      link_state: JSON.stringify({ type: contextType }),
+    });
+  }
+  fetchGroupAndData();
+}
+setLoadingAction(false);
   };
 
   const handleApproveSplit = async (split) => {
