@@ -845,12 +845,14 @@ setLoadingAction(false);
                   {/* Member splits list */}
                   <div className="member-splits-list" style={{ marginTop: 8 }}>
                     {splits.map(split => {
-                      const member = members.find(m => m.user_id === split.user_id);
-                      const proof = allPaymentProofs.find(p => p.id === split.proof_id)
-  || allPaymentProofs.find(p =>
-      p.expense_id === split.expense_id &&
-      p.submitted_by === split.user_id
-    ); 
+  const member = members.find(m => m.user_id === split.user_id);
+  const proof = allPaymentProofs.find(p => p.id === split.proof_id)
+    || allPaymentProofs.find(p =>
+        p.expense_id === split.expense_id &&
+        p.submitted_by === split.user_id
+      );
+
+  console.log('🔍 split:', split.id, '| proof_id:', split.proof_id, '| proof found:', proof?.id, '| allProofs count:', allPaymentProofs.length);
                       return (
                         <div key={split.id} className="member-split-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 0', borderTop: '1px solid #F0EDFF' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
