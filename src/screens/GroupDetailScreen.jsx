@@ -56,6 +56,7 @@ export default function GroupDetailScreen() {
   const [pendingApprovals, setPendingApprovals] = useState([]);
   const [pendingPaymentProofs, setPendingPaymentProofs] = useState([]);
   const [allPaymentProofs, setAllPaymentProofs] = useState([]);
+  const [selectedProof, setSelectedProof] = useState(null);
   const [rejectReason, setRejectReason] = useState('');
   const [rejectProofReason, setRejectProofReason] = useState('');
   const [toast, setToast] = useState(null);
@@ -589,14 +590,14 @@ export default function GroupDetailScreen() {
       await supabase.from('expenses').update({ status: 'paid' }).eq('id', split.expense_id);
     }
     await supabase.from('notifications').insert({
-      user_id: proof.submitted_by,
-      title: '✅ Payment Verified!',
-      message: `Your payment has been verified by the owner.`,
-      type: 'payment_confirmed',
-      link_path: `/groups/${id}`,
-      link_state: JSON.stringify({ type: contextType }),
-      link_query: `openProof=${split.expense_id}&proofId=${proof.id}`,
-    });
+  user_id: proof.submitted_by,
+  title: '✅ Owner approved your proof!',
+  message: `The owner has approved your payment proof for "${expenses.find(e => e.id === split.expense_id)?.title}". Your payment is now marked as paid.`,
+  type: 'payment_confirmed',
+  link_path: `/groups/${id}`,
+  link_state: JSON.stringify({ type: contextType }),
+  link_query: `openProof=${split.expense_id}&proofId=${proof.id}`,
+});
     setShowViewProofModal(false);
     showToast('Payment confirmed');
     setLoadingAction(false);
@@ -770,7 +771,8 @@ export default function GroupDetailScreen() {
           <h3 className="section-title">⏳ Pending Payment Approvals ({pendingApprovals.length})</h3>
           {pendingApprovals.map(split => {
             const expense = expenses.find(e => e.id === split.expense_id);
-            const proof = allPaymentProofs.find(p => p.id === split.proof_id);
+            const proof = allPaymentProofs.find(p => p.id === split.proof_id) 
+  || allPaymentProofs.find(p => p.expense_id === split.expense_id && p.submitted_by === split.user_id && p.status === 'pending_verification');
             return (
               <div key={split.id} className="pending-item">
                 <div>
