@@ -184,17 +184,7 @@ export default function GroupDetailScreen() {
       const allExpenses = expensesData || [];
       setExpenses(allExpenses);
 
-      let proofsData = [];
-      if (allExpenses.length > 0) {
-        const { data: proofs } = await supabase
-          .from('payment_proofs')
-          .select(`*, profiles:submitted_by (id, full_name, email, avatar_url)`)
-          .in('expense_id', allExpenses.map(e => e.id));
-        proofsData = proofs || [];
-        setAllPaymentProofs(proofsData);
-      } else {
-        setAllPaymentProofs([]);
-      }
+      // Proofs are now loaded in the splits useEffect below
     } catch (err) {
       console.error(err);
       setError(err.message);
@@ -203,28 +193,44 @@ export default function GroupDetailScreen() {
     }
   }, [id, contextType, navigate]);
 
-  // Load splits when expenses change
-  useEffect(() => {
-    const loadSplits = async () => {
-      if (expenses.length === 0) {
-        setExpenseSplits({});
-        setPendingApprovals([]);
-        return;
-      }
-      const splitsMap = await fetchExpenseSplits(expenses.map(e => e.id));
-      setExpenseSplits(splitsMap);
-      
-      // Compute pending approvals (splits with status 'pending_verification')
-      const pending = [];
-      for (const exp of expenses) {
-        const splits = splitsMap[exp.id] || [];
-        const pendingSplits = splits.filter(s => s.status === 'pending_verification');
-        pending.push(...pendingSplits);
-      }
-      setPendingApprovals(pending);
-    };
-    loadSplits();
-  }, [expenses, fetchExpenseSplits]);
+ // Load splits AND proofs together when expenses change
+useEffect(() => {
+  const loadSplitsAndProofs = async () => {
+    if (expenses.length === 0) {
+      setExpenseSplits({});
+      setPendingApprovals([]);
+      setAllPaymentProofs([]);
+      return;
+    }
+
+    const expenseIds = expenses.map(e => e.id);
+
+    // Fetch splits and proofs in parallel
+    const [splitsMap, proofsResult] = await Promise.all([
+      fetchExpenseSplits(expenseIds),
+      supabase
+        .from('payment_proofs')
+        .select(`*, profiles:submitted_by (id, full_name, email, avatar_url)`)
+        .in('expense_id', expenseIds)
+    ]);
+
+    setExpenseSplits(splitsMap);
+
+    const proofsData = proofsResult.data || [];
+    setAllPaymentProofs(proofsData);
+
+    // Compute pending approvals
+    const pending = [];
+    for (const exp of expenses) {
+      const splits = splitsMap[exp.id] || [];
+      const pendingSplits = splits.filter(s => s.status === 'pending_verification');
+      pending.push(...pendingSplits);
+    }
+    setPendingApprovals(pending);
+  };
+
+  loadSplitsAndProofs();
+}, [expenses, fetchExpenseSplits]);
 
   // Initial load
   useEffect(() => {
