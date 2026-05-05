@@ -849,9 +849,8 @@ setLoadingAction(false);
                       const proof = allPaymentProofs.find(p => p.id === split.proof_id)
   || allPaymentProofs.find(p =>
       p.expense_id === split.expense_id &&
-      p.submitted_by === split.user_id &&
-      p.status === 'pending_verification'
-    );
+      p.submitted_by === split.user_id
+    ); 
                       return (
                         <div key={split.id} className="member-split-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 0', borderTop: '1px solid #F0EDFF' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
