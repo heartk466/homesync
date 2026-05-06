@@ -198,6 +198,11 @@ if (adminStatus) {
     .select('*, profiles:created_by(id, full_name, avatar_url)')
     .eq(contextType === 'household' ? 'household_id' : 'group_id', id)
     .eq('approval_status', 'pending_approval');
+     // ADD THESE 4 LINES:
+  console.log('🔴 adminStatus:', adminStatus);
+  console.log('🔴 contextType:', contextType);
+  console.log('🔴 id:', id);
+  console.log('🔴 pendingExp:', pendingExp);
   setPendingExpenseApprovals(pendingExp || []);
 } else {
   setPendingExpenseApprovals([]);
@@ -894,6 +899,11 @@ const handleRejectExpense = async () => {
           </div>
         )}
       </div>
+      {/* Pending Expense Approvals (owner only) */}
+{console.log('🟢 isAdmin:', isAdmin, '| pending:', pendingExpenseApprovals)}
+{isAdmin && pendingExpenseApprovals.length > 0 && (
+  <div className="detail-pending-section">
+  ...
 {/* Pending Expense Approvals (owner only) */}
 {isAdmin && pendingExpenseApprovals.length > 0 && (
   <div className="detail-pending-section">
