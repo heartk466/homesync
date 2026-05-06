@@ -1290,7 +1290,100 @@ const handleRejectExpense = async () => {
           </div>
         </div>
       )}
+{/* Reject Expense Modal */}
+{showRejectExpenseModal && (
+  <div className="modal-overlay-detail">
+    <div className="modal-detail-card">
+      <div className="modal-header">
+        <h2>Reject Expense</h2>
+        <button className="modal-close" onClick={() => { setShowRejectExpenseModal(false); setRejectExpenseReason(''); }}><X size={20} /></button>
+      </div>
+      <div className="modal-body-scroll">
+        <p style={{ fontSize: 13, color: '#5A4AAA', margin: 0 }}>
+          Rejecting "<strong>{selectedPendingExpense?.title}</strong>" will delete it and notify the member.
+        </p>
+        <textarea
+          className="detail-textarea"
+          placeholder="Reason for rejection *"
+          value={rejectExpenseReason}
+          onChange={e => setRejectExpenseReason(e.target.value)}
+          rows={3}
+        />
+        <button className="delete-confirm-btn" onClick={handleRejectExpense} disabled={loadingAction}>
+          {loadingAction ? 'Rejecting...' : 'Reject & Delete Expense'}
+        </button>
+        <button className="cancel-btn" onClick={() => { setShowRejectExpenseModal(false); setRejectExpenseReason(''); }}>Cancel</button>
+      </div>
+    </div>
+  </div>
+)}
 
+{/* Upload Proof After Adding Expense (member paid upfront) */}
+{showUploadAfterAdd && justAddedExpense && (
+  <div className="modal-overlay-detail">
+    <div className="modal-detail-card">
+      <div className="modal-header">
+        <h2>Upload Payment Proof</h2>
+      </div>
+      <div className="modal-body-scroll">
+        <p style={{ fontSize: 13, color: '#5A4AAA', margin: 0 }}>
+          You marked yourself as the payer for "<strong>{justAddedExpense.title}</strong>". 
+          Please upload a screenshot proof of payment.
+        </p>
+        <input
+          type="file"
+          accept="image/*"
+          style={{ display: 'none' }}
+          ref={el => el && (el.id = 'afterAddProofInput')}
+          onChange={e => {
+            const file = e.target.files[0];
+            if (file) setProofForm({ ...proofForm, screenshot: file, screenshotPreview: URL.createObjectURL(file) });
+          }}
+        />
+        {proofForm.screenshotPreview && (
+          <img src={proofForm.screenshotPreview} alt="Preview" className="proof-preview" />
+        )}
+        <button className="upload-proof-btn" onClick={() => document.getElementById('afterAddProofInput').click()}>
+          📷 {proofForm.screenshot ? 'Change Screenshot' : 'Upload Screenshot'}
+        </button>
+        <button className="add-expense-btn" disabled={!proofForm.screenshot || loadingAction}
+          onClick={async () => {
+            setLoadingAction(true);
+            const fileExt = proofForm.screenshot.name.split('.').pop();
+            const fileName = `${currentUser.id}-${justAddedExpense.id}-${Date.now()}.${fileExt}`;
+            const { error: uploadError } = await supabase.storage
+              .from('payment-proofs')
+              .upload(fileName, proofForm.screenshot, { upsert: true });
+            if (uploadError) { showToast('Upload failed', 'error'); setLoadingAction(false); return; }
+            const { data: urlData } = supabase.storage.from('payment-proofs').getPublicUrl(fileName);
+            const { data: insertedProof } = await supabase.from('payment_proofs').insert({
+              expense_id: justAddedExpense.id,
+              submitted_by: currentUser.id,
+              screenshot_url: urlData.publicUrl,
+              status: 'pending_verification',
+            }).select().single();
+            showToast('Expense submitted with proof!');
+            setShowUploadAfterAdd(false);
+            setJustAddedExpense(null);
+            resetProofForm();
+            resetExpenseForm();
+            fetchGroupAndData();
+            setLoadingAction(false);
+          }}>
+          {loadingAction ? 'Submitting...' : 'Submit Expense + Proof'}
+        </button>
+        <button className="cancel-btn" onClick={() => {
+          showToast('Expense submitted for approval (no proof yet)');
+          setShowUploadAfterAdd(false);
+          setJustAddedExpense(null);
+          resetProofForm();
+          resetExpenseForm();
+          fetchGroupAndData();
+        }}>Skip for now</button>
+      </div>
+    </div>
+  </div>
+)}
       {/* Hidden file input */}
       <input type="file" ref={proofInputRef} style={{ display: 'none' }} accept="image/*" onChange={e => { const file = e.target.files[0]; if (file) setProofForm({ ...proofForm, screenshot: file, screenshotPreview: URL.createObjectURL(file) }); }} />
 
