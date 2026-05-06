@@ -211,27 +211,25 @@ export default function GroupsScreen() {
     const splitsMap = await fetchExpenseSplits(expenseIds);
 
     let totalExpenses = 0;
-    let yourShare = 0;
-    let pendingOwed = 0;
-    let utilitiesTotal = 0;
+let yourShare = 0;  // only paid amount
+let pendingOwed = 0; // unpaid amount
 
-    for (const expense of expenses) {
-      const splits = splitsMap[expense.id] || [];
-      const mySplit = splits.find(s => s.user_id === user.id);
+for (const expense of expenses) {
+  const splits = splitsMap[expense.id] || [];
+  const mySplit = splits.find(s => s.user_id === user.id);
 
-      totalExpenses += Number(expense.amount);
+  totalExpenses += Number(expense.amount);
 
-      if (mySplit) {
-        yourShare += Number(mySplit.share_amount);
-        if (mySplit.status !== 'approved') {
-          pendingOwed += Number(mySplit.share_amount);
-        } else {
-          if (UTILITY_CATEGORIES.includes(expense.category)) {
-            utilitiesTotal += Number(mySplit.share_amount);
-          }
-        }
-      }
+  if (mySplit) {
+    if (mySplit.status === 'approved') {
+      // Already paid
+      yourShare += Number(mySplit.share_amount);
+    } else {
+      // Still owe
+      pendingOwed += Number(mySplit.share_amount);
     }
+  }
+}
 
     return {
       ...group,
@@ -481,11 +479,13 @@ export default function GroupsScreen() {
           </div>
         </div>
         <div className="group-stats">
-          <div className="stat"><span className="stat-label">Total spent (this month)</span><span className="stat-value">₱{(item.totalExpenses || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span></div>
-          <div className="stat"><span className="stat-label">Your share</span><span className="stat-value">₱{(item.yourShare || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span></div>
-          <div className="stat"><span className="stat-label">Utilities</span><span className="stat-value">₱{(item.utilitiesTotal || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span></div>
-          <div className="stat balance"><span className="stat-label">Balance</span><span className="stat-value" style={{ color: balanceInfo.color }}>{balanceInfo.arrow} {balanceInfo.text}</span></div>
-        </div>
+  <div className="stat"><span className="stat-label">Total spent (this month)</span><span className="stat-value">₱{(item.totalExpenses || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span></div>
+  <div className="stat"><span className="stat-label">Your share</span><span className="stat-value">₱{(item.yourShare || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span></div>
+  {isHousehold && (
+    <div className="stat"><span className="stat-label">Utilities</span><span className="stat-value">₱{(item.utilitiesTotal || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span></div>
+  )}
+  <div className="stat balance"><span className="stat-label">Balance</span><span className="stat-value" style={{ color: balanceInfo.color }}>{balanceInfo.arrow} {balanceInfo.text}</span></div>
+</div>
         {(item.pendingOwed || 0) > 0 && (
           <div className="pending-badge-group">
             <DollarSign size={12} /> ₱{item.pendingOwed.toFixed(2)} pending from you
