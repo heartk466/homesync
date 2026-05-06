@@ -859,28 +859,56 @@ setLoadingAction(false);
       );
 
   console.log('🔍 split:', split.id, '| proof_id:', split.proof_id, '| proof found:', proof?.id, '| allProofs count:', allPaymentProofs.length);
-                      return (
-                        <div key={split.id} className="member-split-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 0', borderTop: '1px solid #F0EDFF' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <div className="member-avatar-tooltip" style={{ width: '28px', height: '28px', minWidth: '28px', minHeight: '28px' }}>{getMemberAvatar(member || { profiles: split.profiles })}</div>
-                            <span style={{ fontSize: 12 }}>{split.profiles?.full_name}</span>
-                          </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <span style={{ fontSize: 12, fontWeight: 600 }}>₱{Number(split.share_amount).toFixed(2)}</span>
-                            <span className={`status-badge-small`} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 50, background: split.status === 'approved' ? '#D1FAE5' : split.status === 'pending_verification' ? '#FFF3CD' : '#FEE2E2', color: split.status === 'approved' ? '#065F46' : split.status === 'pending_verification' ? '#856404' : '#e53e3e' }}>
-                              {split.status === 'approved' ? 'Paid' : split.status === 'pending_verification' ? 'Awaiting Approval' : 'Unpaid'}
-                            </span>
-                            {proof && (
-  <button className="view-proof-btn" style={{ padding: '2px 6px' }} onClick={() => openProofModal(proof, split)}>
-    <Eye size={12} />
-  </button>
-)}
-{isOwner && split.status === 'pending_verification' && !proof && (
-  <button className="approve-btn" style={{ padding: '2px 6px' }} onClick={() => handleApproveSplit(split)}>Approve</button>
-)}
-                          </div>
-                        </div>
-                      );
+                     return (
+  <div key={split.id} style={{
+    display: 'grid',
+    gridTemplateColumns: '1fr auto auto auto',
+    alignItems: 'center',
+    gap: 8,
+    padding: '8px 0',
+    borderTop: '1px solid #F0EDFF'
+  }}>
+    {/* Left: Avatar + Name */}
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <div className="member-avatar-tooltip" style={{ width: 28, height: 28, minWidth: 28, minHeight: 28 }}>
+        {getMemberAvatar(member || { profiles: split.profiles })}
+      </div>
+      <span style={{ fontSize: 11, color: '#2D1A7A', fontWeight: 500 }}>
+        {split.profiles?.full_name}
+      </span>
+    </div>
+
+    {/* Middle: Amount */}
+    <span style={{ fontSize: 12, fontWeight: 700, color: '#3B2AAB' }}>
+      ₱{Number(split.share_amount).toFixed(2)}
+    </span>
+
+    {/* Right: Status badge */}
+    <span style={{
+      fontSize: 10,
+      fontWeight: 600,
+      padding: '2px 8px',
+      borderRadius: 50,
+      whiteSpace: 'nowrap',
+      background: split.status === 'approved' ? '#D1FAE5' : split.status === 'pending_verification' ? '#FFF3CD' : '#FEE2E2',
+      color: split.status === 'approved' ? '#065F46' : split.status === 'pending_verification' ? '#856404' : '#e53e3e'
+    }}>
+      {split.status === 'approved' ? 'Paid' : split.status === 'pending_verification' ? 'Pending' : 'Unpaid'}
+    </span>
+
+    {/* Right: Eye icon or Approve button */}
+    <div style={{ width: 28, display: 'flex', justifyContent: 'center' }}>
+      {proof && (
+        <button className="view-proof-btn" style={{ padding: '2px 6px' }} onClick={() => openProofModal(proof, split)}>
+          <Eye size={12} />
+        </button>
+      )}
+      {isOwner && split.status === 'pending_verification' && !proof && (
+        <button className="approve-btn" style={{ padding: '2px 4px', fontSize: 10 }} onClick={() => handleApproveSplit(split)}>✓</button>
+      )}
+    </div>
+  </div>
+);
                     })}
                   </div>
 
