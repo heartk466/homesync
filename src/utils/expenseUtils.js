@@ -1,6 +1,5 @@
 import { supabase } from '../supabaseClient';
 
-// Add any other utility category names you actually use in your expenses
 export const UTILITY_CATEGORIES = ['Electricity', 'Water', 'Internet', 'Entertainment', 'Power', 'Gas'];
 
 export const isUtilityCategory = (category) => UTILITY_CATEGORIES.includes(category);
@@ -28,18 +27,16 @@ export async function fetchAllUtilityItems(householdId) {
     .order('billing_date', { ascending: false });
   if (utilsError) console.error(utilsError);
 
-  // Fetch expenses that are utility categories and are paid & approved
+  // Fetch ALL expenses that are utility categories (no status/approval filters)
   const { data: expenses, error: expError } = await supabase
     .from('expenses')
     .select('*')
     .eq('household_id', householdId)
     .in('category', UTILITY_CATEGORIES)
-    .eq('status', 'paid')
-    .eq('approval_status', 'approved')
     .order('expense_date', { ascending: false });
   if (expError) console.error(expError);
 
-  // Convert expenses to utility-like objects
+  // Convert expenses to utility‑like objects, including approval_status
   const fromExpenses = (expenses || []).map(exp => ({
     id: exp.id,
     household_id: exp.household_id,
@@ -50,6 +47,7 @@ export async function fetchAllUtilityItems(householdId) {
     split_method: exp.split_type,
     members_split: exp.members_split,
     status: exp.status,
+    approval_status: exp.approval_status,   // ← added for pending count
     location: exp.location,
     source: 'expenses',
     is_merged: exp.is_merged || false,
