@@ -190,8 +190,8 @@ const [justAddedExpense, setJustAddedExpense] = useState(null);
       const allExpenses = expensesData || [];
       setExpenses(allExpenses);
 
-      // Fetch pending expense approvals for owner
-if (isAdmin) {
+     // Fetch pending expense approvals for owner
+if (adminStatus) {
   const { data: pendingExp } = await supabase
     .from('expenses')
     .select('*, profiles:created_by(id, full_name, avatar_url)')
