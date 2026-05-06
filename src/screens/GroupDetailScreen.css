@@ -336,6 +336,15 @@
   border-top: 1px solid #F0EDFF;
 }
 
+/* Pending Expense Approvals wrapper */
+.pending-expense-approval-wrap {
+  background: white;
+  margin: 0 16px 12px;
+  border-radius: 20px;
+  padding: 16px;
+  box-shadow: 0 2px 12px rgba(59,42,171,0.08);
+}
+
 .member-split-row .member-avatar-tooltip {
   width: 32px;
   height: 32px;

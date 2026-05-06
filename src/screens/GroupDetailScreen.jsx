@@ -188,7 +188,8 @@ const [justAddedExpense, setJustAddedExpense] = useState(null);
         .order('created_at', { ascending: false });
       if (expError) throw expError;
       const allExpenses = expensesData || [];
-      setExpenses(allExpenses);
+      // Only show approved expenses in the main list
+setExpenses(allExpenses.filter(e => e.approval_status === 'approved'));
 
      // Fetch pending expense approvals for owner
 if (adminStatus) {
