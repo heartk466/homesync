@@ -177,13 +177,34 @@ export default function DashboardScreen() {
       setProfile(profileData);
       if (profileData?.avatar_url) setAvatarUrl(profileData.avatar_url);
 
-      if (profileData?.household_id) {
-        const { data: householdData } = await supabase
+      // --- FIX: Get the user's active household from household_members ---
+      const { data: memberHouseholds } = await supabase
+        .from('household_members')
+        .select('household_id')
+        .eq('user_id', user.id)
+        .eq('status', 'active')
+        .limit(1);  // pick the first one (dashboard only shows one household)
+
+      let householdData = null;
+      if (memberHouseholds && memberHouseholds.length > 0) {
+        const { data: hhData } = await supabase
           .from('households')
           .select('*')
-          .eq('id', profileData.household_id)
+          .eq('id', memberHouseholds[0].household_id)
           .single();
+        householdData = hhData;
         setHousehold(householdData);
+      }
+
+      // If no household found, show empty dashboard (no data)
+      if (!householdData) {
+        setTotalSpent(0);
+        setUtilitiesTotal(0);
+        setPendingAmount(0);
+        setLastMonthSpent(0);
+        setMonthlyData([]);
+        setCategoryData([]);
+        return;
       }
 
       const now = new Date();
@@ -192,7 +213,8 @@ export default function DashboardScreen() {
       const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().split('T')[0];
       const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0).toISOString().split('T')[0];
 
-      const allExpenses = await fetchAllHouseholdExpenses(profileData?.household_id);
+      // Fetch expenses for this specific household
+      const allExpenses = await fetchAllHouseholdExpenses(householdData.id);
       const expenseIds = allExpenses.map(e => e.id);
       const splitsByExpense = await fetchExpenseSplits(expenseIds);
 
@@ -201,7 +223,6 @@ export default function DashboardScreen() {
       let myPendingTotal = 0;
       let lastMonthTotal = 0;
 
-      // Main sum: only count if expense.approval_status === 'approved' AND split.status === 'approved'
       for (const expense of allExpenses) {
         const splits = splitsByExpense[expense.id] || [];
         const mySplit = splits.find(s => s.user_id === user.id);
@@ -229,7 +250,7 @@ export default function DashboardScreen() {
       setPendingAmount(myPendingTotal);
       setLastMonthSpent(lastMonthTotal);
 
-      // Category breakdown
+      // Category breakdown (optional)
       const categories = {};
       for (const expense of allExpenses) {
         if (!(expense.expense_date >= firstDay && expense.expense_date <= lastDay)) continue;
@@ -242,7 +263,7 @@ export default function DashboardScreen() {
       }
       setCategoryData(Object.entries(categories).map(([name, value]) => ({ name, value })));
 
-      // Group spending
+      // Group spending (unchanged, works with groups)
       const { data: memberGroups } = await supabase
         .from('group_members')
         .select('group_id')
@@ -281,7 +302,7 @@ export default function DashboardScreen() {
       setGroupSpending(groupsWithPaidTotals);
       setTotalGroupPaid(groupsWithPaidTotals.reduce((sum, g) => sum + g.currentMonthPaid, 0));
 
-      // Monthly trend (last 6 months)
+      // Monthly trend
       const months = [];
       for (let i = 5; i >= 0; i--) {
         const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
