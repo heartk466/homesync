@@ -189,64 +189,65 @@ export default function UtilitiesScreen() {
     const userMember = membersList.find(m => m.user_id === user.id);
     setIsAdmin(userMember?.role === 'owner');
 
-    // Primary fetch from utility helper
-    let { utilities: utilitiesData, fromExpenses } = await fetchAllUtilityItems(household.id);
+   // Fetch only approved utility expenses for this household
+const { data: utilityExpenses } = await supabase
+  .from('expenses')
+  .select('*')
+  .eq('household_id', household.id)
+  .eq('approval_status', 'approved')
+  .in('category', ['Electricity', 'Water', 'Internet', 'Entertainment', 'Power', 'Gas'])
+  .order('expense_date', { ascending: false });
 
-    // FALLBACK: If fromExpenses is empty, directly query expenses table
-    if (fromExpenses.length === 0) {
-      const { data: directExpenses, error: directError } = await supabase
-        .from('expenses')
-        .select('*')
-        .eq('household_id', household.id)
-        .in('category', UTILITY_CATEGORIES)
-        .order('expense_date', { ascending: false });
-      if (!directError && directExpenses && directExpenses.length > 0) {
-        fromExpenses = directExpenses.map(exp => ({
-          id: exp.id,
-          household_id: exp.household_id,
-          utility_type: exp.category,
-          provider_name: exp.title,
-          amount: exp.amount,
-          billing_date: exp.expense_date,
-          split_method: exp.split_type,
-          members_split: exp.members_split,
-          status: exp.status,
-          approval_status: exp.approval_status,
-          location: exp.location || '',
-          source: 'expenses',
-          is_merged: false,
-          created_at: exp.created_at,
-        }));
-        showToast(`Fallback found ${directExpenses.length} utility expenses.`, 'success');
-      } else {
-        showToast(`No utility expenses found in expenses table for household ${household.name}. Check category spelling.`, 'error');
-      }
-    }
+const approvedExpenses = utilityExpenses || [];
 
-    const allUtilityItems = [...utilitiesData, ...fromExpenses];
-    setUtilities(allUtilityItems);
-    setFilteredUtilities(allUtilityItems);
+// Fetch expense_splits for these expenses
+let splitsMap = {};
+if (approvedExpenses.length > 0) {
+  const { data: splitsData } = await supabase
+    .from('expense_splits')
+    .select('*')
+    .in('expense_id', approvedExpenses.map(e => e.id));
+  (splitsData || []).forEach(s => {
+    if (!splitsMap[s.expense_id]) splitsMap[s.expense_id] = [];
+    splitsMap[s.expense_id].push(s);
+  });
+}
 
-    setProviderCount(allUtilityItems.length);
-    const active = allUtilityItems.filter(u => u.status !== 'paid').length || 0;
-    setActiveSubscriptions(active);
+// Map expenses to utility items with split info
+const fromExpenses = approvedExpenses.map(exp => {
+  const splits = splitsMap[exp.id] || [];
+  const mySplit = splits.find(s => s.user_id === user.id);
+  return {
+    id: exp.id,
+    household_id: exp.household_id,
+    utility_type: exp.category,
+    provider_name: exp.title,
+    amount: exp.amount,
+    billing_date: exp.expense_date,
+    split_method: exp.split_type,
+    members_split: exp.members_split,
+    status: exp.status,
+    approval_status: exp.approval_status,
+    source: 'expenses',
+    mySplit,
+    myShareAmount: mySplit ? Number(mySplit.share_amount) : 0,
+    myStatus: mySplit ? mySplit.status : 'unpaid',
+    splits,
+  };
+});
 
-    const pending = allUtilityItems.filter(item => {
-      if (item.source === 'expenses') {
-        return item.approval_status !== 'approved';
-      } else {
-        return item.status !== 'paid';
-      }
-    }).length;
-    setPendingSplits(pending);
+setUtilities(fromExpenses);
+setFilteredUtilities(fromExpenses);
 
-    const { data: confirmData } = await supabase
-      .from('utility_confirmations')
-      .select('*, profiles(*)')
-      .in('utility_id', utilitiesData?.map(u => u.id) || []);
-    setConfirmations(confirmData || []);
+// Connected Utility Providers = unique categories
+const uniqueCategories = [...new Set(fromExpenses.map(e => e.utility_type))];
+setProviderCount(uniqueCategories.length);
 
-    setUtilityForm(prev => ({ ...prev, location: household.name }));
+// Pending splits = my splits not yet approved
+const myPendingSplits = fromExpenses.filter(e => e.myStatus !== 'approved').length;
+setPendingSplits(myPendingSplits);
+
+setUtilityForm(prev => ({ ...prev, location: household.name }));
   };
 
   const fetchNotifications = async (userId) => {
@@ -421,7 +422,7 @@ export default function UtilitiesScreen() {
                 <div className="utility-details">
                   <p className="utility-name">{utility.utility_type}({utility.provider_name}): ₱{Number(utility.amount).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
                   <p className="utility-meta">{utility.split_method} | {utility.billing_date} | {utility.location}</p>
-                  {myShare && <p className="utility-my-share">Your share: ₱{Number(myShare).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>}
+                  {utility.myShareAmount > 0 && <p className="utility-my-share">Your share: ₱{utility.myShareAmount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>}
                   {!isAdmin && utility.status !== 'paid' && (
                     <div className="confirmation-row">
                       {!myConfirmation || myConfirmation.status === 'pending' ? (
@@ -447,7 +448,12 @@ export default function UtilitiesScreen() {
                   <div className="reimburse-row"><button className="pay-btn" onClick={() => { setSelectedUtility(utility); setShowPaymentProofModal(true); }}>Pay</button></div>
                 )}
                 <div className="utility-right">
-                  <span className="status-badge" style={{ color: badge.color, background: badge.bg }}>{badge.label}</span>
+                  <span className="status-badge" style={{
+  background: utility.myStatus === 'approved' ? '#D1FAE5' : '#FFF3CD',
+  color: utility.myStatus === 'approved' ? '#065F46' : '#856404'
+}}>
+  {utility.myStatus === 'approved' ? '✓ Paid' : '⏳ Pending'}
+</span>
                   {utility.source === 'expenses' && <span className="source-label">📋 From Expenses</span>}
                   {utility.source === 'utilities' && utility.is_merged && <span className="source-label">🔗 Merged</span>}
                   {isAdmin && (
