@@ -331,101 +331,170 @@ if (isAdmin) {
     setShowViewProofModal(true);
   };
 
-  const handleAddExpense = async () => {
-    const errors = {};
-    if (!expenseForm.title.trim()) errors.title = 'Title required';
-    if (!expenseForm.amount || isNaN(expenseForm.amount)) errors.amount = 'Valid amount required';
-    if (!expenseForm.who_paid) errors.who_paid = 'Select who paid';
-    if (expenseForm.selected_members.length === 0) errors.members = 'Select at least one member';
+ const handleAddExpense = async () => {
+  const errors = {};
+  if (!expenseForm.title.trim()) errors.title = 'Title required';
+  if (!expenseForm.amount || isNaN(expenseForm.amount)) errors.amount = 'Valid amount required';
+  if (!expenseForm.who_paid) errors.who_paid = 'Select who paid';
+  if (expenseForm.selected_members.length === 0) errors.members = 'Select at least one member';
 
-    if (Object.keys(errors).length > 0) {
-      setExpenseErrors(errors);
-      showToast(Object.values(errors)[0], 'error');
-      return;
-    }
-
-    setLoadingAction(true);
-    const splits = {};
-    if (expenseForm.split_type === 'equal') {
-      const share = Number(expenseForm.amount) / expenseForm.selected_members.length;
-      expenseForm.selected_members.forEach(uid => { splits[uid] = share.toFixed(2); });
-    } else {
-      let total = 0;
-      expenseForm.selected_members.forEach(uid => {
-        const val = Number(expenseForm.custom_splits[uid]) || 0;
-        splits[uid] = val.toFixed(2);
-        total += val;
-      });
-      if (Math.abs(total - Number(expenseForm.amount)) > 0.01) {
-        showToast('Custom split total does not match amount', 'error');
-        setLoadingAction(false);
-        return;
-      }
-    }
-
-    const insertData = {
-      title: expenseForm.title.trim(),
-      amount: Number(expenseForm.amount),
-      category: expenseForm.category,
-      expense_type: contextType === 'household' ? 'household' : 'group',
-      expense_date: expenseForm.expense_date,
-      location: expenseForm.location || group?.name,
-      paid_by: expenseForm.who_paid,
-      split_type: expenseForm.split_type,
-      members_split: splits,
-      status: 'pending',
-      approval_status: isAdmin ? 'approved' : 'pending_approval',
-      created_by: currentUser.id,
-    };
-    if (contextType === 'household') insertData.household_id = id;
-    else insertData.group_id = id;
-
-    const { data: insertedExpense, error } = await supabase
-  .from('expenses')
-  .insert(insertData)
-  .select()
-  .single();
-
-if (error) {
-  showToast(`Failed: ${error.message}`, 'error');
-} else {
-  // ✅ Insert expense_splits rows for each selected member
-  const splitRows = expenseForm.selected_members.map(uid => ({
-    expense_id: insertedExpense.id,
-    user_id: uid,
-    share_amount: Number(splits[uid]),
-    status: uid === expenseForm.who_paid ? 'approved' : 'unpaid',
-    updated_at: new Date().toISOString(),
-  }));
-
-  const { error: splitError } = await supabase
-    .from('expense_splits')
-    .insert(splitRows);
-
-  if (splitError) {
-    console.error('Split insert error:', splitError);
-    showToast('Expense added but splits failed to save', 'error');
+  if (Object.keys(errors).length > 0) {
+    setExpenseErrors(errors);
+    showToast(Object.values(errors)[0], 'error');
+    return;
   }
 
-  showToast(isAdmin ? 'Expense added!' : 'Submitted for approval');
-  setShowAddExpense(false);
-  resetExpenseForm();
+  setLoadingAction(true);
+  const splits = {};
+  if (expenseForm.split_type === 'equal') {
+    const share = Number(expenseForm.amount) / expenseForm.selected_members.length;
+    expenseForm.selected_members.forEach(uid => { splits[uid] = share.toFixed(2); });
+  } else {
+    let total = 0;
+    expenseForm.selected_members.forEach(uid => {
+      const val = Number(expenseForm.custom_splits[uid]) || 0;
+      splits[uid] = val.toFixed(2);
+      total += val;
+    });
+    if (Math.abs(total - Number(expenseForm.amount)) > 0.01) {
+      showToast('Custom split total does not match amount', 'error');
+      setLoadingAction(false);
+      return;
+    }
+  }
 
-  if (!isAdmin && group?.created_by) {
+  const insertData = {
+    title: expenseForm.title.trim(),
+    amount: Number(expenseForm.amount),
+    category: expenseForm.category,
+    expense_type: contextType === 'household' ? 'household' : 'group',
+    expense_date: expenseForm.expense_date,
+    location: expenseForm.location || group?.name,
+    paid_by: expenseForm.who_paid,
+    split_type: expenseForm.split_type,
+    members_split: splits,
+    status: 'pending',
+    approval_status: isAdmin ? 'approved' : 'pending_approval',
+    created_by: currentUser.id,
+  };
+  if (contextType === 'household') insertData.household_id = id;
+  else insertData.group_id = id;
+
+  const { data: insertedExpense, error } = await supabase
+    .from('expenses')
+    .insert(insertData)
+    .select()
+    .single();
+
+  if (error) {
+    showToast(`Failed: ${error.message}`, 'error');
+    setLoadingAction(false);
+    return;
+  }
+
+  // If owner adds → insert splits immediately
+  if (isAdmin) {
+    const splitRows = expenseForm.selected_members.map(uid => ({
+      expense_id: insertedExpense.id,
+      user_id: uid,
+      share_amount: Number(splits[uid]),
+      status: uid === expenseForm.who_paid ? 'approved' : 'unpaid',
+      updated_at: new Date().toISOString(),
+    }));
+    await supabase.from('expense_splits').insert(splitRows);
+    showToast('Expense added!');
+    setShowAddExpense(false);
+    resetExpenseForm();
+    fetchGroupAndData();
+  } else {
+    // Member adds → pending approval, notify owner
     await supabase.from('notifications').insert({
       user_id: group.created_by,
-      title: 'New Expense Pending',
-      message: `${profile?.full_name} added "${expenseForm.title}" for ₱${expenseForm.amount}`,
+      title: '📋 New Expense Pending Approval',
+      message: `${profile?.full_name} added "${expenseForm.title}" for ₱${Number(expenseForm.amount).toFixed(2)}. Please review.`,
       type: 'approval_request',
       link_path: `/groups/${id}`,
       link_state: JSON.stringify({ type: contextType }),
     });
-  }
-  fetchGroupAndData();
-}
-setLoadingAction(false);
-  };
 
+    setShowAddExpense(false);
+
+    // If member paid upfront → show proof upload immediately
+    if (expenseForm.who_paid === currentUser.id) {
+      setJustAddedExpense(insertedExpense);
+      resetProofForm();
+      setShowUploadAfterAdd(true);
+    } else {
+      showToast('Expense submitted for approval!');
+      resetExpenseForm();
+      fetchGroupAndData();
+    }
+  }
+  setLoadingAction(false);
+};
+
+const handleApproveExpense = async (expense) => {
+  setLoadingAction(true);
+  const splits = expense.members_split || {};
+  const memberIds = Object.keys(splits);
+
+  // Update approval_status
+  await supabase.from('expenses')
+    .update({ approval_status: 'approved', status: 'pending' })
+    .eq('id', expense.id);
+
+  // Insert splits
+  const splitRows = memberIds.map(uid => ({
+    expense_id: expense.id,
+    user_id: uid,
+    share_amount: Number(splits[uid]),
+    status: uid === expense.paid_by ? 'approved' : 'unpaid',
+    updated_at: new Date().toISOString(),
+  }));
+  await supabase.from('expense_splits').insert(splitRows);
+
+  // Notify the member who created it
+  await supabase.from('notifications').insert({
+    user_id: expense.created_by,
+    title: '✅ Expense Approved!',
+    message: `Your expense "${expense.title}" for ₱${Number(expense.amount).toFixed(2)} was approved by the owner.`,
+    type: 'expense_approved',
+    link_path: `/groups/${id}`,
+    link_state: JSON.stringify({ type: contextType }),
+  });
+
+  showToast('Expense approved!');
+  fetchGroupAndData();
+  setLoadingAction(false);
+};
+
+const handleRejectExpense = async () => {
+  if (!rejectExpenseReason.trim()) {
+    showToast('Please provide a rejection reason', 'error');
+    return;
+  }
+  setLoadingAction(true);
+
+  // Notify the member before deleting
+  await supabase.from('notifications').insert({
+    user_id: selectedPendingExpense.created_by,
+    title: '❌ Expense Rejected',
+    message: `Your expense "${selectedPendingExpense.title}" was rejected. Reason: ${rejectExpenseReason}`,
+    type: 'expense_rejected',
+    link_path: `/groups/${id}`,
+    link_state: JSON.stringify({ type: contextType }),
+  });
+
+  // Delete the expense
+  await supabase.from('expenses').delete().eq('id', selectedPendingExpense.id);
+
+  showToast('Expense rejected and deleted');
+  setShowRejectExpenseModal(false);
+  setRejectExpenseReason('');
+  setSelectedPendingExpense(null);
+  fetchGroupAndData();
+  setLoadingAction(false);
+};
   const handleApproveSplit = async (split) => {
     setLoadingAction(true);
     const { error } = await supabase
@@ -812,7 +881,33 @@ setLoadingAction(false);
           </div>
         )}
       </div>
-
+{/* Pending Expense Approvals (owner only) */}
+{isAdmin && pendingExpenseApprovals.length > 0 && (
+  <div className="detail-pending-section">
+    <h3 className="section-title">📋 Pending Expense Approvals ({pendingExpenseApprovals.length})</h3>
+    {pendingExpenseApprovals.map(expense => (
+      <div key={expense.id} className="pending-item">
+        <div>
+          <strong style={{ fontSize: 13, color: '#2D1A7A' }}>{expense.title}</strong>
+          <div style={{ fontSize: 11, color: '#9E8FCC' }}>
+            by {expense.profiles?.full_name} · ₱{Number(expense.amount).toFixed(2)} · {expense.expense_date}
+          </div>
+        </div>
+        <div className="pending-actions">
+          <button className="approve-btn" onClick={() => handleApproveExpense(expense)}>
+            <Check size={14} /> Approve
+          </button>
+          <button className="reject-btn" onClick={() => {
+            setSelectedPendingExpense(expense);
+            setShowRejectExpenseModal(true);
+          }}>
+            <X size={14} /> Reject
+          </button>
+        </div>
+      </div>
+    ))}
+  </div>
+)}
       {/* Pending Approvals (splits) */}
       {isAdmin && pendingApprovals.length > 0 && (
         <div className="detail-pending-section">
