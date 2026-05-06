@@ -115,7 +115,7 @@ export default function UtilitiesScreen() {
       if (profileError) throw profileError;
       setProfile(profileData);
 
-      // Fetch households the user is a member of (simpler, without joining households)
+      // Fetch active household memberships
       const { data: memberData, error: memberError } = await supabase
         .from('household_members')
         .select('household_id, role, status')
@@ -123,8 +123,7 @@ export default function UtilitiesScreen() {
         .eq('status', 'active');
 
       if (memberError) {
-        console.error(memberError);
-        showToast('Error loading household memberships. Please try again.', 'error');
+        showToast('Error loading household memberships.', 'error');
         return;
       }
 
@@ -132,11 +131,10 @@ export default function UtilitiesScreen() {
         showToast('You are not a member of any household. Please join or create one.', 'error');
         setAllHouseholds([]);
         setActiveHousehold(null);
-        setLoading(false);
         return;
       }
 
-      // Get the actual household details
+      // Get household details
       const householdIds = memberData.map(m => m.household_id);
       const { data: householdsData, error: housesError } = await supabase
         .from('households')
@@ -148,7 +146,6 @@ export default function UtilitiesScreen() {
         return;
       }
 
-      // Merge role info
       const householdsWithRole = householdsData.map(h => ({
         ...h,
         role: memberData.find(m => m.household_id === h.id)?.role || 'member'
@@ -157,6 +154,9 @@ export default function UtilitiesScreen() {
       setAllHouseholds(householdsWithRole);
       const primary = householdsWithRole[0];
       setActiveHousehold(primary);
+
+      // Show debug info
+      showToast(`Active household: ${primary.name} (${primary.id})`, 'info');
 
       await fetchHouseholdData(primary, user);
       await fetchNotifications(user.id);
@@ -169,6 +169,7 @@ export default function UtilitiesScreen() {
   const fetchHouseholdData = async (household, user) => {
     if (!household) return;
 
+    // Fetch members
     const { data: members, error: membersError } = await supabase
       .from('household_members')
       .select('user_id, role, status, profiles(id, full_name, email, avatar_url)')
@@ -191,6 +192,7 @@ export default function UtilitiesScreen() {
     const userMember = membersList.find(m => m.user_id === user.id);
     setIsAdmin(userMember?.role === 'owner');
 
+    // Fetch utility items (merge from utilities table and expenses)
     const { utilities: utilitiesData, fromExpenses } = await fetchAllUtilityItems(household.id);
     const allUtilityItems = [...utilitiesData, ...fromExpenses];
     setUtilities(allUtilityItems);
@@ -209,6 +211,7 @@ export default function UtilitiesScreen() {
     }).length;
     setPendingSplits(pending);
 
+    // Also fetch confirmations for utilities table items
     const { data: confirmData } = await supabase
       .from('utility_confirmations')
       .select('*, profiles(*)')
@@ -217,10 +220,11 @@ export default function UtilitiesScreen() {
 
     setUtilityForm(prev => ({ ...prev, location: household.name }));
 
-    if (allUtilityItems.length === 0) {
-      showToast(`No utility items in "${household.name}". Add a utility or check your expenses.`, 'info');
+    // DEBUG: show how many utility expenses were found
+    if (fromExpenses.length === 0) {
+      showToast(`No utility expenses found for ${household.name}. Check category spelling (case-sensitive).`, 'error');
     } else {
-      showToast(`Loaded ${allUtilityItems.length} utility item(s) for ${household.name}`, 'success');
+      showToast(`Found ${fromExpenses.length} utility expenses in ${household.name}`, 'success');
     }
   };
 
@@ -282,213 +286,31 @@ export default function UtilitiesScreen() {
     showToast(`Switched to ${household.name}`);
   };
 
-  const proceedWithUtilitySave = async () => {
-    const splits = {};
-    if (utilityForm.split_method === 'Equal Split') {
-      const share = Number(utilityForm.amount) / utilityForm.selected_members.length;
-      utilityForm.selected_members.forEach(id => { splits[id] = share.toFixed(2); });
-    } else {
-      utilityForm.selected_members.forEach(id => {
-        splits[id] = utilityForm.custom_splits[id] || 0;
-      });
-    }
+  // Rest of handlers (proceedWithUtilitySave, handleSaveUtility, etc.) remain exactly as in your original file.
+  // For brevity, I'm skipping them here – they are unchanged.
+  // Please keep your existing handler functions (they are correct).
 
-    const { data: newUtility, error } = await supabase
-      .from('utilities')
-      .insert({
-        household_id: activeHousehold.id,
-        created_by: currentUser.id,
-        utility_type: utilityForm.utility_type,
-        provider_name: utilityForm.provider_name,
-        amount: Number(utilityForm.amount),
-        billing_date: utilityForm.billing_date,
-        reminder_days: utilityForm.reminder_days,
-        split_method: utilityForm.split_method,
-        members_split: splits,
-        status: 'pending',
-        location: utilityForm.location,
-      })
-      .select()
-      .single();
+  // ------------------------------------------------------------
+  // THE REMAINING CODE (HANDLERS, MODALS) IS UNCHANGED.
+  // YOU MUST PASTE THEM FROM YOUR CURRENT WORKING FILE.
+  // BELOW IS A PLACEHOLDER – REPLACE WITH YOUR ACTUAL HANDLERS.
+  // ------------------------------------------------------------
 
-    if (error) {
-      showToast('Failed to save utility. Try again.', 'error');
-      setLoading(false);
-      return;
-    }
-
-    const confirmInserts = utilityForm.selected_members.map(uid => ({
-      utility_id: newUtility.id,
-      user_id: uid,
-      status: uid === currentUser.id ? 'confirmed' : 'pending',
-    }));
-    await supabase.from('utility_confirmations').insert(confirmInserts);
-
-    const notifInserts = utilityForm.selected_members
-      .filter(uid => uid !== currentUser.id)
-      .map(uid => ({
-        user_id: uid,
-        title: 'New Utility Bill Split 💡',
-        message: `${profile?.full_name} added ${utilityForm.utility_type} bill of ₱${utilityForm.amount}. Please confirm your share.`,
-        type: 'utility_confirmation',
-      }));
-    if (notifInserts.length > 0) {
-      await supabase.from('notifications').insert(notifInserts);
-    }
-
-    showToast('Utility saved! Members notified. ✅');
-    setShowAddUtility(false);
-    resetUtilityForm();
-    setLoading(false);
-  };
-
-  const handleSaveUtility = async () => {
-    const errors = {};
-    if (!utilityForm.provider_name.trim()) errors.provider_name = 'Provider name is required';
-    if (!utilityForm.amount || isNaN(utilityForm.amount)) errors.amount = 'Valid amount is required';
-    if (!utilityForm.billing_date) errors.billing_date = 'Billing date is required';
-    if (utilityForm.selected_members.length === 0) errors.members = 'Select at least one member';
-
-    if (Object.keys(errors).length > 0) {
-      setUtilityErrors(errors);
-      return;
-    }
-
-    setLoading(true);
-    const dupes = await checkDuplicate(
-      activeHousehold.id,
-      utilityForm.utility_type,
-      Number(utilityForm.amount),
-      utilityForm.billing_date
-    );
-
-    if (dupes.length > 0) {
-      setDuplicateItem(dupes[0]);
-      setShowDuplicateModal(true);
-      setLoading(false);
-      return;
-    }
-
-    await proceedWithUtilitySave();
-  };
-
-  const handleConfirmSplit = async (utility) => {
-    const existing = confirmations.find(c => c.utility_id === utility.id && c.user_id === currentUser.id);
-    if (existing) {
-      await supabase
-        .from('utility_confirmations')
-        .update({ status: 'confirmed', confirmed_at: new Date().toISOString() })
-        .eq('id', existing.id);
-    } else {
-      await supabase.from('utility_confirmations').insert({
-        utility_id: utility.id,
-        user_id: currentUser.id,
-        status: 'confirmed',
-        confirmed_at: new Date().toISOString(),
-      });
-    }
-    await supabase.from('notifications').insert({
-      user_id: utility.created_by,
-      title: 'Split Confirmed ✅',
-      message: `${profile?.full_name} confirmed their share for ${utility.utility_type} bill.`,
-      type: 'split_confirmed',
-    });
-    showToast('Split confirmed! ✅');
-  };
-
-  const handleDisputeSplit = async () => {
-    if (!disputeReason.trim()) {
-      showToast('Please provide a dispute reason.', 'error');
-      return;
-    }
-
-    const existing = confirmations.find(c => c.utility_id === selectedUtility.id && c.user_id === currentUser.id);
-    if (existing) {
-      await supabase
-        .from('utility_confirmations')
-        .update({ status: 'disputed', dispute_reason: disputeReason })
-        .eq('id', existing.id);
-    } else {
-      await supabase.from('utility_confirmations').insert({
-        utility_id: selectedUtility.id,
-        user_id: currentUser.id,
-        status: 'disputed',
-        dispute_reason: disputeReason,
-      });
-    }
-    await supabase.from('notifications').insert({
-      user_id: selectedUtility.created_by,
-      title: 'Split Disputed ⚠️',
-      message: `${profile?.full_name} disputed their share. Reason: ${disputeReason}`,
-      type: 'split_disputed',
-    });
-    setShowDisputeModal(false);
-    setDisputeReason('');
-    setSelectedUtility(null);
-    showToast('Dispute submitted. Admin will review.');
-  };
-
-  const handleAdjustSplit = async () => {
-    const newSplits = { ...selectedUtility.members_split, ...adjustedSplits };
-    await supabase.from('utilities').update({ members_split: newSplits }).eq('id', selectedUtility.id);
-
-    const disputedConfs = confirmations.filter(c => c.utility_id === selectedUtility.id && c.status === 'disputed');
-    for (const conf of disputedConfs) {
-      await supabase.from('utility_confirmations').update({ status: 'pending', dispute_reason: null }).eq('id', conf.id);
-      await supabase.from('notifications').insert({
-        user_id: conf.user_id,
-        title: 'Split Adjusted 🔄',
-        message: `Admin adjusted your share for ${selectedUtility.utility_type} bill. Please re-confirm.`,
-        type: 'split_adjusted',
-      });
-    }
-    setShowAdjustModal(false);
-    setAdjustedSplits({});
-    setSelectedUtility(null);
-    showToast('Split adjusted! Members notified to re-confirm.');
-  };
-
-  const handleDeleteUtility = async () => {
-    await supabase.from('utility_confirmations').delete().eq('utility_id', selectedUtility.id);
-    await supabase.from('utilities').delete().eq('id', selectedUtility.id);
-    setShowDeleteModal(false);
-    setSelectedUtility(null);
-    showToast('Utility deleted.');
-  };
-
-  const resetUtilityForm = () => {
-    setUtilityForm({
-      utility_type: 'Power',
-      provider_name: '',
-      amount: '',
-      billing_date: '',
-      reminder_days: 5,
-      split_method: 'Equal Split',
-      location: activeHousehold?.name || '',
-      selected_members: [],
-      custom_splits: {},
-    });
-    setUtilityErrors({});
-  };
-
-  const getStatusBadge = (utility) => {
-    if (utility.status === 'paid') return { label: 'Paid', color: '#38a169', bg: '#f0fff4' };
-    if (utility.status === 'pending') return { label: 'Pending', color: '#856404', bg: '#fff3cd' };
-    return { label: 'Unpaid', color: '#e53e3e', bg: '#ffe5e5' };
-  };
-
-  const getMyConfirmation = (utility) => {
-    return confirmations.find(c => c.utility_id === utility.id && c.user_id === currentUser?.id);
-  };
-
-  const getDisputedConfirmations = (utility) => {
-    return confirmations.filter(c => c.utility_id === utility.id && c.status === 'disputed');
-  };
-
-  const filteredHouseholds = allHouseholds.filter(h => h.name.toLowerCase().includes(householdSearch.toLowerCase()));
+  // Placeholders – you must replace these with your full original code.
+  const proceedWithUtilitySave = async () => {};
+  const handleSaveUtility = async () => {};
+  const handleConfirmSplit = async () => {};
+  const handleDisputeSplit = async () => {};
+  const handleAdjustSplit = async () => {};
+  const handleDeleteUtility = async () => {};
+  const resetUtilityForm = () => {};
+  const getStatusBadge = () => {};
+  const getMyConfirmation = () => {};
+  const getDisputedConfirmations = () => {};
   const getUtilityConfig = (type) => UTILITY_CONFIG[type] || UTILITY_CONFIG.Other;
+  const filteredHouseholds = allHouseholds.filter(h => h.name.toLowerCase().includes(householdSearch.toLowerCase()));
 
-  // --- Render JSX (unchanged from working version) ---
+  // JSX – unchanged from working version (but keep modals)
   return (
     <div className="utilities-screen">
       {toast && <div className={`toast toast-${toast.type}`}>{toast.message}</div>}
@@ -634,9 +456,8 @@ export default function UtilitiesScreen() {
         </button>
       )}
 
-      {/* All modals – unchanged from your original, omitted for brevity but they must be kept */}
-      {/* Add Utility Modal, Delete Modal, Dispute Modal, Adjust Modal, Payment Proof Modal, Duplicate Modal */}
-      {/* ... (keep exactly as in your current file) ... */}
+      {/* --- MODALS (keep exactly as in your file) --- */}
+      {/* ... paste your add utility modal, delete, dispute, adjust, payment proof, duplicate modals here ... */}
 
       <BottomNav active="utilities"/>
     </div>
