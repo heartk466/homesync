@@ -190,6 +190,18 @@ const [justAddedExpense, setJustAddedExpense] = useState(null);
       const allExpenses = expensesData || [];
       setExpenses(allExpenses);
 
+      // Fetch pending expense approvals for owner
+if (isAdmin) {
+  const { data: pendingExp } = await supabase
+    .from('expenses')
+    .select('*, profiles:created_by(id, full_name, avatar_url)')
+    .eq(contextType === 'household' ? 'household_id' : 'group_id', id)
+    .eq('approval_status', 'pending_approval');
+  setPendingExpenseApprovals(pendingExp || []);
+} else {
+  setPendingExpenseApprovals([]);
+}
+
       // Proofs are now loaded in the splits useEffect below
     } catch (err) {
       console.error(err);
