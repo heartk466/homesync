@@ -113,37 +113,72 @@ export default function UtilitiesScreen() {
       if (!user) { navigate('/login'); return; }
       setCurrentUser(user);
 
-      const { data: profileData } = await supabase
+      const { data: profileData, error: profileError } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', user.id)
         .single();
+      if (profileError) throw profileError;
       setProfile(profileData);
 
-      // Fetch ALL households user belongs to
-      const { data: memberData } = await supabase
+      // 1. Try to get active household memberships
+      let { data: memberData, error: memberError } = await supabase
         .from('household_members')
         .select('*, households(*)')
         .eq('user_id', user.id)
         .eq('status', 'active');
 
-      const households = memberData?.map(m => ({
-        ...m.households,
-        role: m.role,
-      })) || [];
-
-      setAllHouseholds(households);
-
-      if (households.length === 0) {
-        showToast('You are not a member of any household.', 'error');
+      if (memberError) {
+        showToast('Error loading households', 'error');
         return;
       }
 
-      // Use the first household (only one) and also update profile if needed
+      let households = [];
+      if (memberData && memberData.length > 0) {
+        households = memberData.map(m => ({
+          ...m.households,
+          role: m.role,
+        }));
+      } else {
+        // Fallback: if no active membership but profile has household_id, try to create membership
+        if (profileData.household_id) {
+          const { data: houseData, error: houseError } = await supabase
+            .from('households')
+            .select('*')
+            .eq('id', profileData.household_id)
+            .single();
+          if (!houseError && houseData) {
+            // Insert the user as a member
+            const { error: insertError } = await supabase
+              .from('household_members')
+              .insert({
+                household_id: profileData.household_id,
+                user_id: user.id,
+                role: 'member',
+                status: 'active'
+              });
+            if (insertError) {
+              showToast('Failed to add you to the household. Please contact support.', 'error');
+            } else {
+              showToast('Added you to the household. Please refresh.', 'info');
+              // Reload after a short delay to pick up new membership
+              setTimeout(() => fetchData(), 1500);
+              return;
+            }
+          } else {
+            showToast('Your profile has a household ID but it does not exist.', 'error');
+          }
+        } else {
+          showToast('You are not a member of any household. Please join or create one.', 'error');
+        }
+        return;
+      }
+
+      setAllHouseholds(households);
       const primary = households[0];
       setActiveHousehold(primary);
 
-      // If profile.household_id is different, update it (silently)
+      // Ensure profile's household_id matches (optional)
       if (profileData.household_id !== primary.id) {
         await supabase
           .from('profiles')
@@ -615,7 +650,7 @@ export default function UtilitiesScreen() {
         </button>
       )}
 
-      {/* All Modals (same as before – keep them unchanged) */}
+      {/* Add Utility Modal */}
       {showAddUtility && (
         <div className="modal-overlay">
           <div className="add-utility-modal">
