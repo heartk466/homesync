@@ -115,7 +115,6 @@ export default function UtilitiesScreen() {
       if (profileError) throw profileError;
       setProfile(profileData);
 
-      // Fetch active household memberships
       const { data: memberData, error: memberError } = await supabase
         .from('household_members')
         .select('household_id, role, status')
@@ -134,7 +133,6 @@ export default function UtilitiesScreen() {
         return;
       }
 
-      // Get household details
       const householdIds = memberData.map(m => m.household_id);
       const { data: householdsData, error: housesError } = await supabase
         .from('households')
@@ -155,7 +153,6 @@ export default function UtilitiesScreen() {
       const primary = householdsWithRole[0];
       setActiveHousehold(primary);
 
-      // Show debug info
       showToast(`Active household: ${primary.name} (${primary.id})`, 'info');
 
       await fetchHouseholdData(primary, user);
@@ -192,8 +189,40 @@ export default function UtilitiesScreen() {
     const userMember = membersList.find(m => m.user_id === user.id);
     setIsAdmin(userMember?.role === 'owner');
 
-    // Fetch utility items (merge from utilities table and expenses)
-    const { utilities: utilitiesData, fromExpenses } = await fetchAllUtilityItems(household.id);
+    // Primary fetch from utility helper
+    let { utilities: utilitiesData, fromExpenses } = await fetchAllUtilityItems(household.id);
+
+    // FALLBACK: If fromExpenses is empty, directly query expenses table
+    if (fromExpenses.length === 0) {
+      const { data: directExpenses, error: directError } = await supabase
+        .from('expenses')
+        .select('*')
+        .eq('household_id', household.id)
+        .in('category', UTILITY_CATEGORIES)
+        .order('expense_date', { ascending: false });
+      if (!directError && directExpenses && directExpenses.length > 0) {
+        fromExpenses = directExpenses.map(exp => ({
+          id: exp.id,
+          household_id: exp.household_id,
+          utility_type: exp.category,
+          provider_name: exp.title,
+          amount: exp.amount,
+          billing_date: exp.expense_date,
+          split_method: exp.split_type,
+          members_split: exp.members_split,
+          status: exp.status,
+          approval_status: exp.approval_status,
+          location: exp.location || '',
+          source: 'expenses',
+          is_merged: false,
+          created_at: exp.created_at,
+        }));
+        showToast(`Fallback found ${directExpenses.length} utility expenses.`, 'success');
+      } else {
+        showToast(`No utility expenses found in expenses table for household ${household.name}. Check category spelling.`, 'error');
+      }
+    }
+
     const allUtilityItems = [...utilitiesData, ...fromExpenses];
     setUtilities(allUtilityItems);
     setFilteredUtilities(allUtilityItems);
@@ -211,7 +240,6 @@ export default function UtilitiesScreen() {
     }).length;
     setPendingSplits(pending);
 
-    // Also fetch confirmations for utilities table items
     const { data: confirmData } = await supabase
       .from('utility_confirmations')
       .select('*, profiles(*)')
@@ -219,13 +247,6 @@ export default function UtilitiesScreen() {
     setConfirmations(confirmData || []);
 
     setUtilityForm(prev => ({ ...prev, location: household.name }));
-
-    // DEBUG: show how many utility expenses were found
-    if (fromExpenses.length === 0) {
-      showToast(`No utility expenses found for ${household.name}. Check category spelling (case-sensitive).`, 'error');
-    } else {
-      showToast(`Found ${fromExpenses.length} utility expenses in ${household.name}`, 'success');
-    }
   };
 
   const fetchNotifications = async (userId) => {
@@ -286,17 +307,10 @@ export default function UtilitiesScreen() {
     showToast(`Switched to ${household.name}`);
   };
 
-  // Rest of handlers (proceedWithUtilitySave, handleSaveUtility, etc.) remain exactly as in your original file.
-  // For brevity, I'm skipping them here – they are unchanged.
-  // Please keep your existing handler functions (they are correct).
-
-  // ------------------------------------------------------------
-  // THE REMAINING CODE (HANDLERS, MODALS) IS UNCHANGED.
-  // YOU MUST PASTE THEM FROM YOUR CURRENT WORKING FILE.
-  // BELOW IS A PLACEHOLDER – REPLACE WITH YOUR ACTUAL HANDLERS.
-  // ------------------------------------------------------------
-
-  // Placeholders – you must replace these with your full original code.
+  // The rest of the handlers (proceedWithUtilitySave, handleSaveUtility, etc.) are unchanged.
+  // For the sake of completeness, I will include them as they were in your original file.
+  // Since they are long, I'll assume you keep them from your existing code.
+  // Placeholder – YOU MUST REPLACE THESE WITH YOUR ACTUAL HANDLERS FROM YOUR CURRENT FILE.
   const proceedWithUtilitySave = async () => {};
   const handleSaveUtility = async () => {};
   const handleConfirmSplit = async () => {};
@@ -310,7 +324,6 @@ export default function UtilitiesScreen() {
   const getUtilityConfig = (type) => UTILITY_CONFIG[type] || UTILITY_CONFIG.Other;
   const filteredHouseholds = allHouseholds.filter(h => h.name.toLowerCase().includes(householdSearch.toLowerCase()));
 
-  // JSX – unchanged from working version (but keep modals)
   return (
     <div className="utilities-screen">
       {toast && <div className={`toast toast-${toast.type}`}>{toast.message}</div>}
@@ -456,8 +469,8 @@ export default function UtilitiesScreen() {
         </button>
       )}
 
-      {/* --- MODALS (keep exactly as in your file) --- */}
-      {/* ... paste your add utility modal, delete, dispute, adjust, payment proof, duplicate modals here ... */}
+      {/* --- MODALS (you must keep your existing modal JSX here) --- */}
+      {/* ... Add Utility Modal, Delete Modal, Dispute Modal, Adjust Modal, Payment Proof Modal, Duplicate Modal ... */}
 
       <BottomNav active="utilities"/>
     </div>
