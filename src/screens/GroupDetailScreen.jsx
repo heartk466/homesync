@@ -22,7 +22,7 @@ export default function GroupDetailScreen() {
   const { id } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const contextType = location.state?.type || 'group';
+  const contextType = location.state?.type || new URLSearchParams(location.search).get('type') || 'group';
 
   const searchParams = new URLSearchParams(location.search);
   const openProofExpenseId = searchParams.get('openProof');
@@ -238,6 +238,18 @@ useEffect(() => {
     const proofsData = proofsResult.data || [];
     setAllPaymentProofs(proofsData);
 
+    // Fetch pending expense approvals for owner
+if (isAdmin) {
+  const { data: pendingExp } = await supabase
+    .from('expenses')
+    .select('*, profiles:created_by(id, full_name, avatar_url)')
+    .eq(contextType === 'household' ? 'household_id' : 'group_id', id)
+    .eq('approval_status', 'pending_approval');
+  setPendingExpenseApprovals(pendingExp || []);
+} else {
+  setPendingExpenseApprovals([]);
+}
+
     // Compute pending approvals
     const pending = [];
     for (const exp of expenses) {
@@ -414,7 +426,7 @@ useEffect(() => {
       title: '📋 New Expense Pending Approval',
       message: `${profile?.full_name} added "${expenseForm.title}" for ₱${Number(expenseForm.amount).toFixed(2)}. Please review.`,
       type: 'approval_request',
-      link_path: `/groups/${id}`,
+      link_path: `/groups/${id}?type=${contextType}`,
       link_state: JSON.stringify({ type: contextType }),
     });
 
@@ -460,7 +472,7 @@ const handleApproveExpense = async (expense) => {
     title: '✅ Expense Approved!',
     message: `Your expense "${expense.title}" for ₱${Number(expense.amount).toFixed(2)} was approved by the owner.`,
     type: 'expense_approved',
-    link_path: `/groups/${id}`,
+    link_path: `/groups/${id}?type=${contextType}`,
     link_state: JSON.stringify({ type: contextType }),
   });
 
@@ -482,7 +494,7 @@ const handleRejectExpense = async () => {
     title: '❌ Expense Rejected',
     message: `Your expense "${selectedPendingExpense.title}" was rejected. Reason: ${rejectExpenseReason}`,
     type: 'expense_rejected',
-    link_path: `/groups/${id}`,
+    link_path: `/groups/${id}?type=${contextType}`,
     link_state: JSON.stringify({ type: contextType }),
   });
 
@@ -683,7 +695,7 @@ const handleRejectExpense = async () => {
       title: isResubmit ? '📸 Payment Proof Resubmitted' : '📸 Payment Proof Submitted',
       message: `${profile?.full_name} ${isResubmit ? 'resubmitted' : 'submitted'} proof for "${selectedExpense.title}". Tap to review.`,
       type: 'payment_proof',
-      link_path: `/groups/${id}`,
+      link_path: `/groups/${id}?type=${contextType}`,
       link_state: JSON.stringify({ type: contextType }),
       link_query: `openProof=${selectedExpense.id}&proofId=${insertedProof.id}`,
     });
@@ -712,7 +724,7 @@ const handleRejectExpense = async () => {
   title: '✅ Owner approved your proof!',
   message: `The owner has approved your payment proof for "${expenses.find(e => e.id === split.expense_id)?.title}". Your payment is now marked as paid.`,
   type: 'payment_confirmed',
-  link_path: `/groups/${id}`,
+  link_path: `/groups/${id}?type=${contextType}`,
   link_state: JSON.stringify({ type: contextType }),
   link_query: `openProof=${split.expense_id}&proofId=${proof.id}`,
 });
@@ -765,7 +777,7 @@ const handleRejectExpense = async () => {
         title: '✅ Payment Confirmed by Owner',
         message: `The owner has confirmed payment for "${selectedExpense.title}". Tap to view proof.`,
         type: 'payment_confirmed',
-        link_path: `/groups/${id}`,
+        link_path: `/groups/${id}?type=${contextType}`,
         link_state: JSON.stringify({ type: contextType }),
         link_query: `openProof=${selectedExpense.id}&proofId=${insertedProof.id}`,
       });
@@ -798,7 +810,7 @@ const handleRejectExpense = async () => {
       title: '❌ Payment Proof Rejected',
       message: `Your payment proof was rejected. Reason: ${rejectProofReason}`,
       type: 'payment_rejected',
-      link_path: `/groups/${id}`,
+      link_path: `/groups/${id}?type=${contextType}`,
       link_state: JSON.stringify({ type: contextType }),
       link_query: `openProof=${selectedProof.expense_id}&proofId=${selectedProof.id}`,
     });
