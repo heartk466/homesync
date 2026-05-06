@@ -193,12 +193,22 @@ setExpenses(allExpenses.filter(e => e.approval_status === 'approved'));
 
      // Fetch pending expense approvals for owner
 if (adminStatus) {
-  const { data: pendingExp } = await supabase
+  const { data: pendingExp, error: pendingErr } = await supabase
     .from('expenses')
-    .select('*, profiles:created_by(id, full_name, avatar_url)')
+    .select('*')
     .eq(contextType === 'household' ? 'household_id' : 'group_id', id)
     .eq('approval_status', 'pending_approval');
-  setPendingExpenseApprovals(pendingExp || []);
+
+  if (pendingExp && pendingExp.length > 0) {
+    // Enrich with creator profiles using the profilesMap we already have
+    const enriched = pendingExp.map(exp => ({
+      ...exp,
+      profiles: profilesMap[exp.created_by] || { full_name: 'Unknown', avatar_url: null }
+    }));
+    setPendingExpenseApprovals(enriched);
+  } else {
+    setPendingExpenseApprovals([]);
+  }
 } else {
   setPendingExpenseApprovals([]);
 }
