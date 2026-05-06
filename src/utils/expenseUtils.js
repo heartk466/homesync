@@ -11,32 +11,28 @@ export async function fetchAllHouseholdExpenses(householdId) {
     .select('*')
     .eq('household_id', householdId)
     .order('expense_date', { ascending: false });
-  if (error) {
-    console.error(error);
-    return [];
-  }
+  if (error) return [];
   return data;
 }
 
 export async function fetchAllUtilityItems(householdId) {
-  // Fetch utilities from utilities table
+  if (!householdId) return { utilities: [], fromExpenses: [] };
+
   const { data: utilities, error: utilsError } = await supabase
     .from('utilities')
     .select('*')
     .eq('household_id', householdId)
     .order('billing_date', { ascending: false });
-  if (utilsError) console.error(utilsError);
+  if (utilsError) return { utilities: [], fromExpenses: [] };
 
-  // Fetch ALL expenses that are utility categories (no status/approval filters)
   const { data: expenses, error: expError } = await supabase
     .from('expenses')
     .select('*')
     .eq('household_id', householdId)
     .in('category', UTILITY_CATEGORIES)
     .order('expense_date', { ascending: false });
-  if (expError) console.error(expError);
+  if (expError) return { utilities: utilities || [], fromExpenses: [] };
 
-  // Convert expenses to utility‑like objects, including approval_status
   const fromExpenses = (expenses || []).map(exp => ({
     id: exp.id,
     household_id: exp.household_id,
@@ -47,8 +43,8 @@ export async function fetchAllUtilityItems(householdId) {
     split_method: exp.split_type,
     members_split: exp.members_split,
     status: exp.status,
-    approval_status: exp.approval_status,   // ← added for pending count
-    location: exp.location,
+    approval_status: exp.approval_status,
+    location: exp.location || '',
     source: 'expenses',
     is_merged: exp.is_merged || false,
     created_at: exp.created_at,
@@ -64,10 +60,7 @@ export async function fetchHouseholdUtilitiesTotal(householdId) {
     .select('amount')
     .eq('household_id', householdId)
     .eq('status', 'paid');
-  if (error) {
-    console.error(error);
-    return 0;
-  }
+  if (error) return 0;
   return (data || []).reduce((sum, u) => sum + Number(u.amount), 0);
 }
 
@@ -95,7 +88,7 @@ export async function checkDuplicate(householdId, category, amount, date) {
 }
 
 export async function mergeItems(duplicateId, newId) {
-  console.log('Merging', duplicateId, newId);
+  // Implement merge logic if needed
   return true;
 }
 

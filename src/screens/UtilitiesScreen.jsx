@@ -120,7 +120,6 @@ export default function UtilitiesScreen() {
         .single();
       setProfile(profileData);
 
-      // Fetch ALL households user belongs to
       const { data: memberData } = await supabase
         .from('household_members')
         .select('*, households(*)')
@@ -132,68 +131,54 @@ export default function UtilitiesScreen() {
       })) || [];
       setAllHouseholds(households);
 
-      // Set active household to primary
-      const primary = households.find(h => h.id === profileData.household_id)
-        || households[0];
+      const primary = households.find(h => h.id === profileData.household_id) || households[0];
       setActiveHousehold(primary);
 
       await fetchHouseholdData(primary, user);
       await fetchNotifications(user.id);
-
     } catch (err) {
       console.error(err);
     }
   };
 
   const fetchHouseholdData = async (household, user) => {
-  if (!household) return;
+    if (!household) return;
 
-  // Fetch members
-  const { data: members } = await supabase
-    .from('household_members')
-    .select('*, profiles(*)')
-    .eq('household_id', household.id);
-  setHouseholdMembers(members || []);
+    const { data: members } = await supabase
+      .from('household_members')
+      .select('*, profiles(*)')
+      .eq('household_id', household.id);
+    setHouseholdMembers(members || []);
 
-  const userMember = members?.find(m => m.user_id === user.id);
-  setIsAdmin(userMember?.role === 'owner');
+    const userMember = members?.find(m => m.user_id === user.id);
+    setIsAdmin(userMember?.role === 'owner');
 
-  // Fetch both utility‑specific items and expense‑based utility items
-  const { utilities: utilitiesData, fromExpenses } = await fetchAllUtilityItems(household.id);
-  const allUtilityItems = [...utilitiesData, ...fromExpenses];
-  setUtilities(allUtilityItems);
-  setFilteredUtilities(allUtilityItems);
+    const { utilities: utilitiesData, fromExpenses } = await fetchAllUtilityItems(household.id);
+    const allUtilityItems = [...utilitiesData, ...fromExpenses];
+    setUtilities(allUtilityItems);
+    setFilteredUtilities(allUtilityItems);
 
-  // --- FIXED SUMMARY CARDS ---
-  // 1. Connected Utility Providers = total number of utility items
-  setProviderCount(allUtilityItems.length);
+    setProviderCount(allUtilityItems.length);
+    const active = allUtilityItems.filter(u => u.status !== 'paid').length || 0;
+    setActiveSubscriptions(active);
 
-  // 2. Active Utility Subscription = items not yet paid (keep existing logic)
-  const active = allUtilityItems.filter(u => u.status !== 'paid').length || 0;
-  setActiveSubscriptions(active);
+    const pending = allUtilityItems.filter(item => {
+      if (item.source === 'expenses') {
+        return item.approval_status !== 'approved';
+      } else {
+        return item.status !== 'paid';
+      }
+    }).length;
+    setPendingSplits(pending);
 
-  // 3. Pending Split Approvals = count of items that are not owner‑approved
-  //    For expenses: approval_status !== 'approved'
-  //    For utilities: status !== 'paid'
-  const pending = allUtilityItems.filter(item => {
-    if (item.source === 'expenses') {
-      return item.approval_status !== 'approved';
-    } else {
-      return item.status !== 'paid';
-    }
-  }).length;
-  setPendingSplits(pending);
+    const { data: confirmData } = await supabase
+      .from('utility_confirmations')
+      .select('*, profiles(*)')
+      .in('utility_id', utilitiesData?.map(u => u.id) || []);
+    setConfirmations(confirmData || []);
 
-  // Fetch confirmations (for utilities table items)
-  const { data: confirmData } = await supabase
-    .from('utility_confirmations')
-    .select('*, profiles(*)')
-    .in('utility_id', utilitiesData?.map(u => u.id) || []);
-  setConfirmations(confirmData || []);
-
-  // Set form location
-  setUtilityForm(prev => ({ ...prev, location: household.name }));
-};
+    setUtilityForm(prev => ({ ...prev, location: household.name }));
+  };
 
   const fetchNotifications = async (userId) => {
     const { data } = await supabase
@@ -216,35 +201,26 @@ export default function UtilitiesScreen() {
     setUnreadCount(0);
   };
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     fetchData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Realtime
   useEffect(() => {
     if (!currentUser || !activeHousehold) return;
     const channel = supabase
       .channel('utilities-realtime')
-      .on('postgres_changes', {
-        event: '*', schema: 'public', table: 'utilities',
-      }, () => fetchHouseholdData(activeHousehold, currentUser))
-      .on('postgres_changes', {
-        event: '*', schema: 'public', table: 'utility_confirmations',
-      }, () => fetchHouseholdData(activeHousehold, currentUser))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'utilities' }, () => fetchHouseholdData(activeHousehold, currentUser))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'utility_confirmations' }, () => fetchHouseholdData(activeHousehold, currentUser))
       .subscribe();
     return () => supabase.removeChannel(channel);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser, activeHousehold]);
 
-  // Search & Filter
   useEffect(() => {
     let result = [...utilities];
     if (searchQuery) {
       result = result.filter(u =>
-        u.provider_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        u.utility_type.toLowerCase().includes(searchQuery.toLowerCase())
+        u.provider_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        u.utility_type?.toLowerCase().includes(searchQuery.toLowerCase())
       );
     }
     if (filterStatus.length > 0) result = result.filter(u => filterStatus.includes(u.status));
@@ -297,16 +273,13 @@ export default function UtilitiesScreen() {
       return;
     }
 
-    // Create confirmations for each member
     const confirmInserts = utilityForm.selected_members.map(uid => ({
       utility_id: newUtility.id,
       user_id: uid,
       status: uid === currentUser.id ? 'confirmed' : 'pending',
     }));
-
     await supabase.from('utility_confirmations').insert(confirmInserts);
 
-    // Notify members
     const notifInserts = utilityForm.selected_members
       .filter(uid => uid !== currentUser.id)
       .map(uid => ({
@@ -315,7 +288,6 @@ export default function UtilitiesScreen() {
         message: `${profile?.full_name} added ${utilityForm.utility_type} bill of ₱${utilityForm.amount}. Please confirm your share.`,
         type: 'utility_confirmation',
       }));
-
     if (notifInserts.length > 0) {
       await supabase.from('notifications').insert(notifInserts);
     }
@@ -339,8 +311,6 @@ export default function UtilitiesScreen() {
     }
 
     setLoading(true);
-
-    // Check for duplicates
     const dupes = await checkDuplicate(
       activeHousehold.id,
       utilityForm.utility_type,
@@ -359,10 +329,7 @@ export default function UtilitiesScreen() {
   };
 
   const handleConfirmSplit = async (utility) => {
-    const existing = confirmations.find(
-      c => c.utility_id === utility.id && c.user_id === currentUser.id
-    );
-
+    const existing = confirmations.find(c => c.utility_id === utility.id && c.user_id === currentUser.id);
     if (existing) {
       await supabase
         .from('utility_confirmations')
@@ -376,14 +343,12 @@ export default function UtilitiesScreen() {
         confirmed_at: new Date().toISOString(),
       });
     }
-
     await supabase.from('notifications').insert({
       user_id: utility.created_by,
       title: 'Split Confirmed ✅',
       message: `${profile?.full_name} confirmed their share for ${utility.utility_type} bill.`,
       type: 'split_confirmed',
     });
-
     showToast('Split confirmed! ✅');
   };
 
@@ -393,10 +358,7 @@ export default function UtilitiesScreen() {
       return;
     }
 
-    const existing = confirmations.find(
-      c => c.utility_id === selectedUtility.id && c.user_id === currentUser.id
-    );
-
+    const existing = confirmations.find(c => c.utility_id === selectedUtility.id && c.user_id === currentUser.id);
     if (existing) {
       await supabase
         .from('utility_confirmations')
@@ -410,14 +372,12 @@ export default function UtilitiesScreen() {
         dispute_reason: disputeReason,
       });
     }
-
     await supabase.from('notifications').insert({
       user_id: selectedUtility.created_by,
       title: 'Split Disputed ⚠️',
       message: `${profile?.full_name} disputed their share. Reason: ${disputeReason}`,
       type: 'split_disputed',
     });
-
     setShowDisputeModal(false);
     setDisputeReason('');
     setSelectedUtility(null);
@@ -426,23 +386,11 @@ export default function UtilitiesScreen() {
 
   const handleAdjustSplit = async () => {
     const newSplits = { ...selectedUtility.members_split, ...adjustedSplits };
+    await supabase.from('utilities').update({ members_split: newSplits }).eq('id', selectedUtility.id);
 
-    await supabase
-      .from('utilities')
-      .update({ members_split: newSplits })
-      .eq('id', selectedUtility.id);
-
-    // Reset disputed confirmations to pending
-    const disputedConfs = confirmations.filter(
-      c => c.utility_id === selectedUtility.id && c.status === 'disputed'
-    );
-
+    const disputedConfs = confirmations.filter(c => c.utility_id === selectedUtility.id && c.status === 'disputed');
     for (const conf of disputedConfs) {
-      await supabase
-        .from('utility_confirmations')
-        .update({ status: 'pending', dispute_reason: null })
-        .eq('id', conf.id);
-
+      await supabase.from('utility_confirmations').update({ status: 'pending', dispute_reason: null }).eq('id', conf.id);
       await supabase.from('notifications').insert({
         user_id: conf.user_id,
         title: 'Split Adjusted 🔄',
@@ -450,7 +398,6 @@ export default function UtilitiesScreen() {
         type: 'split_adjusted',
       });
     }
-
     setShowAdjustModal(false);
     setAdjustedSplits({});
     setSelectedUtility(null);
@@ -494,21 +441,12 @@ export default function UtilitiesScreen() {
     return confirmations.filter(c => c.utility_id === utility.id && c.status === 'disputed');
   };
 
-  const filteredHouseholds = allHouseholds.filter(h =>
-    h.name.toLowerCase().includes(householdSearch.toLowerCase())
-  );
-
+  const filteredHouseholds = allHouseholds.filter(h => h.name.toLowerCase().includes(householdSearch.toLowerCase()));
   const getUtilityConfig = (type) => UTILITY_CONFIG[type] || UTILITY_CONFIG.Other;
 
   return (
     <div className="utilities-screen">
-
-      {/* Toast */}
-      {toast && (
-        <div className={`toast toast-${toast.type}`}>{toast.message}</div>
-      )}
-
-      {/* TopBar */}
+      {toast && <div className={`toast toast-${toast.type}`}>{toast.message}</div>}
       <TopBar
         profile={profile}
         setProfile={setProfile}
@@ -520,44 +458,24 @@ export default function UtilitiesScreen() {
         title="HomeSync"
         showBell={true}
       />
-
-      {/* Screen Title */}
       <div className="utilities-title-section">
         <h2 className="utilities-title">Utilities Management</h2>
-        <p className="utilities-subtitle">
-          Configure and track your household Utility bill splitting and payments
-        </p>
+        <p className="utilities-subtitle">Configure and track your household Utility bill splitting and payments</p>
       </div>
 
-      {/* Household Switcher */}
       {allHouseholds.length > 1 && (
         <div className="household-switcher-wrap">
-          <button
-            className="household-switcher-pill"
-            onClick={() => setShowHouseholdSwitcher(!showHouseholdSwitcher)}
-          >
-            🏠 {activeHousehold?.name}
-            <ChevronDown size={14}/>
+          <button className="household-switcher-pill" onClick={() => setShowHouseholdSwitcher(!showHouseholdSwitcher)}>
+            🏠 {activeHousehold?.name} <ChevronDown size={14}/>
           </button>
-
           {showHouseholdSwitcher && (
             <div className="household-dropdown">
               <div className="household-search-wrap">
                 <Search size={13} className="household-search-icon"/>
-                <input
-                  type="text"
-                  placeholder="Search household..."
-                  value={householdSearch}
-                  onChange={e => setHouseholdSearch(e.target.value)}
-                  className="household-search-input"
-                />
+                <input type="text" placeholder="Search household..." value={householdSearch} onChange={e => setHouseholdSearch(e.target.value)} className="household-search-input" />
               </div>
               {filteredHouseholds.map(h => (
-                <button
-                  key={h.id}
-                  className={`household-option ${activeHousehold?.id === h.id ? 'active' : ''}`}
-                  onClick={() => handleSwitchHousehold(h)}
-                >
+                <button key={h.id} className={`household-option ${activeHousehold?.id === h.id ? 'active' : ''}`} onClick={() => handleSwitchHousehold(h)}>
                   <span className="household-option-name">{h.name}</span>
                   <span className="household-option-role">{h.role}</span>
                 </button>
@@ -567,70 +485,44 @@ export default function UtilitiesScreen() {
         </div>
       )}
 
-      {/* Scrollable Content */}
       <div className="utilities-content">
-
-        {/* Summary Cards */}
         <div className="utility-summary-row">
           <div className="utility-summary-card">
             <p className="summary-card-label">Connected Utility Providers</p>
             <p className="summary-card-count">{providerCount} Providers</p>
             <div className="utility-type-icons">
               {UTILITY_TYPES.slice(0, 4).map(type => (
-                <span
-                  key={type}
-                  className="utility-type-icon"
-                  style={{ background: getUtilityConfig(type).bg, color: getUtilityConfig(type).color }}
-                >
+                <span key={type} className="utility-type-icon" style={{ background: getUtilityConfig(type).bg, color: getUtilityConfig(type).color }}>
                   {getUtilityConfig(type).icon}
                 </span>
               ))}
             </div>
           </div>
-
           <div className="utility-summary-card">
             <p className="summary-card-label">Active Utility Subscription</p>
             <p className="summary-card-count">{activeSubscriptions} Accounts</p>
           </div>
         </div>
-
         <div className="utility-summary-card full-width">
           <p className="summary-card-label">Pending Split Approvals</p>
           <p className="summary-card-count">{pendingSplits} Pending Splits</p>
           <div className="pending-avatars">
-            {confirmations
-              .filter(c => c.status === 'pending' || c.status === 'disputed')
-              .slice(0, 4)
-              .map((c, i) => (
-                <div key={i} className="pending-avatar">
-                  {c.profiles?.avatar_url
-                    ? <img src={c.profiles.avatar_url} alt="" className="pending-avatar-img"/>
-                    : <span>{c.profiles?.full_name?.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}</span>
-                  }
-                </div>
-              ))
-            }
+            {confirmations.filter(c => c.status === 'pending' || c.status === 'disputed').slice(0, 4).map((c, i) => (
+              <div key={i} className="pending-avatar">
+                {c.profiles?.avatar_url ? <img src={c.profiles.avatar_url} alt="" className="pending-avatar-img"/> : <span>{c.profiles?.full_name?.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}</span>}
+              </div>
+            ))}
           </div>
         </div>
 
-        {/* Search & Filter */}
         <div className="search-filter-row">
           <div className="search-input-wrap">
             <Search size={14} className="search-icon"/>
-            <input
-              type="text"
-              placeholder="Search"
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              className="search-input"
-            />
+            <input type="text" placeholder="Search" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="search-input" />
           </div>
-          <button className="filter-btn" onClick={() => setShowFilter(true)}>
-            <Filter size={14}/> Filter
-          </button>
+          <button className="filter-btn" onClick={() => setShowFilter(true)}><Filter size={14}/> Filter</button>
         </div>
 
-        {/* Utilities List */}
         {filteredUtilities.length === 0 ? (
           <div className="empty-state">
             <p>No utilities found.</p>
@@ -643,122 +535,45 @@ export default function UtilitiesScreen() {
             const myConfirmation = getMyConfirmation(utility);
             const disputedConfs = getDisputedConfirmations(utility);
             const myShare = utility.members_split?.[currentUser?.id];
-
             return (
               <div key={utility.id} className="utility-item">
-                <div
-                  className="utility-icon-wrap"
-                  style={{ background: config.bg, color: config.color }}
-                >
-                  {config.icon}
-                </div>
-
+                <div className="utility-icon-wrap" style={{ background: config.bg, color: config.color }}>{config.icon}</div>
                 <div className="utility-details">
-                  <p className="utility-name">
-                    {utility.utility_type}({utility.provider_name}): ₱{Number(utility.amount).toLocaleString('en-PH', { minimumFractionDigits: 2 })}
-                  </p>
-                  <p className="utility-meta">
-                    {utility.split_method} | {utility.billing_date} | {utility.location}
-                  </p>
-
-                  {myShare && (
-                    <p className="utility-my-share">
-                      Your share: ₱{Number(myShare).toLocaleString('en-PH', { minimumFractionDigits: 2 })}
-                    </p>
-                  )}
-
-                  {/* Member confirmation actions */}
+                  <p className="utility-name">{utility.utility_type}({utility.provider_name}): ₱{Number(utility.amount).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                  <p className="utility-meta">{utility.split_method} | {utility.billing_date} | {utility.location}</p>
+                  {myShare && <p className="utility-my-share">Your share: ₱{Number(myShare).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>}
                   {!isAdmin && utility.status !== 'paid' && (
                     <div className="confirmation-row">
                       {!myConfirmation || myConfirmation.status === 'pending' ? (
                         <>
-                          <button
-                            className="confirm-btn"
-                            onClick={() => handleConfirmSplit(utility)}
-                          >
-                            <Check size={12}/> Confirm
-                          </button>
-                          <button
-                            className="dispute-btn"
-                            onClick={() => { setSelectedUtility(utility); setShowDisputeModal(true); }}
-                          >
-                            <X size={12}/> Dispute
-                          </button>
+                          <button className="confirm-btn" onClick={() => handleConfirmSplit(utility)}><Check size={12}/> Confirm</button>
+                          <button className="dispute-btn" onClick={() => { setSelectedUtility(utility); setShowDisputeModal(true); }}><X size={12}/> Dispute</button>
                         </>
-                      ) : myConfirmation.status === 'confirmed' ? (
-                        <span className="confirmed-tag">✅ Confirmed</span>
-                      ) : myConfirmation.status === 'disputed' ? (
-                        <span className="disputed-tag">⚠️ Disputed — waiting for admin</span>
-                      ) : null}
+                      ) : myConfirmation.status === 'confirmed' ? (<span className="confirmed-tag">✅ Confirmed</span>) : myConfirmation.status === 'disputed' ? (<span className="disputed-tag">⚠️ Disputed — waiting for admin</span>) : null}
                     </div>
                   )}
-
-                  {/* Admin — disputed confirmations */}
                   {isAdmin && disputedConfs.length > 0 && (
                     <div className="disputed-section">
                       {disputedConfs.map(conf => (
                         <div key={conf.id} className="disputed-item">
-                          <span className="disputed-name">
-                            ⚠️ {conf.profiles?.full_name} disputed: "{conf.dispute_reason}"
-                          </span>
-                          <button
-                            className="adjust-btn"
-                            onClick={() => {
-                              setSelectedUtility(utility);
-                              setAdjustedSplits({ ...utility.members_split });
-                              setShowAdjustModal(true);
-                            }}
-                          >
-                            Adjust Split
-                          </button>
+                          <span className="disputed-name">⚠️ {conf.profiles?.full_name} disputed: "{conf.dispute_reason}"</span>
+                          <button className="adjust-btn" onClick={() => { setSelectedUtility(utility); setAdjustedSplits({ ...utility.members_split }); setShowAdjustModal(true); }}>Adjust Split</button>
                         </div>
                       ))}
                     </div>
                   )}
                 </div>
-
-                {/* Pay button for read-only items from expenses */}
                 {utility.source === 'expenses' && utility.status !== 'paid' && (
-                  <div className="reimburse-row">
-                    <button
-                      className="pay-btn"
-                      onClick={() => {
-                        setSelectedUtility(utility);
-                        setShowPaymentProofModal(true);
-                      }}
-                    >
-                      Pay
-                    </button>
-                  </div>
+                  <div className="reimburse-row"><button className="pay-btn" onClick={() => { setSelectedUtility(utility); setShowPaymentProofModal(true); }}>Pay</button></div>
                 )}
-
                 <div className="utility-right">
-                  <span
-                    className="status-badge"
-                    style={{ color: badge.color, background: badge.bg }}
-                  >
-                    {badge.label}
-                  </span>
-                  {utility.source === 'expenses' && (
-                    <span className="source-label">📋 From Expenses</span>
-                  )}
-                  {utility.source === 'utilities' && utility.is_merged && (
-                    <span className="source-label">🔗 Merged</span>
-                  )}
+                  <span className="status-badge" style={{ color: badge.color, background: badge.bg }}>{badge.label}</span>
+                  {utility.source === 'expenses' && <span className="source-label">📋 From Expenses</span>}
+                  {utility.source === 'utilities' && utility.is_merged && <span className="source-label">🔗 Merged</span>}
                   {isAdmin && (
                     <div className="utility-admin-actions">
-                      <button
-                        className="icon-btn"
-                        onClick={() => { setSelectedUtility(utility); setShowAddUtility(true); }}
-                      >
-                        <Edit size={14}/>
-                      </button>
-                      <button
-                        className="icon-btn delete"
-                        onClick={() => { setSelectedUtility(utility); setShowDeleteModal(true); }}
-                      >
-                        <Trash2 size={14}/>
-                      </button>
+                      <button className="icon-btn" onClick={() => { setSelectedUtility(utility); setShowAddUtility(true); }}><Edit size={14}/></button>
+                      <button className="icon-btn delete" onClick={() => { setSelectedUtility(utility); setShowDeleteModal(true); }}><Trash2 size={14}/></button>
                     </div>
                   )}
                 </div>
@@ -768,7 +583,6 @@ export default function UtilitiesScreen() {
         )}
       </div>
 
-      {/* FAB */}
       {isAdmin && (
         <button className="fab-btn" onClick={() => { setShowAddUtility(true); setActiveTab('add'); }}>
           <Plus size={24}/>
@@ -781,167 +595,86 @@ export default function UtilitiesScreen() {
           <div className="add-utility-modal">
             <div className="modal-header">
               <h2>Configure Utilities</h2>
-              <button className="modal-close" onClick={() => { setShowAddUtility(false); resetUtilityForm(); setSelectedUtility(null); }}>
-                <X size={18}/>
-              </button>
+              <button className="modal-close" onClick={() => { setShowAddUtility(false); resetUtilityForm(); setSelectedUtility(null); }}><X size={18}/></button>
             </div>
-
-            {/* Tabs */}
             <div className="utility-tabs">
-              <button
-                className={`utility-tab ${activeTab === 'add' ? 'active' : ''}`}
-                onClick={() => setActiveTab('add')}
-              >
-                Add Utility Provider
-              </button>
-              <button
-                className={`utility-tab ${activeTab === 'history' ? 'active' : ''}`}
-                onClick={() => setActiveTab('history')}
-              >
-                Track Utility History
-              </button>
+              <button className={`utility-tab ${activeTab === 'add' ? 'active' : ''}`} onClick={() => setActiveTab('add')}>Add Utility Provider</button>
+              <button className={`utility-tab ${activeTab === 'history' ? 'active' : ''}`} onClick={() => setActiveTab('history')}>Track Utility History</button>
             </div>
-
             {activeTab === 'add' ? (
               <div className="modal-scroll">
-
                 <div className="form-group">
                   <label>Select Utility Type</label>
                   <div className="select-wrap">
-                    <select
-                      value={utilityForm.utility_type}
-                      onChange={e => setUtilityForm(prev => ({ ...prev, utility_type: e.target.value }))}
-                    >
-                      {UTILITY_TYPES.map(t => (
-                        <option key={t} value={t}>{t}</option>
-                      ))}
+                    <select value={utilityForm.utility_type} onChange={e => setUtilityForm(prev => ({ ...prev, utility_type: e.target.value }))}>
+                      {UTILITY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
                     </select>
                     <ChevronDown size={14} className="select-arrow"/>
                   </div>
                 </div>
-
                 <div className="form-group">
                   <label>Utility Provider</label>
-                  <input
-                    type="text"
-                    placeholder="Utility Provider"
-                    value={utilityForm.provider_name}
-                    onChange={e => setUtilityForm(prev => ({ ...prev, provider_name: e.target.value }))}
-                    className={utilityErrors.provider_name ? 'input-error' : ''}
-                  />
+                  <input type="text" placeholder="Utility Provider" value={utilityForm.provider_name} onChange={e => setUtilityForm(prev => ({ ...prev, provider_name: e.target.value }))} className={utilityErrors.provider_name ? 'input-error' : ''} />
                   {utilityErrors.provider_name && <span className="form-error">{utilityErrors.provider_name}</span>}
                 </div>
-
                 <div className="form-group">
                   <label>Amount</label>
                   <div className="amount-input-wrap">
                     <span className="peso-sign">₱</span>
-                    <input
-                      type="number"
-                      placeholder="0.00"
-                      value={utilityForm.amount}
-                      onChange={e => setUtilityForm(prev => ({ ...prev, amount: e.target.value }))}
-                      className={utilityErrors.amount ? 'input-error' : ''}
-                    />
+                    <input type="number" placeholder="0.00" value={utilityForm.amount} onChange={e => setUtilityForm(prev => ({ ...prev, amount: e.target.value }))} className={utilityErrors.amount ? 'input-error' : ''} />
                   </div>
                   {utilityErrors.amount && <span className="form-error">{utilityErrors.amount}</span>}
                 </div>
-
                 <div className="form-group">
                   <label>Billing Date (Due Date)</label>
-                  <input
-                    type="date"
-                    value={utilityForm.billing_date}
-                    onChange={e => setUtilityForm(prev => ({ ...prev, billing_date: e.target.value }))}
-                    className={utilityErrors.billing_date ? 'input-error' : ''}
-                  />
+                  <input type="date" value={utilityForm.billing_date} onChange={e => setUtilityForm(prev => ({ ...prev, billing_date: e.target.value }))} className={utilityErrors.billing_date ? 'input-error' : ''} />
                   {utilityErrors.billing_date && <span className="form-error">{utilityErrors.billing_date}</span>}
                 </div>
-
                 <div className="form-group">
                   <label>Reminder (days before due date)</label>
                   <div className="reminder-options">
                     {REMINDER_OPTIONS.map(days => (
-                      <button
-                        key={days}
-                        className={`reminder-btn ${utilityForm.reminder_days === days ? 'active' : ''}`}
-                        onClick={() => setUtilityForm(prev => ({ ...prev, reminder_days: days }))}
-                      >
-                        {days} days
-                      </button>
+                      <button key={days} className={`reminder-btn ${utilityForm.reminder_days === days ? 'active' : ''}`} onClick={() => setUtilityForm(prev => ({ ...prev, reminder_days: days }))}>{days} days</button>
                     ))}
-                    <input
-                      type="number"
-                      placeholder="Custom"
-                      className="reminder-custom"
-                      value={![3, 5, 7, 14].includes(utilityForm.reminder_days) ? utilityForm.reminder_days : ''}
-                      onChange={e => setUtilityForm(prev => ({ ...prev, reminder_days: Number(e.target.value) }))}
-                    />
+                    <input type="number" placeholder="Custom" className="reminder-custom" value={![3,5,7,14].includes(utilityForm.reminder_days) ? utilityForm.reminder_days : ''} onChange={e => setUtilityForm(prev => ({ ...prev, reminder_days: Number(e.target.value) }))} />
                   </div>
                 </div>
-
                 <div className="form-group">
                   <label>Split Method</label>
                   <div className="select-wrap">
-                    <select
-                      value={utilityForm.split_method}
-                      onChange={e => setUtilityForm(prev => ({ ...prev, split_method: e.target.value }))}
-                    >
-                      {SPLIT_METHODS.map(m => (
-                        <option key={m} value={m}>{m}</option>
-                      ))}
+                    <select value={utilityForm.split_method} onChange={e => setUtilityForm(prev => ({ ...prev, split_method: e.target.value }))}>
+                      {SPLIT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
                     </select>
                     <ChevronDown size={14} className="select-arrow"/>
                   </div>
                 </div>
-
                 <div className="form-group">
                   <label>Split Group</label>
                   <div className="select-wrap">
-                    <select value={utilityForm.location}
-                      onChange={e => setUtilityForm(prev => ({ ...prev, location: e.target.value }))}>
-                      {allHouseholds.map(h => (
-                        <option key={h.id} value={h.name}>{h.name}</option>
-                      ))}
+                    <select value={utilityForm.location} onChange={e => setUtilityForm(prev => ({ ...prev, location: e.target.value }))}>
+                      {allHouseholds.map(h => <option key={h.id} value={h.name}>{h.name}</option>)}
                     </select>
                     <ChevronDown size={14} className="select-arrow"/>
                   </div>
                 </div>
-
                 <div className="form-group">
                   <label>Add Members to Split</label>
                   {utilityErrors.members && <span className="form-error">{utilityErrors.members}</span>}
                   <div className="members-select">
                     {householdMembers.map(m => (
                       <label key={m.user_id} className="member-checkbox">
-                        <input
-                          type="checkbox"
-                          checked={utilityForm.selected_members.includes(m.user_id)}
-                          onChange={e => {
-                            if (e.target.checked) {
-                              setUtilityForm(prev => ({
-                                ...prev,
-                                selected_members: [...prev.selected_members, m.user_id]
-                              }));
-                            } else {
-                              setUtilityForm(prev => ({
-                                ...prev,
-                                selected_members: prev.selected_members.filter(id => id !== m.user_id)
-                              }));
-                            }
-                          }}
-                        />
+                        <input type="checkbox" checked={utilityForm.selected_members.includes(m.user_id)} onChange={e => {
+                          if (e.target.checked) setUtilityForm(prev => ({ ...prev, selected_members: [...prev.selected_members, m.user_id] }));
+                          else setUtilityForm(prev => ({ ...prev, selected_members: prev.selected_members.filter(id => id !== m.user_id) }));
+                        }} />
                         {m.profiles?.full_name}
                       </label>
                     ))}
                   </div>
                 </div>
-
                 {(utilityForm.split_method === 'By Member' || utilityForm.split_method === 'Usage Based') && (
                   <div className="form-group">
-                    <label>
-                      {utilityForm.split_method === 'Usage Based' ? 'Usage Amount per Member' : 'Custom Amount per Member'}
-                    </label>
+                    <label>{utilityForm.split_method === 'Usage Based' ? 'Usage Amount per Member' : 'Custom Amount per Member'}</label>
                     {utilityForm.selected_members.map(uid => {
                       const member = householdMembers.find(m => m.user_id === uid);
                       return (
@@ -949,64 +682,34 @@ export default function UtilitiesScreen() {
                           <span>{member?.profiles?.full_name}</span>
                           <div className="amount-input-wrap small">
                             <span className="peso-sign">₱</span>
-                            <input
-                              type="number"
-                              placeholder="0.00"
-                              value={utilityForm.custom_splits[uid] || ''}
-                              onChange={e => setUtilityForm(prev => ({
-                                ...prev,
-                                custom_splits: { ...prev.custom_splits, [uid]: e.target.value }
-                              }))}
-                            />
+                            <input type="number" placeholder="0.00" value={utilityForm.custom_splits[uid] || ''} onChange={e => setUtilityForm(prev => ({ ...prev, custom_splits: { ...prev.custom_splits, [uid]: e.target.value } }))} />
                           </div>
                         </div>
                       );
                     })}
                   </div>
                 )}
-
-                <button
-                  className="save-config-btn"
-                  onClick={handleSaveUtility}
-                  disabled={loading}
-                >
-                  {loading ? 'Saving...' : 'Save Configuration'}
-                </button>
-
+                <button className="save-config-btn" onClick={handleSaveUtility} disabled={loading}>{loading ? 'Saving...' : 'Save Configuration'}</button>
               </div>
             ) : (
-              /* Track Utility History Tab */
               <div className="modal-scroll">
                 <p className="history-section-title">Past Utility Bills</p>
                 {utilities.filter(u => u.status === 'paid').length === 0 ? (
                   <p className="no-history">No paid utility bills yet.</p>
                 ) : (
-                  utilities
-                    .filter(u => u.status === 'paid')
-                    .map(u => {
-                      const config = getUtilityConfig(u.utility_type);
-                      return (
-                        <div key={u.id} className="history-item">
-                          <div
-                            className="utility-icon-wrap small"
-                            style={{ background: config.bg, color: config.color }}
-                          >
-                            {config.icon}
-                          </div>
-                          <div className="history-details">
-                            <p className="history-name">
-                              {u.utility_type}({u.provider_name})
-                            </p>
-                            <p className="history-meta">
-                              {u.billing_date} | {u.split_method}
-                            </p>
-                          </div>
-                          <p className="history-amount">
-                            ₱{Number(u.amount).toLocaleString('en-PH', { minimumFractionDigits: 2 })}
-                          </p>
+                  utilities.filter(u => u.status === 'paid').map(u => {
+                    const config = getUtilityConfig(u.utility_type);
+                    return (
+                      <div key={u.id} className="history-item">
+                        <div className="utility-icon-wrap small" style={{ background: config.bg, color: config.color }}>{config.icon}</div>
+                        <div className="history-details">
+                          <p className="history-name">{u.utility_type}({u.provider_name})</p>
+                          <p className="history-meta">{u.billing_date} | {u.split_method}</p>
                         </div>
-                      );
-                    })
+                        <p className="history-amount">₱{Number(u.amount).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                      </div>
+                    );
+                  })
                 )}
               </div>
             )}
@@ -1021,12 +724,8 @@ export default function UtilitiesScreen() {
             <AlertCircle size={40} color="#e53e3e"/>
             <h2>Delete Utility?</h2>
             <p className="modal-subtitle">This action cannot be undone.</p>
-            <button className="delete-confirm-btn" onClick={handleDeleteUtility}>
-              Yes, Delete
-            </button>
-            <button className="cancel-btn" onClick={() => setShowDeleteModal(false)}>
-              Cancel
-            </button>
+            <button className="delete-confirm-btn" onClick={handleDeleteUtility}>Yes, Delete</button>
+            <button className="cancel-btn" onClick={() => setShowDeleteModal(false)}>Cancel</button>
           </div>
         </div>
       )}
@@ -1037,18 +736,9 @@ export default function UtilitiesScreen() {
           <div className="small-modal">
             <h2>Dispute Split</h2>
             <p className="modal-subtitle">Tell admin why you disagree with this split</p>
-            <textarea
-              className="reject-textarea"
-              placeholder="Enter your reason..."
-              value={disputeReason}
-              onChange={e => setDisputeReason(e.target.value)}
-            />
-            <button className="save-config-btn" onClick={handleDisputeSplit}>
-              Submit Dispute
-            </button>
-            <button className="cancel-btn" onClick={() => { setShowDisputeModal(false); setDisputeReason(''); }}>
-              Cancel
-            </button>
+            <textarea className="reject-textarea" placeholder="Enter your reason..." value={disputeReason} onChange={e => setDisputeReason(e.target.value)} />
+            <button className="save-config-btn" onClick={handleDisputeSplit}>Submit Dispute</button>
+            <button className="cancel-btn" onClick={() => { setShowDisputeModal(false); setDisputeReason(''); }}>Cancel</button>
           </div>
         </div>
       )}
@@ -1066,42 +756,19 @@ export default function UtilitiesScreen() {
                   <span>{member?.profiles?.full_name}</span>
                   <div className="amount-input-wrap small">
                     <span className="peso-sign">₱</span>
-                    <input
-                      type="number"
-                      value={amount}
-                      onChange={e => setAdjustedSplits(prev => ({ ...prev, [uid]: e.target.value }))}
-                    />
+                    <input type="number" value={amount} onChange={e => setAdjustedSplits(prev => ({ ...prev, [uid]: e.target.value }))} />
                   </div>
                 </div>
               );
             })}
-            <button className="save-config-btn" onClick={handleAdjustSplit}>
-              Save Adjusted Split
-            </button>
-            <button className="cancel-btn" onClick={() => setShowAdjustModal(false)}>
-              Cancel
-            </button>
+            <button className="save-config-btn" onClick={handleAdjustSplit}>Save Adjusted Split</button>
+            <button className="cancel-btn" onClick={() => setShowAdjustModal(false)}>Cancel</button>
           </div>
         </div>
       )}
 
       {/* Hidden proof input */}
-      <input
-        type="file"
-        ref={proofInputRef}
-        style={{ display: 'none' }}
-        accept="image/*"
-        onChange={e => {
-          const file = e.target.files[0];
-          if (file) {
-            setProofForm(prev => ({
-              ...prev,
-              screenshot: file,
-              screenshotPreview: URL.createObjectURL(file),
-            }));
-          }
-        }}
-      />
+      <input type="file" ref={proofInputRef} style={{ display: 'none' }} accept="image/*" onChange={e => { const file = e.target.files[0]; if (file) setProofForm(prev => ({ ...prev, screenshot: file, screenshotPreview: URL.createObjectURL(file) })); }} />
 
       {/* Payment Proof Modal */}
       {showPaymentProofModal && (
@@ -1109,71 +776,33 @@ export default function UtilitiesScreen() {
           <div className="small-modal">
             <h2>Submit Payment Proof</h2>
             <p className="modal-subtitle">Upload your GCash/bank screenshot</p>
-            {proofForm.screenshotPreview && (
-              <img src={proofForm.screenshotPreview} alt="proof" className="proof-preview"/>
-            )}
-            <button
-              className="save-config-btn"
-              style={{ background: '#F0EDFF', color: '#3B2AAB', marginTop: 0 }}
-              onClick={() => proofInputRef.current.click()}
-            >
+            {proofForm.screenshotPreview && <img src={proofForm.screenshotPreview} alt="proof" className="proof-preview"/>}
+            <button className="save-config-btn" style={{ background: '#F0EDFF', color: '#3B2AAB', marginTop: 0 }} onClick={() => proofInputRef.current.click()}>
               📷 {proofForm.screenshot ? 'Change Screenshot' : 'Upload Screenshot'}
             </button>
-            <textarea
-              className="reject-textarea"
-              placeholder="Optional note (e.g. GCash ref# 12345)"
-              value={proofForm.note}
-              onChange={e => setProofForm(prev => ({ ...prev, note: e.target.value }))}
-            />
-            <button
-              className="save-config-btn"
-              onClick={async () => {
-                if (!proofForm.screenshot) {
-                  showToast('Please upload a screenshot.', 'error');
-                  return;
-                }
-                setLoading(true);
-                const fileExt = proofForm.screenshot.name.split('.').pop();
-                const fileName = `${currentUser.id}-${selectedUtility.id}.${fileExt}`;
-                const { error: uploadError } = await supabase.storage
-                  .from('payment-proofs')
-                  .upload(fileName, proofForm.screenshot, { upsert: true });
-                if (uploadError) {
-                  showToast('Upload failed.', 'error');
-                  setLoading(false);
-                  return;
-                }
-                const { data: urlData } = supabase.storage
-                  .from('payment-proofs')
-                  .getPublicUrl(fileName);
-                await markItemAsPaid(
-                  selectedUtility,
-                  urlData.publicUrl,
-                  proofForm.note,
-                  currentUser.id
-                );
-                await supabase.from('notifications').insert({
-                  user_id: activeHousehold?.created_by,
-                  title: 'Payment Proof Submitted 📸',
-                  message: `${profile?.full_name} submitted payment proof for "${selectedUtility.title || selectedUtility.utility_type}"`,
-                  type: 'payment_proof',
-                });
-                setShowPaymentProofModal(false);
-                setProofForm({ note: '', screenshot: null, screenshotPreview: null });
-                setSelectedUtility(null);
-                showToast('Payment proof submitted! ⏳');
-                setLoading(false);
-              }}
-              disabled={loading}
-            >
-              {loading ? 'Submitting...' : 'Submit for Verification'}
-            </button>
-            <button className="cancel-btn" onClick={() => {
+            <textarea className="reject-textarea" placeholder="Optional note (e.g. GCash ref# 12345)" value={proofForm.note} onChange={e => setProofForm(prev => ({ ...prev, note: e.target.value }))} />
+            <button className="save-config-btn" onClick={async () => {
+              if (!proofForm.screenshot) { showToast('Please upload a screenshot.', 'error'); return; }
+              setLoading(true);
+              const fileExt = proofForm.screenshot.name.split('.').pop();
+              const fileName = `${currentUser.id}-${selectedUtility.id}.${fileExt}`;
+              const { error: uploadError } = await supabase.storage.from('payment-proofs').upload(fileName, proofForm.screenshot, { upsert: true });
+              if (uploadError) { showToast('Upload failed.', 'error'); setLoading(false); return; }
+              const { data: urlData } = supabase.storage.from('payment-proofs').getPublicUrl(fileName);
+              await markItemAsPaid(selectedUtility, urlData.publicUrl, proofForm.note, currentUser.id);
+              await supabase.from('notifications').insert({
+                user_id: activeHousehold?.created_by,
+                title: 'Payment Proof Submitted 📸',
+                message: `${profile?.full_name} submitted payment proof for "${selectedUtility.title || selectedUtility.utility_type}"`,
+                type: 'payment_proof',
+              });
               setShowPaymentProofModal(false);
               setProofForm({ note: '', screenshot: null, screenshotPreview: null });
-            }}>
-              Cancel
-            </button>
+              setSelectedUtility(null);
+              showToast('Payment proof submitted! ⏳');
+              setLoading(false);
+            }} disabled={loading}>{loading ? 'Submitting...' : 'Submit for Verification'}</button>
+            <button className="cancel-btn" onClick={() => { setShowPaymentProofModal(false); setProofForm({ note: '', screenshot: null, screenshotPreview: null }); }}>Cancel</button>
           </div>
         </div>
       )}
@@ -1189,28 +818,16 @@ export default function UtilitiesScreen() {
               ₱{Number(duplicateItem.amount).toLocaleString('en-PH', { minimumFractionDigits: 2 })}"
             </p>
             <p className="modal-subtitle">Would you like to merge this with the existing entry?</p>
-            <button
-              className="save-config-btn"
-              onClick={async () => {
-                if (duplicateItem.source === 'expenses') {
-                  await mergeItems(duplicateItem.id, null);
-                }
-                setShowDuplicateModal(false);
-                showToast('Items merged! ✅');
-              }}
-            >
-              Yes, Merge
-            </button>
-            <button
-              className="cancel-btn"
-              onClick={async () => {
-                setShowDuplicateModal(false);
-                setLoading(true);
-                await proceedWithUtilitySave();
-              }}
-            >
-              No, Keep Separate
-            </button>
+            <button className="save-config-btn" onClick={async () => {
+              if (duplicateItem.source === 'expenses') { await mergeItems(duplicateItem.id, null); }
+              setShowDuplicateModal(false);
+              showToast('Items merged! ✅');
+            }}>Yes, Merge</button>
+            <button className="cancel-btn" onClick={async () => {
+              setShowDuplicateModal(false);
+              setLoading(true);
+              await proceedWithUtilitySave();
+            }}>No, Keep Separate</button>
           </div>
         </div>
       )}
