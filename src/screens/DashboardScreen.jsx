@@ -177,13 +177,13 @@ export default function DashboardScreen() {
       setProfile(profileData);
       if (profileData?.avatar_url) setAvatarUrl(profileData.avatar_url);
 
-      // --- FIX: Get the user's active household from household_members ---
+      // Get user's active household from household_members
       const { data: memberHouseholds } = await supabase
         .from('household_members')
         .select('household_id')
         .eq('user_id', user.id)
         .eq('status', 'active')
-        .limit(1);  // pick the first one (dashboard only shows one household)
+        .limit(1);
 
       let householdData = null;
       if (memberHouseholds && memberHouseholds.length > 0) {
@@ -196,7 +196,6 @@ export default function DashboardScreen() {
         setHousehold(householdData);
       }
 
-      // If no household found, show empty dashboard (no data)
       if (!householdData) {
         setTotalSpent(0);
         setUtilitiesTotal(0);
@@ -213,7 +212,7 @@ export default function DashboardScreen() {
       const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().split('T')[0];
       const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0).toISOString().split('T')[0];
 
-      // Fetch expenses for this specific household
+      // Fetch household expenses
       const allExpenses = await fetchAllHouseholdExpenses(householdData.id);
       const expenseIds = allExpenses.map(e => e.id);
       const splitsByExpense = await fetchExpenseSplits(expenseIds);
@@ -263,7 +262,8 @@ export default function DashboardScreen() {
       }
       setCategoryData(Object.entries(categories).map(([name, value]) => ({ name, value })));
 
-      // Group spending (unchanged, works with groups)
+      // ========== GROUP SPENDING (FIXED) ==========
+      // Get all groups the user is a member of
       const { data: memberGroups } = await supabase
         .from('group_members')
         .select('group_id')
@@ -276,14 +276,14 @@ export default function DashboardScreen() {
         groupsList = groupsData || [];
       }
 
+      // For each group, sum approved splits for the current month (expenses must be approved by owner)
       const groupsWithPaidTotals = await Promise.all(
         groupsList.map(async (group) => {
           const { data: groupExpenses } = await supabase
             .from('expenses')
             .select('id, amount, category, approval_status')
             .eq('group_id', group.id)
-            .eq('status', 'paid')
-            .eq('approval_status', 'approved')
+            .eq('approval_status', 'approved')  // Only approved expenses
             .gte('expense_date', firstDay)
             .lte('expense_date', lastDay);
           const groupExpenseIds = groupExpenses.map(e => e.id);
@@ -292,6 +292,7 @@ export default function DashboardScreen() {
           for (const exp of groupExpenses) {
             const splits = groupSplitsMap[exp.id] || [];
             const mySplit = splits.find(s => s.user_id === user.id);
+            // Only count splits that are approved (paid)
             if (mySplit && mySplit.status === 'approved') {
               paidTotal += Number(mySplit.share_amount);
             }
@@ -302,7 +303,7 @@ export default function DashboardScreen() {
       setGroupSpending(groupsWithPaidTotals);
       setTotalGroupPaid(groupsWithPaidTotals.reduce((sum, g) => sum + g.currentMonthPaid, 0));
 
-      // Monthly trend
+      // Monthly trend (user's approved household splits)
       const months = [];
       for (let i = 5; i >= 0; i--) {
         const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
