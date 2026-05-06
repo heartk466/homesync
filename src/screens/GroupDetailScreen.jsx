@@ -628,6 +628,16 @@ const handleRejectExpense = async () => {
     }
     const { data: urlData } = supabase.storage.from('payment-proofs').getPublicUrl(fileName);
 
+    // If resubmitting, delete all old rejected proofs for this expense/user first
+    if (isResubmit) {
+      await supabase
+        .from('payment_proofs')
+        .delete()
+        .eq('expense_id', selectedExpense.id)
+        .eq('submitted_by', currentUser.id)
+        .eq('status', 'rejected');
+    }
+
     const { data: insertedProof, error: proofError } = await supabase.from('payment_proofs').insert({
       expense_id: selectedExpense.id,
       submitted_by: currentUser.id,
