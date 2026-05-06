@@ -88,7 +88,7 @@ export async function checkDuplicate(householdId, category, amount, date) {
 }
 
 export async function mergeItems(duplicateId, newId) {
-  // Implement merge logic if needed
+  // Placeholder – implement if needed
   return true;
 }
 
