@@ -146,41 +146,54 @@ export default function UtilitiesScreen() {
   };
 
   const fetchHouseholdData = async (household, user) => {
-    if (!household) return;
+  if (!household) return;
 
-    const { data: members } = await supabase
-      .from('household_members')
-      .select('*, profiles(*)')
-      .eq('household_id', household.id);
-    setHouseholdMembers(members || []);
+  // Fetch members
+  const { data: members } = await supabase
+    .from('household_members')
+    .select('*, profiles(*)')
+    .eq('household_id', household.id);
+  setHouseholdMembers(members || []);
 
-    const userMember = members?.find(m => m.user_id === user.id);
-    setIsAdmin(userMember?.role === 'owner');
+  const userMember = members?.find(m => m.user_id === user.id);
+  setIsAdmin(userMember?.role === 'owner');
 
-    const { utilities: utilitiesData, fromExpenses } = await fetchAllUtilityItems(household.id);
-    const allUtilityItems = [...utilitiesData, ...fromExpenses];
-    setUtilities(allUtilityItems);
-    setFilteredUtilities(allUtilityItems);
+  // Fetch both utility‑specific items and expense‑based utility items
+  const { utilities: utilitiesData, fromExpenses } = await fetchAllUtilityItems(household.id);
+  const allUtilityItems = [...utilitiesData, ...fromExpenses];
+  setUtilities(allUtilityItems);
+  setFilteredUtilities(allUtilityItems);
 
-    // Summary
-    const uniqueProviders = new Set(allUtilityItems.map(u => u.provider_name || u.title || '').filter(Boolean));
-    setProviderCount(uniqueProviders.size);
+  // --- FIXED SUMMARY CARDS ---
+  // 1. Connected Utility Providers = total number of utility items
+  setProviderCount(allUtilityItems.length);
 
-    const active = allUtilityItems.filter(u => u.status !== 'paid').length || 0;
-    setActiveSubscriptions(active);
+  // 2. Active Utility Subscription = items not yet paid (keep existing logic)
+  const active = allUtilityItems.filter(u => u.status !== 'paid').length || 0;
+  setActiveSubscriptions(active);
 
-    // Fetch confirmations
-    const { data: confirmData } = await supabase
-      .from('utility_confirmations')
-      .select('*, profiles(*)')
-      .in('utility_id', utilitiesData?.map(u => u.id) || []);
-    setConfirmations(confirmData || []);
+  // 3. Pending Split Approvals = count of items that are not owner‑approved
+  //    For expenses: approval_status !== 'approved'
+  //    For utilities: status !== 'paid'
+  const pending = allUtilityItems.filter(item => {
+    if (item.source === 'expenses') {
+      return item.approval_status !== 'approved';
+    } else {
+      return item.status !== 'paid';
+    }
+  }).length;
+  setPendingSplits(pending);
 
-    const pending = confirmData?.filter(c => c.status === 'pending' || c.status === 'disputed').length || 0;
-    setPendingSplits(pending);
+  // Fetch confirmations (for utilities table items)
+  const { data: confirmData } = await supabase
+    .from('utility_confirmations')
+    .select('*, profiles(*)')
+    .in('utility_id', utilitiesData?.map(u => u.id) || []);
+  setConfirmations(confirmData || []);
 
-    setUtilityForm(prev => ({ ...prev, location: household.name }));
-  };
+  // Set form location
+  setUtilityForm(prev => ({ ...prev, location: household.name }));
+};
 
   const fetchNotifications = async (userId) => {
     const { data } = await supabase
