@@ -39,7 +39,7 @@ export default function ExpensesScreen() {
   const [currentUser, setCurrentUser] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [expenses, setExpenses] = useState([]);
-  const [expenseSplits, setExpenseSplits] = useState({}); // { expenseId: [split objects] }
+  const [expenseSplits, setExpenseSplits] = useState({});
   const [filteredExpenses, setFilteredExpenses] = useState([]);
   const [householdMembers, setHouseholdMembers] = useState([]);
   const [notifications, setNotifications] = useState([]);
@@ -103,7 +103,6 @@ export default function ExpensesScreen() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  // ===================== FETCH EXPENSE SPLITS =====================
   const fetchExpenseSplits = useCallback(async (expenseIds) => {
     if (!expenseIds.length) return;
     const { data, error } = await supabase
@@ -121,21 +120,23 @@ export default function ExpensesScreen() {
     }
   }, []);
 
-  // ===================== FETCH EXPENSES (with splits) =====================
+  // ========== FIXED: fetchExpensesData with correct summary calculations ==========
   const fetchExpensesData = useCallback(async (profileData, user, adminStatus, memberData, householdId) => {
     const now = new Date();
     const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
     const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
 
-    const expensesData = await fetchAllHouseholdExpenses(profileData.household_id);
+    // Fetch all expenses for this household (including pending approval, but summary only for approved)
+    const expensesData = await fetchAllHouseholdExpenses(householdId);
     if (!expensesData) return;
 
+    // Only show approved expenses in the main list
     const approvedExpenses = expensesData.filter(e => e.approval_status === 'approved');
-setExpenses(approvedExpenses);
-setFilteredExpenses(approvedExpenses);
+    setExpenses(approvedExpenses);
+    setFilteredExpenses(approvedExpenses);
     await fetchExpenseSplits(expensesData.map(e => e.id));
 
-    // Pending approvals (splits with status pending_verification)
+    // Pending approvals (splits with status pending_verification) – for owner
     let pendingSplits = [];
     for (const exp of expensesData) {
       const splits = expenseSplits[exp.id] || [];
@@ -144,7 +145,7 @@ setFilteredExpenses(approvedExpenses);
     }
     setPendingApprovals(pendingSplits);
 
-    // Also fetch payment proofs for pending view (optional)
+    // Fetch payment proofs for pending view
     const expenseIds = expensesData.map(e => e.id);
     if (expenseIds.length > 0) {
       const { data: proofs } = await supabase
@@ -157,24 +158,28 @@ setFilteredExpenses(approvedExpenses);
       setPendingPaymentProofs([]);
     }
 
-    // Month paid expenses for summary
-    const monthExpenses = expensesData.filter(e =>
-      e.expense_date >= firstDay && e.expense_date <= lastDay &&
-      e.status === 'paid'
-    );
-
-    const total = monthExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
-    setTotalShared(total);
-
-    let reimburseTotal = 0;
+    // ========== SUMMARY CALCULATIONS ==========
+    // Total Shared = sum of all approved expense amounts in the current month (household total)
+    // To Reimburse = sum of user's unpaid splits (split.status !== 'approved') for approved expenses in current month
+    // Total Saved = same as Total Shared (as requested)
+    let householdTotal = 0;
+    let userUnpaidTotal = 0;
     const reimburseList = [];
-    let savedTotal = 0;
 
-    for (const expense of monthExpenses) {
+    for (const expense of expensesData) {
+      // Only consider approved expenses
+      if (expense.approval_status !== 'approved') continue;
+      const expenseDate = expense.expense_date;
+      if (!(expenseDate >= firstDay && expenseDate <= lastDay)) continue;
+
+      // Add full expense amount to household total
+      householdTotal += Number(expense.amount);
+
+      // Find user's split
       const splits = expenseSplits[expense.id] || [];
       const mySplit = splits.find(s => s.user_id === user.id);
       if (mySplit && mySplit.status !== 'approved') {
-        reimburseTotal += Number(mySplit.share_amount);
+        userUnpaidTotal += Number(mySplit.share_amount);
         const payer = memberData?.find(m => m.user_id === expense.paid_by);
         reimburseList.push({
           expense,
@@ -182,14 +187,13 @@ setFilteredExpenses(approvedExpenses);
           payer: payer?.profiles,
         });
       }
-      if (mySplit) {
-        savedTotal += Number(expense.amount) - Number(mySplit.share_amount);
-      }
     }
 
-    setToReimburse(reimburseTotal);
+    setTotalShared(householdTotal);
+    setToReimburse(userUnpaidTotal);
     setReimburseDetails(reimburseList);
-    setTotalSaved(savedTotal);
+    setTotalSaved(householdTotal); // Same as Total Shared
+
   }, [expenseSplits, fetchExpenseSplits]);
 
   const fetchNotifications = async (userId) => {
@@ -203,7 +207,6 @@ setFilteredExpenses(approvedExpenses);
     setUnreadCount((data || []).filter(n => !n.is_read).length);
   };
 
-  // ===================== HOUSEHOLD SELECTION =====================
   const handleHouseholdSelect = useCallback(async (household, user, profileData) => {
     const activeUser = user || currentUser;
     const activeProfile = profileData || profile;
@@ -228,7 +231,6 @@ setFilteredExpenses(approvedExpenses);
         .from('profiles')
         .select('id, full_name, email, avatar_url')
         .in('id', userIds);
-
       membersList = memberRows.map(m => ({
         user_id: m.user_id,
         role: m.role,
@@ -242,7 +244,6 @@ setFilteredExpenses(approvedExpenses);
     const adminStatus = userMember?.role === 'owner';
     setIsAdmin(adminStatus);
 
-    // Reset form
     setExpenseForm({
       title: '',
       amount: '',
@@ -259,7 +260,6 @@ setFilteredExpenses(approvedExpenses);
     await fetchExpensesData(activeProfile, activeUser, adminStatus, membersList, household.id);
   }, [currentUser, profile, fetchExpensesData]);
 
-  // ===================== INITIAL DATA FETCH =====================
   const fetchData = useCallback(async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -286,11 +286,9 @@ setFilteredExpenses(approvedExpenses);
         .from('households')
         .select('*')
         .in('id', householdIds);
-
       setHouseholds(householdsData || []);
       await fetchNotifications(user.id);
 
-      // Auto-select first household once
       if (householdsData && householdsData.length > 0 && !initialHouseholdSet.current) {
         const firstHH = householdsData[0];
         await handleHouseholdSelect(firstHH, user, profileData);
@@ -301,45 +299,26 @@ setFilteredExpenses(approvedExpenses);
     }
   }, [navigate, handleHouseholdSelect]);
 
-  useEffect(() => {
-    fetchData();
-  }, []);
-
-  // Realtime subscriptions
+  useEffect(() => { fetchData(); }, []);
   useEffect(() => {
     if (!currentUser || !selectedHousehold) return;
-
     const channel = supabase
       .channel(`expenses-realtime-${selectedHousehold.id}`)
-      .on('postgres_changes', {
-        event: '*', schema: 'public', table: 'expenses',
-        filter: `household_id=eq.${selectedHousehold.id}`,
-      }, () => {
-        if (profile && currentUser) {
-          handleHouseholdSelect(selectedHousehold, currentUser, profile);
-        }
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses', filter: `household_id=eq.${selectedHousehold.id}` }, () => {
+        if (profile && currentUser) handleHouseholdSelect(selectedHousehold, currentUser, profile);
       })
-      .on('postgres_changes', {
-        event: '*', schema: 'public', table: 'expense_splits',
-      }, () => {
-        if (profile && currentUser) {
-          handleHouseholdSelect(selectedHousehold, currentUser, profile);
-        }
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'expense_splits' }, () => {
+        if (profile && currentUser) handleHouseholdSelect(selectedHousehold, currentUser, profile);
       })
-      .on('postgres_changes', {
-        event: 'INSERT', schema: 'public', table: 'notifications',
-        filter: `user_id=eq.${currentUser.id}`,
-      }, (payload) => {
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${currentUser.id}` }, (payload) => {
         setNotifications(prev => [payload.new, ...prev]);
         setUnreadCount(prev => prev + 1);
         showToast(payload.new.message, 'info');
       })
       .subscribe();
-
     return () => supabase.removeChannel(channel);
   }, [currentUser?.id, selectedHousehold?.id, profile?.id, handleHouseholdSelect]);
 
-  // Search & Filter effect
   useEffect(() => {
     let result = [...expenses];
     if (searchQuery) result = result.filter(e => e.title?.toLowerCase().includes(searchQuery.toLowerCase()));
@@ -350,7 +329,6 @@ setFilteredExpenses(approvedExpenses);
     setFilteredExpenses(result);
   }, [searchQuery, filterStatus, filterCategory, filterFrom, filterTo, expenses]);
 
-  // ===================== EXPENSE ACTIONS =====================
   const proceedAddExpense = async () => {
     const splits = {};
     const totalAmount = Number(expenseForm.amount);
@@ -438,7 +416,6 @@ setFilteredExpenses(approvedExpenses);
 
     setLoading(true);
 
-    // Check for duplicates
     if (isUtilityCategory(expenseForm.category)) {
       const dupes = await checkDuplicate(
         profile.household_id,
@@ -458,7 +435,6 @@ setFilteredExpenses(approvedExpenses);
     setLoading(false);
   };
 
-  // Approve a pending split (owner action)
   const handleApproveSplit = async (split) => {
     setLoading(true);
     const { error } = await supabase
@@ -466,7 +442,6 @@ setFilteredExpenses(approvedExpenses);
       .update({ status: 'approved', updated_at: new Date().toISOString() })
       .eq('id', split.id);
     if (!error) {
-      // Check if all splits for this expense are approved
       const { data: allSplits } = await supabase
         .from('expense_splits')
         .select('status')
@@ -491,7 +466,6 @@ setFilteredExpenses(approvedExpenses);
       .update({ status: 'unpaid', rejection_reason: rejectReason, proof_id: null, updated_at: new Date().toISOString() })
       .eq('id', selectedSplit.id);
     if (!error) {
-      // Also mark payment_proof as rejected
       if (selectedSplit.proof_id) {
         await supabase
           .from('payment_proofs')
@@ -542,7 +516,6 @@ setFilteredExpenses(approvedExpenses);
       return;
     }
 
-    // Update the split for this user
     await supabase
       .from('expense_splits')
       .update({ status: 'pending_verification', proof_id: insertedProof.id, updated_at: new Date().toISOString() })
@@ -568,46 +541,43 @@ setFilteredExpenses(approvedExpenses);
   };
 
   const handleConfirmPayment = async (proof, split) => {
-  setLoading(true);
-  
-  await supabase.from('payment_proofs').update({ status: 'verified' }).eq('id', proof.id);
-  await supabase.from('expense_splits').update({ status: 'approved', updated_at: new Date().toISOString() }).eq('id', split.id);
-  
-  // If expense is still pending_approval, approve it now
-  const { data: expense } = await supabase
-    .from('expenses')
-    .select('approval_status')
-    .eq('id', split.expense_id)
-    .single();
-  if (expense && expense.approval_status === 'pending_approval') {
-    await supabase
+    setLoading(true);
+    await supabase.from('payment_proofs').update({ status: 'verified' }).eq('id', proof.id);
+    await supabase.from('expense_splits').update({ status: 'approved', updated_at: new Date().toISOString() }).eq('id', split.id);
+
+    const { data: expense } = await supabase
       .from('expenses')
-      .update({ approval_status: 'approved' })
-      .eq('id', split.expense_id);
-  }
-  
-  // Check if all splits approved -> mark expense as paid
-  const { data: allSplits } = await supabase
-    .from('expense_splits')
-    .select('status')
-    .eq('expense_id', split.expense_id);
-  const allApproved = allSplits.every(s => s.status === 'approved');
-  if (allApproved) {
-    await supabase.from('expenses').update({ status: 'paid' }).eq('id', split.expense_id);
-  }
-  
-  await supabase.from('notifications').insert({
-    user_id: proof.submitted_by,
-    title: 'Payment Confirmed! ✅',
-    message: `Your payment has been verified!`,
-    type: 'payment_confirmed',
-  });
-  
-  setShowViewProofModal(false);
-  showToast('Payment confirmed! ✅');
-  setLoading(false);
-  await handleHouseholdSelect(selectedHousehold, currentUser, profile);
-};
+      .select('approval_status')
+      .eq('id', split.expense_id)
+      .single();
+    if (expense && expense.approval_status === 'pending_approval') {
+      await supabase
+        .from('expenses')
+        .update({ approval_status: 'approved' })
+        .eq('id', split.expense_id);
+    }
+
+    const { data: allSplits } = await supabase
+      .from('expense_splits')
+      .select('status')
+      .eq('expense_id', split.expense_id);
+    const allApproved = allSplits.every(s => s.status === 'approved');
+    if (allApproved) {
+      await supabase.from('expenses').update({ status: 'paid' }).eq('id', split.expense_id);
+    }
+
+    await supabase.from('notifications').insert({
+      user_id: proof.submitted_by,
+      title: 'Payment Confirmed! ✅',
+      message: `Your payment has been verified!`,
+      type: 'payment_confirmed',
+    });
+
+    setShowViewProofModal(false);
+    showToast('Payment confirmed! ✅');
+    setLoading(false);
+    await handleHouseholdSelect(selectedHousehold, currentUser, profile);
+  };
 
   const handleRejectProof = async () => {
     if (!rejectProofReason.trim()) { showToast('Please provide a rejection reason.', 'error'); return; }
@@ -655,7 +625,6 @@ setFilteredExpenses(approvedExpenses);
     return <div className="member-avatar-initials">{initials}</div>;
   };
 
-  // ===================== RENDER =====================
   return (
     <div className="expenses-screen">
       <input type="file" ref={proofInputRef} style={{ display: 'none' }} accept="image/*" onChange={e => {
@@ -700,7 +669,6 @@ setFilteredExpenses(approvedExpenses);
                 )}
               </div>
             </div>
-
             <div className="hh-toggle-row">
               {households
                 .filter(hh => householdSearch === '' || hh.name.toLowerCase().includes(householdSearch.toLowerCase()))
@@ -759,7 +727,6 @@ setFilteredExpenses(approvedExpenses);
           </div>
         </div>
 
-        {/* Pending Approvals Section (Splits) */}
         {isAdmin && pendingApprovals.length > 0 && (
           <div className="pending-section">
             <p className="pending-section-title">⏳ Pending Payment Approvals ({pendingApprovals.length})</p>
@@ -798,6 +765,7 @@ setFilteredExpenses(approvedExpenses);
             <p className="expenses-empty-sub">Tap + to add your first expense for {selectedHousehold?.name || 'this household'}.</p>
           </div>
         )}
+
         {filteredExpenses.map(expense => {
           const splits = expenseSplits[expense.id] || [];
           const mySplit = splits.find(s => s.user_id === currentUser?.id);
