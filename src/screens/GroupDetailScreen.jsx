@@ -484,7 +484,6 @@ export default function GroupDetailScreen() {
     setLoadingAction(false);
   };
 
-  // ========== FIXED handleApproveSplit ==========
   const handleApproveSplit = async (split) => {
     setLoadingAction(true);
     const { error } = await supabase
@@ -492,7 +491,6 @@ export default function GroupDetailScreen() {
       .update({ status: 'approved', updated_at: new Date().toISOString() })
       .eq('id', split.id);
     if (!error) {
-      // Also approve the expense if pending
       const { data: expense } = await supabase
         .from('expenses')
         .select('approval_status')
@@ -504,7 +502,6 @@ export default function GroupDetailScreen() {
           .update({ approval_status: 'approved' })
           .eq('id', split.expense_id);
       }
-      // Check all splits
       const { data: allSplits } = await supabase
         .from('expense_splits')
         .select('status')
@@ -709,14 +706,12 @@ export default function GroupDetailScreen() {
     fetchGroupAndData();
   };
 
-  // ========== FIXED handleConfirmPayment ==========
   const handleConfirmPayment = async (proof, split) => {
     setLoadingAction(true);
     
     await supabase.from('payment_proofs').update({ status: 'verified' }).eq('id', proof.id);
     await supabase.from('expense_splits').update({ status: 'approved', updated_at: new Date().toISOString() }).eq('id', split.id);
     
-    // If expense is still pending_approval, approve it now
     const { data: expense } = await supabase
       .from('expenses')
       .select('approval_status')
@@ -729,7 +724,6 @@ export default function GroupDetailScreen() {
         .eq('id', split.expense_id);
     }
     
-    // Check if all splits are approved -> mark expense as paid
     const { data: allSplits } = await supabase
       .from('expense_splits')
       .select('status')
@@ -844,7 +838,6 @@ export default function GroupDetailScreen() {
     fetchGroupAndData();
   };
 
-  // render (same as original, unchanged)
   if (loading) {
     return (
       <div className="group-detail-screen">
@@ -981,7 +974,6 @@ export default function GroupDetailScreen() {
             const mySplit = splits.find(s => s.user_id === currentUser?.id);
             const isOwner = isAdmin;
             const ownerVerifiedProof = allPaymentProofs.find(p => p.expense_id === expense.id && p.submitted_by === group?.created_by && p.status === 'verified');
-            const myPendingProof = allPaymentProofs.find(p => p.expense_id === expense.id && p.submitted_by === currentUser?.id && p.status === 'pending_verification');
             const myRejectedProof = allPaymentProofs.find(p => p.expense_id === expense.id && p.submitted_by === currentUser?.id && p.status === 'rejected');
 
             return (
@@ -1090,9 +1082,10 @@ export default function GroupDetailScreen() {
         )}
       </div>
 
+      {/* FAB */}
       <button className="fab-detail" onClick={() => { resetExpenseForm(); setShowAddExpense(true); }}><Plus size={24} /></button>
 
-      {/* Modals (omitted for brevity, keep as in original) */}
+      {/* Add Expense Modal */}
       {showAddExpense && (
         <div className="modal-overlay-detail">
           <div className="modal-detail-card">
@@ -1141,20 +1134,273 @@ export default function GroupDetailScreen() {
         </div>
       )}
 
-      {/* The rest of the modals remain unchanged */}
-      {showPaymentProofModal && ( ... )}
-      {showResubmitModal && ( ... )}
-      {showOwnerProofModal && ( ... )}
-      {showViewProofModal && ( ... )}
-      {showRejectModal && ( ... )}
-      {showDeleteModal && ( ... )}
-      {showRejectProofModal && ( ... )}
-      {showDeleteGroupModal && ( ... )}
-      {showKickMemberModal && ( ... )}
-      {showRejectExpenseModal && ( ... )}
-      {showUploadAfterAdd && ( ... )}
+      {/* Member Payment Proof Modal */}
+      {showPaymentProofModal && (
+        <div className="modal-overlay-detail">
+          <div className="modal-detail-card">
+            <div className="modal-header">
+              <h2>Submit Payment Proof</h2>
+              <button className="modal-close" onClick={() => { setShowPaymentProofModal(false); resetProofForm(); }}><X size={20} /></button>
+            </div>
+            <div className="modal-body-scroll">
+              {proofForm.screenshotPreview ? <img src={proofForm.screenshotPreview} className="proof-preview" alt="proof" /> : <div style={{ textAlign: 'center', padding: '20px 0', color: '#9E8FCC', fontSize: 13 }}>No screenshot selected yet</div>}
+              <button className="upload-proof-btn" onClick={() => proofInputRef.current.click()}><Camera size={16} /> {proofForm.screenshotPreview ? 'Change Screenshot' : 'Upload Screenshot'}</button>
+              <textarea placeholder="Optional note (e.g. GCash ref #)" value={proofForm.note} onChange={e => setProofForm({ ...proofForm, note: e.target.value })} className="detail-textarea" rows={3} />
+              <button className="add-expense-btn" onClick={() => handleSubmitProof(false)} disabled={loadingAction}>{loadingAction ? 'Submitting...' : 'Submit Proof'}</button>
+              <button className="cancel-btn" onClick={() => { setShowPaymentProofModal(false); resetProofForm(); }}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
 
+      {/* Resubmit Modal */}
+      {showResubmitModal && (
+        <div className="modal-overlay-detail">
+          <div className="modal-detail-card">
+            <div className="modal-header">
+              <h2>Resubmit Payment Proof</h2>
+              <button className="modal-close" onClick={() => { setShowResubmitModal(false); resetProofForm(); }}><X size={20} /></button>
+            </div>
+            <div className="modal-body-scroll">
+              <div style={{ background: '#FFF3CD', borderRadius: 12, padding: '12px 14px', marginBottom: 12, fontSize: 12, color: '#856404', textAlign: 'center' }}>⚠️ Your previous proof was rejected. Please upload a new, clear screenshot.</div>
+              {proofForm.screenshotPreview ? <img src={proofForm.screenshotPreview} className="proof-preview" alt="proof" /> : <div style={{ textAlign: 'center', padding: '20px 0', color: '#9E8FCC', fontSize: 13 }}>Upload a new screenshot</div>}
+              <button className="upload-proof-btn" onClick={() => proofInputRef.current.click()}><Camera size={16} /> {proofForm.screenshotPreview ? 'Change Screenshot' : 'Upload New Screenshot'}</button>
+              <textarea placeholder="Optional note (e.g. GCash ref #)" value={proofForm.note} onChange={e => setProofForm({ ...proofForm, note: e.target.value })} className="detail-textarea" rows={3} />
+              <button className="add-expense-btn" onClick={() => handleSubmitProof(true)} disabled={loadingAction}>{loadingAction ? 'Submitting...' : 'Resubmit Proof'}</button>
+              <button className="cancel-btn" onClick={() => { setShowResubmitModal(false); resetProofForm(); }}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Owner Proof Modal */}
+      {showOwnerProofModal && (
+        <div className="modal-overlay-detail">
+          <div className="modal-detail-card">
+            <div className="modal-header">
+              <h2>Confirm Payment</h2>
+              <button className="modal-close" onClick={() => setShowOwnerProofModal(false)}><X size={20} /></button>
+            </div>
+            <div className="modal-body-scroll">
+              {proofForm.screenshotPreview ? <img src={proofForm.screenshotPreview} className="proof-preview" alt="proof" /> : <div style={{ textAlign: 'center', padding: '20px 0', color: '#9E8FCC', fontSize: 13 }}>No screenshot selected yet</div>}
+              <button className="upload-proof-btn" onClick={() => proofInputRef.current.click()}><Camera size={16} /> {proofForm.screenshotPreview ? 'Change Screenshot' : 'Upload Screenshot'}</button>
+              <textarea placeholder="Optional note" value={proofForm.note} onChange={e => setProofForm({ ...proofForm, note: e.target.value })} className="detail-textarea" rows={3} />
+              <div style={{ background: '#F0EDFF', borderRadius: 12, padding: '10px 14px', fontSize: 12, color: '#3B2AAB', textAlign: 'center' }}>📢 This will automatically mark the expense as paid for all members.</div>
+              <button className="add-expense-btn" onClick={handleOwnerSubmitProof} disabled={loadingAction}>{loadingAction ? 'Confirming...' : 'Confirm Payment'}</button>
+              <button className="cancel-btn" onClick={() => setShowOwnerProofModal(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* View Proof Modal */}
+      {showViewProofModal && selectedProof && (
+        <div className="modal-overlay-detail">
+          <div className="modal-detail-card">
+            <div className="modal-header">
+              <h2>Payment Proof</h2>
+              <button className="modal-close" onClick={() => setShowViewProofModal(false)}><X size={20} /></button>
+            </div>
+            <div className="modal-body-scroll">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: '#F8F6FF', borderRadius: 12, padding: '10px 14px' }}>
+                <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#3B2AAB', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700 }}>{selectedProof.profiles?.full_name?.[0]?.toUpperCase()}</div>
+                <div><div style={{ fontWeight: 600, fontSize: 13 }}>{selectedProof.profiles?.full_name}</div><div style={{ fontSize: 10, color: '#9E8FCC' }}>{new Date(selectedProof.created_at).toLocaleString()}</div></div>
+              </div>
+              <img src={selectedProof.screenshot_url} className="proof-preview" alt="payment proof" style={{ cursor: 'pointer' }} onClick={() => window.open(selectedProof.screenshot_url, '_blank')} />
+              {selectedProof.note && <div style={{ background: '#F8F6FF', borderRadius: 12, padding: '10px 14px', fontSize: 13 }}>💬 {selectedProof.note}</div>}
+              {selectedProof.rejection_reason && <div style={{ background: '#ffe5e5', borderRadius: 12, padding: '10px 14px', fontSize: 12, color: '#e53e3e' }}>❌ Rejection reason: {selectedProof.rejection_reason}</div>}
+              <div style={{ textAlign: 'center', fontSize: 12, fontWeight: 600, padding: 8, borderRadius: 8, background: selectedProof.status === 'verified' ? '#D1FAE5' : selectedProof.status === 'rejected' ? '#ffe5e5' : '#fff3cd', color: selectedProof.status === 'verified' ? '#065F46' : selectedProof.status === 'rejected' ? '#e53e3e' : '#856404' }}>
+                {selectedProof.status === 'verified' ? '✅ Payment Verified' : selectedProof.status === 'rejected' ? '❌ Proof Rejected' : '⏳ Pending Verification'}
+              </div>
+              {isAdmin && selectedProof.status === 'pending_verification' && selectedProof.submitted_by !== currentUser?.id && (
+                <>
+                  <button className="add-expense-btn" onClick={() => handleConfirmPayment(selectedProof, selectedSplit)}>✅ Confirm Payment</button>
+                  <button className="delete-confirm-btn" onClick={() => { setShowViewProofModal(false); setShowRejectProofModal(true); }}>❌ Reject Proof</button>
+                </>
+              )}
+              {!isAdmin && selectedProof.status === 'rejected' && selectedProof.submitted_by === currentUser?.id && (
+                <button className="pay-btn-small" style={{ width: '100%', marginTop: 8, background: '#e53e3e' }} onClick={() => { setShowViewProofModal(false); const expense = expenses.find(e => e.id === selectedProof.expense_id); if (expense) { setSelectedExpense(expense); resetProofForm(); setShowResubmitModal(true); } }}>Resubmit New Proof</button>
+              )}
+              <button className="cancel-btn" onClick={() => setShowViewProofModal(false)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reject Split Modal */}
+      {showRejectModal && (
+        <div className="modal-overlay-detail">
+          <div className="modal-detail-card">
+            <div className="modal-header"><h2>Reject Payment</h2><button className="modal-close" onClick={() => setShowRejectModal(false)}><X size={20} /></button></div>
+            <div className="modal-body-scroll">
+              <textarea placeholder="Reason *" value={rejectReason} onChange={e => setRejectReason(e.target.value)} className="detail-textarea" />
+              <button className="add-expense-btn" onClick={handleRejectSplit}>Confirm Reject</button>
+              <button className="cancel-btn" onClick={() => setShowRejectModal(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Expense Modal */}
+      {showDeleteModal && (
+        <div className="modal-overlay-detail">
+          <div className="modal-detail-card">
+            <div className="modal-header" style={{ flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+              <AlertCircle size={40} color="#e53e3e" /><h2>Delete Expense?</h2>
+            </div>
+            <div className="modal-body-scroll">
+              <button className="delete-confirm-btn" onClick={handleDeleteExpense}>Yes, Delete</button>
+              <button className="cancel-btn" onClick={() => setShowDeleteModal(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reject Proof Modal */}
+      {showRejectProofModal && (
+        <div className="modal-overlay-detail">
+          <div className="modal-detail-card">
+            <div className="modal-header"><h2>Reject Payment Proof</h2><button className="modal-close" onClick={() => setShowRejectProofModal(false)}><X size={20} /></button></div>
+            <div className="modal-body-scroll">
+              <textarea placeholder="Reason *" value={rejectProofReason} onChange={e => setRejectProofReason(e.target.value)} className="detail-textarea" />
+              <button className="add-expense-btn" onClick={handleRejectProof}>Confirm</button>
+              <button className="cancel-btn" onClick={() => setShowRejectProofModal(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Group Modal */}
+      {showDeleteGroupModal && (
+        <div className="modal-overlay-detail">
+          <div className="modal-detail-card">
+            <div className="modal-header" style={{ flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+              <AlertCircle size={40} color="#e53e3e" />
+              <h2>Delete {contextType === 'household' ? 'Household' : 'Group'}?</h2>
+            </div>
+            <div className="modal-body-scroll">
+              <p style={{ textAlign: 'center', color: '#9E8FCC', fontSize: 13 }}>This will permanently delete everything.</p>
+              <button className="delete-confirm-btn" onClick={handleDeleteGroup} disabled={loadingAction}>{loadingAction ? 'Deleting...' : 'Yes, Delete'}</button>
+              <button className="cancel-btn" onClick={() => setShowDeleteGroupModal(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Kick Member Modal */}
+      {showKickMemberModal && selectedMember && (
+        <div className="modal-overlay-detail">
+          <div className="modal-detail-card">
+            <div className="modal-header" style={{ flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+              <AlertCircle size={40} color="#e53e3e" /><h2>Remove Member?</h2>
+            </div>
+            <div className="modal-body-scroll">
+              <p style={{ textAlign: 'center' }}>Remove <strong>{selectedMember.profiles?.full_name}</strong>?</p>
+              <button className="delete-confirm-btn" onClick={handleKickMember} disabled={loadingAction}>{loadingAction ? 'Removing...' : 'Yes, Remove'}</button>
+              <button className="cancel-btn" onClick={() => { setShowKickMemberModal(false); setSelectedMember(null); }}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reject Expense Modal */}
+      {showRejectExpenseModal && (
+        <div className="modal-overlay-detail">
+          <div className="modal-detail-card">
+            <div className="modal-header">
+              <h2>Reject Expense</h2>
+              <button className="modal-close" onClick={() => { setShowRejectExpenseModal(false); setRejectExpenseReason(''); }}><X size={20} /></button>
+            </div>
+            <div className="modal-body-scroll">
+              <p style={{ fontSize: 13, color: '#5A4AAA', margin: 0 }}>
+                Rejecting "<strong>{selectedPendingExpense?.title}</strong>" will delete it and notify the member.
+              </p>
+              <textarea
+                className="detail-textarea"
+                placeholder="Reason for rejection *"
+                value={rejectExpenseReason}
+                onChange={e => setRejectExpenseReason(e.target.value)}
+                rows={3}
+              />
+              <button className="delete-confirm-btn" onClick={handleRejectExpense} disabled={loadingAction}>
+                {loadingAction ? 'Rejecting...' : 'Reject & Delete Expense'}
+              </button>
+              <button className="cancel-btn" onClick={() => { setShowRejectExpenseModal(false); setRejectExpenseReason(''); }}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Upload Proof After Adding Expense (member paid upfront) */}
+      {showUploadAfterAdd && justAddedExpense && (
+        <div className="modal-overlay-detail">
+          <div className="modal-detail-card">
+            <div className="modal-header">
+              <h2>Upload Payment Proof</h2>
+            </div>
+            <div className="modal-body-scroll">
+              <p style={{ fontSize: 13, color: '#5A4AAA', margin: 0 }}>
+                You marked yourself as the payer for "<strong>{justAddedExpense.title}</strong>". 
+                Please upload a screenshot proof of payment.
+              </p>
+              <input
+                type="file"
+                accept="image/*"
+                style={{ display: 'none' }}
+                ref={el => el && (el.id = 'afterAddProofInput')}
+                onChange={e => {
+                  const file = e.target.files[0];
+                  if (file) setProofForm({ ...proofForm, screenshot: file, screenshotPreview: URL.createObjectURL(file) });
+                }}
+              />
+              {proofForm.screenshotPreview && (
+                <img src={proofForm.screenshotPreview} alt="Preview" className="proof-preview" />
+              )}
+              <button className="upload-proof-btn" onClick={() => document.getElementById('afterAddProofInput').click()}>
+                📷 {proofForm.screenshot ? 'Change Screenshot' : 'Upload Screenshot'}
+              </button>
+              <button className="add-expense-btn" disabled={!proofForm.screenshot || loadingAction}
+                onClick={async () => {
+                  setLoadingAction(true);
+                  const fileExt = proofForm.screenshot.name.split('.').pop();
+                  const fileName = `${currentUser.id}-${justAddedExpense.id}-${Date.now()}.${fileExt}`;
+                  const { error: uploadError } = await supabase.storage
+                    .from('payment-proofs')
+                    .upload(fileName, proofForm.screenshot, { upsert: true });
+                  if (uploadError) { showToast('Upload failed', 'error'); setLoadingAction(false); return; }
+                  const { data: urlData } = supabase.storage.from('payment-proofs').getPublicUrl(fileName);
+                  const { data: insertedProof } = await supabase.from('payment_proofs').insert({
+                    expense_id: justAddedExpense.id,
+                    submitted_by: currentUser.id,
+                    screenshot_url: urlData.publicUrl,
+                    status: 'pending_verification',
+                  }).select().single();
+                  showToast('Expense submitted with proof!');
+                  setShowUploadAfterAdd(false);
+                  setJustAddedExpense(null);
+                  resetProofForm();
+                  resetExpenseForm();
+                  fetchGroupAndData();
+                  setLoadingAction(false);
+                }}>
+                {loadingAction ? 'Submitting...' : 'Submit Expense + Proof'}
+              </button>
+              <button className="cancel-btn" onClick={() => {
+                showToast('Expense submitted for approval (no proof yet)');
+                setShowUploadAfterAdd(false);
+                setJustAddedExpense(null);
+                resetProofForm();
+                resetExpenseForm();
+                fetchGroupAndData();
+              }}>Skip for now</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Hidden file input */}
       <input type="file" ref={proofInputRef} style={{ display: 'none' }} accept="image/*" onChange={e => { const file = e.target.files[0]; if (file) setProofForm({ ...proofForm, screenshot: file, screenshotPreview: URL.createObjectURL(file) }); }} />
+
       {toast && <div className={`toast-detail toast-${toast.type}`}>{toast.msg}</div>}
     </div>
   );
