@@ -198,11 +198,6 @@ if (adminStatus) {
     .select('*, profiles:created_by(id, full_name, avatar_url)')
     .eq(contextType === 'household' ? 'household_id' : 'group_id', id)
     .eq('approval_status', 'pending_approval');
-     // ADD THESE 4 LINES:
-  console.log('🔴 adminStatus:', adminStatus);
-  console.log('🔴 contextType:', contextType);
-  console.log('🔴 id:', id);
-  console.log('🔴 pendingExp:', pendingExp);
   setPendingExpenseApprovals(pendingExp || []);
 } else {
   setPendingExpenseApprovals([]);
@@ -242,18 +237,6 @@ useEffect(() => {
 
     const proofsData = proofsResult.data || [];
     setAllPaymentProofs(proofsData);
-
-    // Fetch pending expense approvals for owner
-if (isAdmin) {
-  const { data: pendingExp } = await supabase
-    .from('expenses')
-    .select('*, profiles:created_by(id, full_name, avatar_url)')
-    .eq(contextType === 'household' ? 'household_id' : 'group_id', id)
-    .eq('approval_status', 'pending_approval');
-  setPendingExpenseApprovals(pendingExp || []);
-} else {
-  setPendingExpenseApprovals([]);
-}
 
     // Compute pending approvals
     const pending = [];
@@ -691,7 +674,6 @@ const handleRejectExpense = async () => {
       return;
     }
 
-    console.log('✅ Split updated to pending_verification for user', currentUser.id);
 
     await supabase.from('expenses').update({ status: 'verifying' }).eq('id', selectedExpense.id);
 
@@ -900,37 +882,32 @@ const handleRejectExpense = async () => {
         )}
       </div>
       {/* Pending Expense Approvals (owner only) */}
-{console.log('🟢 isAdmin:', isAdmin, '| pending:', pendingExpenseApprovals)}
-{isAdmin && pendingExpenseApprovals.length > 0 && (
-  <div className="detail-pending-section">
-  ...
-{/* Pending Expense Approvals (owner only) */}
-{isAdmin && pendingExpenseApprovals.length > 0 && (
-  <div className="detail-pending-section">
-    <h3 className="section-title">📋 Pending Expense Approvals ({pendingExpenseApprovals.length})</h3>
-    {pendingExpenseApprovals.map(expense => (
-      <div key={expense.id} className="pending-item">
-        <div>
-          <strong style={{ fontSize: 13, color: '#2D1A7A' }}>{expense.title}</strong>
-          <div style={{ fontSize: 11, color: '#9E8FCC' }}>
-            by {expense.profiles?.full_name} · ₱{Number(expense.amount).toFixed(2)} · {expense.expense_date}
-          </div>
+      {isAdmin && pendingExpenseApprovals.length > 0 && (
+        <div className="detail-pending-section">
+          <h3 className="section-title">📋 Pending Expense Approvals ({pendingExpenseApprovals.length})</h3>
+          {pendingExpenseApprovals.map(expense => (
+            <div key={expense.id} className="pending-item">
+              <div>
+                <strong style={{ fontSize: 13, color: '#2D1A7A' }}>{expense.title}</strong>
+                <div style={{ fontSize: 11, color: '#9E8FCC' }}>
+                  by {expense.profiles?.full_name} · ₱{Number(expense.amount).toFixed(2)} · {expense.expense_date}
+                </div>
+              </div>
+              <div className="pending-actions">
+                <button className="approve-btn" onClick={() => handleApproveExpense(expense)}>
+                  <Check size={14} /> Approve
+                </button>
+                <button className="reject-btn" onClick={() => {
+                  setSelectedPendingExpense(expense);
+                  setShowRejectExpenseModal(true);
+                }}>
+                  <X size={14} /> Reject
+                </button>
+              </div>
+            </div>
+          ))}
         </div>
-        <div className="pending-actions">
-          <button className="approve-btn" onClick={() => handleApproveExpense(expense)}>
-            <Check size={14} /> Approve
-          </button>
-          <button className="reject-btn" onClick={() => {
-            setSelectedPendingExpense(expense);
-            setShowRejectExpenseModal(true);
-          }}>
-            <X size={14} /> Reject
-          </button>
-        </div>
-      </div>
-    ))}
-  </div>
-)}
+      )}
       {/* Pending Approvals (splits) */}
       {isAdmin && pendingApprovals.length > 0 && (
         <div className="detail-pending-section">
@@ -994,7 +971,6 @@ const handleRejectExpense = async () => {
         p.submitted_by === split.user_id
       );
 
-  console.log('🔍 split:', split.id, '| proof_id:', split.proof_id, '| proof found:', proof?.id, '| allProofs count:', allPaymentProofs.length);
                      return (
   <div key={split.id} style={{
     display: 'grid',
