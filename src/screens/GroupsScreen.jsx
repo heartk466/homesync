@@ -82,11 +82,12 @@ export default function GroupsScreen() {
     const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
     const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
 
-    // Fetch expenses within the month
+    // Fetch only approved expenses within the month
     const { data: expenses } = await supabase
       .from('expenses')
       .select('id, amount, paid_by, status, approval_status, category')
       .eq('household_id', householdData.id)
+      .eq('approval_status', 'approved')
       .gte('expense_date', firstDay)
       .lte('expense_date', lastDay);
 
@@ -122,21 +123,22 @@ export default function GroupsScreen() {
     for (const expense of expenses) {
       const splits = splitsMap[expense.id] || [];
       const mySplit = splits.find(s => s.user_id === user.id);
-      const hasApprovedSplit = splits.some(s => s.status === 'approved');
-      
-      // totalExpenses = sum of full expense amount if at least one split is approved
-      if (hasApprovedSplit) {
-        totalExpenses += Number(expense.amount);
-      }
+
+      // Count full expense amount
+      totalExpenses += Number(expense.amount);
 
       if (mySplit) {
-        if (mySplit.status === 'approved') {
-          yourShare += Number(mySplit.share_amount);
+        // yourShare = total of your splits (paid + unpaid)
+        yourShare += Number(mySplit.share_amount);
+
+        if (mySplit.status !== 'approved') {
+          // Still unpaid = you owe this
+          pendingOwed += Number(mySplit.share_amount);
+        } else {
+          // Paid — count utilities
           if (UTILITY_CATEGORIES.includes(expense.category)) {
             utilitiesTotal += Number(mySplit.share_amount);
           }
-        } else {
-          pendingOwed += Number(mySplit.share_amount);
         }
       }
     }
@@ -156,7 +158,7 @@ export default function GroupsScreen() {
       totalExpenses,
       yourShare,
       pendingOwed,
-      yourBalance: pendingOwed - yourShare,
+      yourBalance: pendingOwed, // balance = what you still owe
       utilitiesTotal,
       role: householdData.created_by === profileData.id ? 'owner' : 'member',
     };
@@ -188,8 +190,9 @@ export default function GroupsScreen() {
   const fetchGroupSpending = useCallback(async (group, user, firstDay, lastDay) => {
     const { data: expenses } = await supabase
       .from('expenses')
-      .select('id, amount, category')
+      .select('id, amount, category, approval_status')
       .eq('group_id', group.id)
+      .eq('approval_status', 'approved')
       .gte('expense_date', firstDay)
       .lte('expense_date', lastDay);
 
@@ -215,20 +218,17 @@ export default function GroupsScreen() {
     for (const expense of expenses) {
       const splits = splitsMap[expense.id] || [];
       const mySplit = splits.find(s => s.user_id === user.id);
-      const hasApprovedSplit = splits.some(s => s.status === 'approved');
-      
-      if (hasApprovedSplit) {
-        totalExpenses += Number(expense.amount);
-      }
+
+      totalExpenses += Number(expense.amount);
 
       if (mySplit) {
-        if (mySplit.status === 'approved') {
-          yourShare += Number(mySplit.share_amount);
+        yourShare += Number(mySplit.share_amount);
+        if (mySplit.status !== 'approved') {
+          pendingOwed += Number(mySplit.share_amount);
+        } else {
           if (UTILITY_CATEGORIES.includes(expense.category)) {
             utilitiesTotal += Number(mySplit.share_amount);
           }
-        } else {
-          pendingOwed += Number(mySplit.share_amount);
         }
       }
     }
@@ -238,7 +238,7 @@ export default function GroupsScreen() {
       totalExpenses,
       yourShare,
       pendingOwed,
-      yourBalance: pendingOwed - yourShare,
+      yourBalance: pendingOwed, // balance = what you still owe
       utilitiesTotal,
     };
   }, []);
@@ -343,7 +343,7 @@ export default function GroupsScreen() {
     return () => supabase.removeChannel(channel);
   }, [profile?.id]);
 
-  // ---------- Handlers (unchanged) ----------
+  // ---------- Handlers ----------
   const handleCreateGroup = async () => {
     if (!createForm.name.trim()) {
       showToast('Group name is required', 'error');
@@ -455,10 +455,10 @@ export default function GroupsScreen() {
     else { handleCopyCode(code); }
   };
 
+  // Fixed balance display — balance is now simply pendingOwed (always >= 0)
   const getBalanceDisplay = (balance) => {
-    if (balance > 0) return { text: `Others owe you ₱${balance.toFixed(2)}`, color: '#38a169', arrow: '↑' };
-    if (balance < 0) return { text: `You owe ₱${Math.abs(balance).toFixed(2)}`, color: '#e53e3e', arrow: '↓' };
-    return { text: 'All settled', color: '#5A4AAA', arrow: '✓' };
+    if (balance > 0) return { text: `You owe ₱${balance.toFixed(2)}`, color: '#e53e3e', arrow: '↓' };
+    return { text: 'All settled', color: '#38a169', arrow: '✓' };
   };
 
   const renderGroupCard = (item, isHousehold = false) => {
@@ -486,7 +486,11 @@ export default function GroupsScreen() {
           <div className="stat"><span className="stat-label">Utilities</span><span className="stat-value">₱{(item.utilitiesTotal || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span></div>
           <div className="stat balance"><span className="stat-label">Balance</span><span className="stat-value" style={{ color: balanceInfo.color }}>{balanceInfo.arrow} {balanceInfo.text}</span></div>
         </div>
-        {(item.pendingOwed || 0) > 0 && <div className="pending-badge-group"><DollarSign size={12} /> ₱{item.pendingOwed.toFixed(2)} pending from you</div>}
+        {(item.pendingOwed || 0) > 0 && (
+          <div className="pending-badge-group">
+            <DollarSign size={12} /> ₱{item.pendingOwed.toFixed(2)} pending from you
+          </div>
+        )}
       </div>
     );
   };
