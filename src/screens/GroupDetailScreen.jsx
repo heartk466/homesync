@@ -215,18 +215,6 @@ if (adminStatus) {
  // Load splits AND proofs together when expenses change
 useEffect(() => {
   const loadSplitsAndProofs = async () => {
-    // Always fetch pending expense approvals for the owner regardless of approved expenses
-    if (isAdmin) {
-      const { data: pendingExp } = await supabase
-        .from('expenses')
-        .select('*, profiles:created_by(id, full_name, avatar_url)')
-        .eq(contextType === 'household' ? 'household_id' : 'group_id', id)
-        .eq('approval_status', 'pending_approval');
-      setPendingExpenseApprovals(pendingExp || []);
-    } else {
-      setPendingExpenseApprovals([]);
-    }
-
     if (expenses.length === 0) {
       setExpenseSplits({});
       setPendingApprovals([]);
@@ -261,7 +249,7 @@ useEffect(() => {
   };
 
   loadSplitsAndProofs();
-}, [expenses, fetchExpenseSplits, isAdmin, id, contextType]);
+}, [expenses, fetchExpenseSplits]);
 
   // Initial load
   useEffect(() => {
