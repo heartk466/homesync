@@ -120,24 +120,43 @@ export default function UtilitiesScreen() {
         .single();
       setProfile(profileData);
 
+      // Fetch ALL households user belongs to
       const { data: memberData } = await supabase
         .from('household_members')
         .select('*, households(*)')
-        .eq('user_id', user.id);
+        .eq('user_id', user.id)
+        .eq('status', 'active');
 
       const households = memberData?.map(m => ({
         ...m.households,
         role: m.role,
       })) || [];
+
       setAllHouseholds(households);
 
-      const primary = households.find(h => h.id === profileData.household_id) || households[0];
+      if (households.length === 0) {
+        showToast('You are not a member of any household.', 'error');
+        return;
+      }
+
+      // Use the first household (only one) and also update profile if needed
+      const primary = households[0];
       setActiveHousehold(primary);
+
+      // If profile.household_id is different, update it (silently)
+      if (profileData.household_id !== primary.id) {
+        await supabase
+          .from('profiles')
+          .update({ household_id: primary.id })
+          .eq('id', user.id);
+        setProfile({ ...profileData, household_id: primary.id });
+      }
 
       await fetchHouseholdData(primary, user);
       await fetchNotifications(user.id);
     } catch (err) {
       console.error(err);
+      showToast('Failed to load data. Check your connection.', 'error');
     }
   };
 
@@ -178,6 +197,13 @@ export default function UtilitiesScreen() {
     setConfirmations(confirmData || []);
 
     setUtilityForm(prev => ({ ...prev, location: household.name }));
+
+    // Show a friendly toast so you know which household is active
+    if (allUtilityItems.length === 0) {
+      showToast(`No utility items in "${household.name}". Add a utility or check your expenses.`, 'info');
+    } else {
+      showToast(`Loaded ${allUtilityItems.length} utility item(s) for ${household.name}`, 'success');
+    }
   };
 
   const fetchNotifications = async (userId) => {
@@ -589,7 +615,7 @@ export default function UtilitiesScreen() {
         </button>
       )}
 
-      {/* Add Utility Modal */}
+      {/* All Modals (same as before – keep them unchanged) */}
       {showAddUtility && (
         <div className="modal-overlay">
           <div className="add-utility-modal">
@@ -717,7 +743,6 @@ export default function UtilitiesScreen() {
         </div>
       )}
 
-      {/* Delete Modal */}
       {showDeleteModal && (
         <div className="modal-overlay">
           <div className="small-modal">
@@ -730,7 +755,6 @@ export default function UtilitiesScreen() {
         </div>
       )}
 
-      {/* Dispute Modal */}
       {showDisputeModal && (
         <div className="modal-overlay">
           <div className="small-modal">
@@ -743,7 +767,6 @@ export default function UtilitiesScreen() {
         </div>
       )}
 
-      {/* Adjust Split Modal */}
       {showAdjustModal && selectedUtility && (
         <div className="modal-overlay">
           <div className="small-modal">
@@ -767,10 +790,8 @@ export default function UtilitiesScreen() {
         </div>
       )}
 
-      {/* Hidden proof input */}
       <input type="file" ref={proofInputRef} style={{ display: 'none' }} accept="image/*" onChange={e => { const file = e.target.files[0]; if (file) setProofForm(prev => ({ ...prev, screenshot: file, screenshotPreview: URL.createObjectURL(file) })); }} />
 
-      {/* Payment Proof Modal */}
       {showPaymentProofModal && (
         <div className="modal-overlay">
           <div className="small-modal">
@@ -807,7 +828,6 @@ export default function UtilitiesScreen() {
         </div>
       )}
 
-      {/* Duplicate Modal */}
       {showDuplicateModal && duplicateItem && (
         <div className="modal-overlay">
           <div className="small-modal">
