@@ -213,6 +213,7 @@ export default function GroupsScreen() {
     let totalExpenses = 0;
 let yourShare = 0;  // only paid amount
 let pendingOwed = 0; // unpaid amount
+ let utilitiesTotal = 0;
 
 for (const expense of expenses) {
   const splits = splitsMap[expense.id] || [];
