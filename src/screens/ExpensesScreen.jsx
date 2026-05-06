@@ -568,26 +568,46 @@ setFilteredExpenses(approvedExpenses);
   };
 
   const handleConfirmPayment = async (proof, split) => {
-    setLoading(true);
-    await supabase.from('payment_proofs').update({ status: 'verified' }).eq('id', proof.id);
-    await supabase.from('expense_splits').update({ status: 'approved', updated_at: new Date().toISOString() }).eq('id', split.id);
-    // Check if all splits are approved
-    const { data: allSplits } = await supabase.from('expense_splits').select('status').eq('expense_id', split.expense_id);
-    const allApproved = allSplits.every(s => s.status === 'approved');
-    if (allApproved) {
-      await supabase.from('expenses').update({ status: 'paid' }).eq('id', split.expense_id);
-    }
-    await supabase.from('notifications').insert({
-      user_id: proof.submitted_by,
-      title: 'Payment Confirmed! ✅',
-      message: `Your payment has been verified!`,
-      type: 'payment_confirmed',
-    });
-    setShowViewProofModal(false);
-    showToast('Payment confirmed! ✅');
-    setLoading(false);
-    await handleHouseholdSelect(selectedHousehold, currentUser, profile);
-  };
+  setLoading(true);
+  
+  await supabase.from('payment_proofs').update({ status: 'verified' }).eq('id', proof.id);
+  await supabase.from('expense_splits').update({ status: 'approved', updated_at: new Date().toISOString() }).eq('id', split.id);
+  
+  // If expense is still pending_approval, approve it now
+  const { data: expense } = await supabase
+    .from('expenses')
+    .select('approval_status')
+    .eq('id', split.expense_id)
+    .single();
+  if (expense && expense.approval_status === 'pending_approval') {
+    await supabase
+      .from('expenses')
+      .update({ approval_status: 'approved' })
+      .eq('id', split.expense_id);
+  }
+  
+  // Check if all splits approved -> mark expense as paid
+  const { data: allSplits } = await supabase
+    .from('expense_splits')
+    .select('status')
+    .eq('expense_id', split.expense_id);
+  const allApproved = allSplits.every(s => s.status === 'approved');
+  if (allApproved) {
+    await supabase.from('expenses').update({ status: 'paid' }).eq('id', split.expense_id);
+  }
+  
+  await supabase.from('notifications').insert({
+    user_id: proof.submitted_by,
+    title: 'Payment Confirmed! ✅',
+    message: `Your payment has been verified!`,
+    type: 'payment_confirmed',
+  });
+  
+  setShowViewProofModal(false);
+  showToast('Payment confirmed! ✅');
+  setLoading(false);
+  await handleHouseholdSelect(selectedHousehold, currentUser, profile);
+};
 
   const handleRejectProof = async () => {
     if (!rejectProofReason.trim()) { showToast('Please provide a rejection reason.', 'error'); return; }

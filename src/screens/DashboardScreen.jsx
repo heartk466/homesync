@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import {
   BarChart, Bar, XAxis, ResponsiveContainer,
-  PieChart, Pie, Cell, Legend
 } from 'recharts';
 import {
   Home, FileText, Users, Zap, BarChart2, Settings,
@@ -22,8 +21,8 @@ export default function DashboardScreen() {
 
   const [profile, setProfile] = useState(null);
   const [household, setHousehold] = useState(null);
-  const [totalSpent, setTotalSpent] = useState(0);        // User's approved share this month
-  const [utilitiesTotal, setUtilitiesTotal] = useState(0); // User's approved share for utilities
+  const [totalSpent, setTotalSpent] = useState(0);
+  const [utilitiesTotal, setUtilitiesTotal] = useState(0);
   const [lastMonthSpent, setLastMonthSpent] = useState(0);
   const [monthlyData, setMonthlyData] = useState([]);
   const [categoryData, setCategoryData] = useState([]);
@@ -56,16 +55,6 @@ export default function DashboardScreen() {
     return profile.full_name.split(' ')[0];
   };
 
-  const getInitials = () => {
-    if (!profile?.full_name) return 'U';
-    return profile.full_name
-      .split(' ')
-      .map(n => n[0])
-      .slice(0, 2)
-      .join('')
-      .toUpperCase();
-  };
-
   const getPercentChange = () => {
     if (lastMonthSpent === 0) return null;
     const change = ((totalSpent - lastMonthSpent) / lastMonthSpent) * 100;
@@ -84,11 +73,7 @@ export default function DashboardScreen() {
       text: `Join my household "${household?.name}" on HomeSync! Use code: ${household?.code}`,
     };
     if (navigator.share) {
-      try {
-        await navigator.share(shareData);
-      } catch {
-        handleCopyCode();
-      }
+      try { await navigator.share(shareData); } catch { handleCopyCode(); }
     } else {
       handleCopyCode();
       alert('Code copied! Share it with your household members.');
@@ -100,59 +85,36 @@ export default function DashboardScreen() {
     navigate('/');
   };
 
-  const handlePhotoClick = () => {
-    fileInputRef.current.click();
-  };
+  const handlePhotoClick = () => fileInputRef.current.click();
 
   const handlePhotoChange = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-
     const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
     if (!allowedTypes.includes(file.type)) {
       alert('Please select a JPG, PNG or WebP image.');
       return;
     }
-
     if (file.size > 2 * 1024 * 1024) {
       alert('Image must be less than 2MB.');
       return;
     }
-
     setUploadingPhoto(true);
-
     try {
       const fileExt = file.name.split('.').pop();
       const fileName = `${currentUser.id}.${fileExt}`;
-
       const { error: uploadError } = await supabase.storage
         .from('avatars')
         .upload(fileName, file, { upsert: true });
-
-      if (uploadError) {
-        alert('Failed to upload photo. Try again.');
-        setUploadingPhoto(false);
-        return;
-      }
-
-      const { data: urlData } = supabase.storage
-        .from('avatars')
-        .getPublicUrl(fileName);
-
+      if (uploadError) throw uploadError;
+      const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(fileName);
       const publicUrl = urlData.publicUrl;
-
-      await supabase
-        .from('profiles')
-        .update({ avatar_url: publicUrl })
-        .eq('id', currentUser.id);
-
+      await supabase.from('profiles').update({ avatar_url: publicUrl }).eq('id', currentUser.id);
       setAvatarUrl(publicUrl);
       setProfile(prev => ({ ...prev, avatar_url: publicUrl }));
-
-    } catch {
-      alert('Something went wrong. Try again.');
+    } catch (err) {
+      alert('Failed to upload photo.');
     }
-
     setUploadingPhoto(false);
   };
 
@@ -168,16 +130,13 @@ export default function DashboardScreen() {
       alert('Full name cannot be empty.');
       return;
     }
-
     setEditLoading(true);
-
     const { error } = await supabase
       .from('profiles')
       .update({ full_name: editForm.full_name.trim() })
       .eq('id', currentUser.id);
-
     if (error) {
-      alert('Failed to update profile. Try again.');
+      alert('Failed to update profile.');
     } else {
       setProfile(prev => ({ ...prev, full_name: editForm.full_name.trim() }));
       setEditSuccess(true);
@@ -186,21 +145,16 @@ export default function DashboardScreen() {
         setEditSuccess(false);
       }, 1500);
     }
-
     setEditLoading(false);
   };
 
-  // Helper to fetch expense splits
   const fetchExpenseSplits = async (expenseIds) => {
     if (!expenseIds.length) return {};
     const { data, error } = await supabase
       .from('expense_splits')
       .select('expense_id, user_id, share_amount, status')
       .in('expense_id', expenseIds);
-    if (error) {
-      console.error(error);
-      return {};
-    }
+    if (error) return {};
     const grouped = {};
     data.forEach(split => {
       if (!grouped[split.expense_id]) grouped[split.expense_id] = [];
@@ -221,7 +175,6 @@ export default function DashboardScreen() {
         .eq('id', user.id)
         .single();
       setProfile(profileData);
-
       if (profileData?.avatar_url) setAvatarUrl(profileData.avatar_url);
 
       if (profileData?.household_id) {
@@ -243,19 +196,19 @@ export default function DashboardScreen() {
       const expenseIds = allExpenses.map(e => e.id);
       const splitsByExpense = await fetchExpenseSplits(expenseIds);
 
-      // Calculate user's approved share for this month
       let myApprovedTotal = 0;
       let myUtilitiesTotal = 0;
       let myPendingTotal = 0;
       let lastMonthTotal = 0;
 
+      // Main sum: only count if expense.approval_status === 'approved' AND split.status === 'approved'
       for (const expense of allExpenses) {
         const splits = splitsByExpense[expense.id] || [];
         const mySplit = splits.find(s => s.user_id === user.id);
         if (mySplit) {
           const amount = Number(mySplit.share_amount);
           const expenseDate = expense.expense_date;
-          if (mySplit.status === 'approved') {
+          if (mySplit.status === 'approved' && expense.approval_status === 'approved') {
             if (expenseDate >= firstDay && expenseDate <= lastDay) {
               myApprovedTotal += amount;
               if (UTILITY_CATEGORIES.includes(expense.category)) {
@@ -265,33 +218,31 @@ export default function DashboardScreen() {
             if (expenseDate >= lastMonthStart && expenseDate <= lastMonthEnd) {
               lastMonthTotal += amount;
             }
-          } else if (mySplit.status !== 'approved') {
-            // Pending or awaiting approval
-            if (expenseDate >= firstDay && expenseDate <= lastDay) {
-              myPendingTotal += amount;
-            }
+          } else if (mySplit.status !== 'approved' && expenseDate >= firstDay && expenseDate <= lastDay) {
+            myPendingTotal += amount;
           }
         }
       }
+
       setTotalSpent(myApprovedTotal);
       setUtilitiesTotal(myUtilitiesTotal);
       setPendingAmount(myPendingTotal);
       setLastMonthSpent(lastMonthTotal);
 
-      // Category breakdown (only user's approved shares this month)
+      // Category breakdown
       const categories = {};
       for (const expense of allExpenses) {
         if (!(expense.expense_date >= firstDay && expense.expense_date <= lastDay)) continue;
         const splits = splitsByExpense[expense.id] || [];
         const mySplit = splits.find(s => s.user_id === user.id);
-        if (mySplit && mySplit.status === 'approved') {
+        if (mySplit && mySplit.status === 'approved' && expense.approval_status === 'approved') {
           const cat = expense.category;
           categories[cat] = (categories[cat] || 0) + Number(mySplit.share_amount);
         }
       }
       setCategoryData(Object.entries(categories).map(([name, value]) => ({ name, value })));
 
-      // Group spending (same logic)
+      // Group spending
       const { data: memberGroups } = await supabase
         .from('group_members')
         .select('group_id')
@@ -308,7 +259,7 @@ export default function DashboardScreen() {
         groupsList.map(async (group) => {
           const { data: groupExpenses } = await supabase
             .from('expenses')
-            .select('id, amount, category')
+            .select('id, amount, category, approval_status')
             .eq('group_id', group.id)
             .eq('status', 'paid')
             .eq('approval_status', 'approved')
@@ -330,7 +281,7 @@ export default function DashboardScreen() {
       setGroupSpending(groupsWithPaidTotals);
       setTotalGroupPaid(groupsWithPaidTotals.reduce((sum, g) => sum + g.currentMonthPaid, 0));
 
-      // Monthly trend (user's approved shares only)
+      // Monthly trend (last 6 months)
       const months = [];
       for (let i = 5; i >= 0; i--) {
         const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
@@ -338,7 +289,7 @@ export default function DashboardScreen() {
         const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().split('T')[0];
         let monthTotal = 0;
         for (const expense of allExpenses) {
-          if (expense.expense_date >= first && expense.expense_date <= last) {
+          if (expense.expense_date >= first && expense.expense_date <= last && expense.approval_status === 'approved') {
             const splits = splitsByExpense[expense.id] || [];
             const mySplit = splits.find(s => s.user_id === user.id);
             if (mySplit && mySplit.status === 'approved') {
@@ -354,10 +305,7 @@ export default function DashboardScreen() {
     }
   };
 
-  useEffect(() => {
-    fetchData();
-  }, []);
-
+  useEffect(() => { fetchData(); }, []);
   useEffect(() => {
     if (!currentUser?.id || !household?.id) return;
     const channel = supabase
@@ -383,7 +331,6 @@ export default function DashboardScreen() {
     <div className="dashboard">
       <TopBar profile={profile} setProfile={setProfile} household={household} currentUser={currentUser} notifications={[]} unreadCount={0} title="Dashboard" showBell={false} />
       <div className="dash-content">
-        {/* Card 1 — Your Total Spent This Month */}
         <div className="dash-card">
           <div className="card-left">
             <p className="card-greeting">{getGreeting()}, {getFirstName()}!</p>
@@ -409,31 +356,24 @@ export default function DashboardScreen() {
           </div>
         </div>
 
-        {/* Card 2 — Utilities Paid (Approved shares for utility categories) */}
         <div className="dash-card">
           <div className="card-left">
             <p className="card-label">Utilities Paid</p>
             <p className="card-amount">₱ {utilitiesTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
             <p className="card-sub">your share of utilities this month</p>
           </div>
-          <div className="card-chart">
-            <Zap size={32} color="#3B2AAB" />
-          </div>
+          <div className="card-chart"><Zap size={32} color="#3B2AAB" /></div>
         </div>
 
-        {/* Card 3 — Group Spending (your share) */}
         <div className="dash-card group-spending-card" onClick={() => setShowGroupModal(true)}>
           <div className="card-left">
             <p className="card-label">Group Spending</p>
             <p className="card-amount">₱ {totalGroupPaid.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
             <p className="card-sub">your share across groups this month</p>
           </div>
-          <div className="card-chart">
-            <p className="group-card-action">View details</p>
-          </div>
+          <div className="card-chart"><p className="group-card-action">View details</p></div>
         </div>
 
-        {/* Card 4 — Quick Actions */}
         <div className="dash-card quick-actions">
           <p className="quick-title">Quick Actions</p>
           <button className="quick-btn" onClick={() => navigate('/expenses')}>Add Expense</button>
