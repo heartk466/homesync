@@ -130,8 +130,9 @@ export default function ExpensesScreen() {
     const expensesData = await fetchAllHouseholdExpenses(profileData.household_id);
     if (!expensesData) return;
 
-    setExpenses(expensesData);
-    setFilteredExpenses(expensesData);
+    const approvedExpenses = expensesData.filter(e => e.approval_status === 'approved');
+setExpenses(approvedExpenses);
+setFilteredExpenses(approvedExpenses);
     await fetchExpenseSplits(expensesData.map(e => e.id));
 
     // Pending approvals (splits with status pending_verification)

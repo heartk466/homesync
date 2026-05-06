@@ -60,6 +60,12 @@ export default function GroupDetailScreen() {
   const [rejectReason, setRejectReason] = useState('');
   const [rejectProofReason, setRejectProofReason] = useState('');
   const [toast, setToast] = useState(null);
+  const [pendingExpenseApprovals, setPendingExpenseApprovals] = useState([]);
+const [showRejectExpenseModal, setShowRejectExpenseModal] = useState(false);
+const [rejectExpenseReason, setRejectExpenseReason] = useState('');
+const [selectedPendingExpense, setSelectedPendingExpense] = useState(null);
+const [showUploadAfterAdd, setShowUploadAfterAdd] = useState(false);
+const [justAddedExpense, setJustAddedExpense] = useState(null);
   const [loadingAction, setLoadingAction] = useState(false);
 
   const [expenseForm, setExpenseForm] = useState({
@@ -218,6 +224,18 @@ useEffect(() => {
 
     const proofsData = proofsResult.data || [];
     setAllPaymentProofs(proofsData);
+
+    // Fetch pending expense approvals for owner
+if (isAdmin) {
+  const { data: pendingExp } = await supabase
+    .from('expenses')
+    .select('*, profiles:created_by(id, full_name, avatar_url)')
+    .eq(contextType === 'household' ? 'household_id' : 'group_id', id)
+    .eq('approval_status', 'pending_approval');
+  setPendingExpenseApprovals(pendingExp || []);
+} else {
+  setPendingExpenseApprovals([]);
+}
 
     // Compute pending approvals
     const pending = [];
