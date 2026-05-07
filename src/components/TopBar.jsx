@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import { Bell, X, LogOut, Camera, Edit } from 'lucide-react';
 import './TopBar.css';
+import logo from '../assets/Homesync.svg';
 
 export default function TopBar({
   profile,
@@ -215,12 +216,10 @@ export default function TopBar({
 
       {/* Top Bar */}
       <div className="topbar">
-        <div className="topbar-title">
-          <svg viewBox="0 0 32 32" fill="none" className="topbar-logo-icon">
-            <path d="M16 4L2 14v16h10v-8h8v8h10V14L16 4z" fill="#3B2AAB"/>
-          </svg>
-          <span>{title}</span>
-        </div>
+  <img src={logo} alt="homesync" className="topbar-logo-icon" />
+  <span>{title}</span>
+</div>
+        
         <div className="topbar-actions">
           {showBell && (
             <button
