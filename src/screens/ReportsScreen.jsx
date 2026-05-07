@@ -151,46 +151,36 @@ export default function ReportsScreen() {
       ? await fetchExpenseSplits(allExpenseIds)
       : {};
 
-    // ── Debug: log what we fetched ──
-    console.log('[Reports] allApprovedExpenses count:', allApprovedExpenses.length);
-    console.log('[Reports] splitsMap keys count:', Object.keys(splitsMap).length);
-    console.log('[Reports] targetUserId:', targetUserId);
-
-    // ── Helpers using CONFIRMED DB status values ──
-    // expense_splits.status: 'approved' = paid, 'unpaid' = pending
-    // Fallback: if no expense_splits row found, check expense.members_split JSONB
-    const getUserSplitFromTable = (expense) => {
-      const splits = splitsMap[expense.id] || [];
-      return splits.find(s => s.user_id === targetUserId) || null;
+    // ── Get user's share from members_split JSONB ──────────────────────────
+    // members_split is stored as { "userId1": "3500.00", "userId2": "3500.00" }
+    // This is the primary source of truth — expense_splits table is only
+    // populated after proof submission and may be empty for older expenses.
+    const getUserShareAmount = (expense) => {
+      if (!expense.members_split) return 0;
+      const split = expense.members_split;
+      // Direct key lookup: split[userId] = share amount string
+      if (split[targetUserId] !== undefined) {
+        return Number(split[targetUserId]) || 0;
+      }
+      // Fallback: try expense_splits table if available
+      const tableSplits = splitsMap[expense.id] || [];
+      const tableRow = tableSplits.find(s => s.user_id === targetUserId);
+      if (tableRow) return Number(tableRow.share_amount) || 0;
+      return 0;
     };
 
-    const getUserSplitFromJsonb = (expense) => {
-      // members_split is a JSONB array: [{user_id, share_amount, status}, ...]
-      if (!expense.members_split) return null;
-      const arr = Array.isArray(expense.members_split)
-        ? expense.members_split
-        : Object.values(expense.members_split);
-      return arr.find(s => s.user_id === targetUserId) || null;
-    };
-
-    const getUserSplit = (expense) => {
-      return getUserSplitFromTable(expense) || getUserSplitFromJsonb(expense);
-    };
-
+    // "Paid" = expense.status === 'paid' (set by ExpensesScreen when all splits approved)
+    // "Pending" = expense is approved but status is 'pending' or 'verifying'
     const getPaidAmountForUser = (expense) => {
-      const split = getUserSplit(expense);
-      if (!split) return 0;
-      // expense_splits: status='approved' means paid
-      // JSONB fallback: status='approved' or expense.status='paid'
-      const isPaid = split.status === 'approved' || expense.status === 'paid';
-      return isPaid ? Number(split.share_amount || 0) : 0;
+      if (expense.status !== 'paid') return 0;
+      return getUserShareAmount(expense);
     };
 
     const getPendingAmountForUser = (expense) => {
-      const split = getUserSplit(expense);
-      if (!split) return 0;
-      const isPending = split.status === 'unpaid' || split.status === 'pending';
-      return isPending ? Number(split.share_amount || 0) : 0;
+      if (expense.status === 'paid') return 0;
+      // Only count if user has a split assigned (is part of this expense)
+      const share = getUserShareAmount(expense);
+      return share > 0 ? share : 0;
     };
 
     // ── Step 4: Filter by year ──
