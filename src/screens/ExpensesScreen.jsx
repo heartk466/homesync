@@ -646,7 +646,8 @@ export default function ExpensesScreen() {
         showBell={true}
       />
 
-      <div className="expenses-content">
+      {/* ── Sticky header: household tabs + stat cards + search ── */}
+      <div className="expenses-sticky-header">
         {households.length > 0 && (
           <>
             <div className="hh-search-row">
@@ -727,6 +728,17 @@ export default function ExpensesScreen() {
           </div>
         </div>
 
+        <div className="search-filter-row">
+          <div className="search-input-wrap">
+            <Search size={14} className="search-icon" />
+            <input type="text" placeholder="Search expenses" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="search-input" />
+          </div>
+          <button className="filter-btn" onClick={() => setShowFilter(true)}><Filter size={14} /> Filter</button>
+        </div>
+      </div>
+
+      {/* ── Scrollable expense list ── */}
+      <div className="expenses-content">
         {isAdmin && pendingApprovals.length > 0 && (
           <div className="pending-section">
             <p className="pending-section-title">⏳ Pending Payment Approvals ({pendingApprovals.length})</p>
@@ -749,14 +761,6 @@ export default function ExpensesScreen() {
             })}
           </div>
         )}
-
-        <div className="search-filter-row">
-          <div className="search-input-wrap">
-            <Search size={14} className="search-icon" />
-            <input type="text" placeholder="Search expenses" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="search-input" />
-          </div>
-          <button className="filter-btn" onClick={() => setShowFilter(true)}><Filter size={14} /> Filter</button>
-        </div>
 
         {filteredExpenses.length === 0 && (
           <div className="expenses-empty">
@@ -785,7 +789,7 @@ export default function ExpensesScreen() {
                   <p className="expense-name">{expense.title}</p>
                   <p className="expense-amount">₱{Number(expense.amount).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
                 </div>
-                <p className="expense-meta">{expense.expense_date}{expense.location ? ` · ${expense.location}` : ''}</p>
+                <p className="expense-meta">{expense.expense_date} · {selectedHousehold?.name || expense.location || ''}</p>
                 <div className="expense-footer-row">
                   <div className="expense-members">
                     {expenseMembers.slice(0, 3).map((m, i) => (
