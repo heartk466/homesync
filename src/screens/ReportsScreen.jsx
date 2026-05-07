@@ -94,7 +94,7 @@ export default function ReportsScreen() {
     return grouped;
   };
 
-  const fetchReportData = async (houseData, memberId = null) => {
+  const fetchReportData = async (houseData, memberId = null, resolvedUserId = null) => {
     if (!houseData) return;
 
     const now = new Date();
@@ -106,8 +106,9 @@ export default function ReportsScreen() {
     const allExpenses = await fetchAllHouseholdExpenses(houseData.id);
     const splitsMap = await fetchExpenseSplits(allExpenses.map(e => e.id));
 
-    // Determine filter user ID: if memberId provided and admin, use that; else use currentUser.id
-    const targetUserId = memberId && isAdmin ? memberId : currentUser?.id;
+    // Determine filter user ID: use resolvedUserId (passed directly) or memberId or currentUser.id
+    const baseUserId = resolvedUserId || currentUser?.id;
+    const targetUserId = memberId || baseUserId;
 
     // Helper to get approved split amount for an expense for the target user
     const getApprovedAmountForUser = (expense) => {
@@ -207,8 +208,9 @@ export default function ReportsScreen() {
     setRecentActivity(activity || []);
   };
 
-  const fetchHouseholdMembers = async (householdId) => {
+  const fetchHouseholdMembers = async (householdId, resolvedUserId = null) => {
     if (!householdId) return;
+    const uid = resolvedUserId || currentUser?.id;
     const { data: memberRows } = await supabase
       .from('household_members')
       .select('user_id, role, status')
@@ -226,13 +228,11 @@ export default function ReportsScreen() {
       }));
       setHouseholdMembers(membersWithProfiles);
       // Check if current user is owner
-      const userMember = membersWithProfiles.find(m => m.user_id === currentUser?.id);
+      const userMember = membersWithProfiles.find(m => m.user_id === uid);
       setIsAdmin(userMember?.role === 'owner');
       // If admin and no member selected, default to current user
-      if (!selectedMemberId && userMember?.role === 'owner') {
-        setSelectedMemberId(currentUser.id);
-      } else if (!selectedMemberId) {
-        setSelectedMemberId(currentUser.id);
+      if (!selectedMemberId && uid) {
+        setSelectedMemberId(uid);
       }
     } else {
       setHouseholdMembers([]);
@@ -281,8 +281,8 @@ export default function ReportsScreen() {
       setReportForm(prev => ({ ...prev, group_filter: primary?.name || '' }));
 
       if (primary) {
-        await fetchHouseholdMembers(primary.id);
-        await fetchReportData(primary, currentUser?.id);
+        await fetchHouseholdMembers(primary.id, user.id);
+        await fetchReportData(primary, user.id, user.id);
       }
       await fetchNotifications(user.id);
 
@@ -318,14 +318,14 @@ export default function ReportsScreen() {
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'expenses',
         filter: `household_id=eq.${selectedHousehold.id}`,
-      }, () => fetchReportData(selectedHousehold, selectedMemberId))
+      }, () => fetchReportData(selectedHousehold, selectedMemberId, currentUser?.id))
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'expense_splits',
-      }, () => fetchReportData(selectedHousehold, selectedMemberId))
+      }, () => fetchReportData(selectedHousehold, selectedMemberId, currentUser?.id))
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'utilities',
         filter: `household_id=eq.${selectedHousehold.id}`,
-      }, () => fetchReportData(selectedHousehold, selectedMemberId))
+      }, () => fetchReportData(selectedHousehold, selectedMemberId, currentUser?.id))
       .subscribe();
 
     return () => supabase.removeChannel(channel);
@@ -333,8 +333,8 @@ export default function ReportsScreen() {
 
   useEffect(() => {
     if (selectedHousehold && currentUser) {
-      fetchHouseholdMembers(selectedHousehold.id);
-      fetchReportData(selectedHousehold, selectedMemberId);
+      fetchHouseholdMembers(selectedHousehold.id, currentUser.id);
+      fetchReportData(selectedHousehold, selectedMemberId || currentUser.id, currentUser.id);
     }
   }, [selectedHousehold, selectedMemberId, currentUser]);
 
@@ -347,15 +347,15 @@ export default function ReportsScreen() {
     setSelectedHousehold(h);
     setShowHouseholdDropdown(false);
     setHouseholdSearch('');
-    await fetchHouseholdMembers(h.id);
-    await fetchReportData(h, currentUser.id);
+    await fetchHouseholdMembers(h.id, currentUser?.id);
+    await fetchReportData(h, currentUser?.id, currentUser?.id);
     showToast(`Switched to ${h.name}`);
   };
 
   const handleMemberChange = (memberId) => {
     setSelectedMemberId(memberId);
     setShowMemberDropdown(false);
-    fetchReportData(selectedHousehold, memberId);
+    fetchReportData(selectedHousehold, memberId, currentUser?.id);
     showToast(`Viewing report for ${householdMembers.find(m => m.user_id === memberId)?.profiles?.full_name}`);
   };
 
@@ -370,7 +370,7 @@ export default function ReportsScreen() {
       });
       showToast('Report generated! ✅');
       setShowGenerateModal(false);
-      await fetchReportData(selectedHousehold, selectedMemberId);
+      await fetchReportData(selectedHousehold, selectedMemberId || currentUser?.id, currentUser?.id);
     } catch {
       showToast('Failed to generate report.', 'error');
     }
