@@ -258,12 +258,23 @@ export default function UtilitiesScreen() {
     setFilteredUtilities(utilityItems);
 
     // Summary counts
+
+    // Connected Utility Providers = number of unique utility categories in this household
     const uniqueCategories = [...new Set(utilityItems.map(u => u.category))];
     setProviderCount(uniqueCategories.length);
+
+    // Active Utility Subscription (untouched for now)
     const activeCount = utilityItems.filter(u => u.status !== 'paid').length;
     setActiveSubscriptions(activeCount);
-    const pendingCount = utilityItems.filter(u => u.myStatus !== 'approved').length;
-    setPendingSplits(pendingCount);
+
+    // Pending Splits = expenses not yet approved by owner
+    // Covers: approval_status 'pending_approval' (owner hasn't reviewed yet)
+    // AND splits with status 'pending_verification' (member submitted proof, awaiting owner approval)
+    const pendingApprovalCount = utilityItems.filter(u =>
+      u.approval_status === 'pending_approval' ||
+      u.splits.some(s => s.status === 'pending_verification')
+    ).length;
+    setPendingSplits(pendingApprovalCount);
 
     setUtilityForm(prev => ({ ...prev, location: household.name }));
   };
@@ -437,7 +448,8 @@ export default function UtilitiesScreen() {
           filteredUtilities.map(utility => {
             const config = getUtilityConfig(utility.category);
             const myShare = utility.myShareAmount;
-            const isPaid = utility.myStatus === 'approved';
+            // "Paid" = expense status is 'paid' OR current user's own split is approved
+            const isPaid = utility.status === 'paid' || utility.myStatus === 'approved';
             return (
               <div key={utility.id} className="utility-item">
                 <div className="utility-icon-wrap" style={{ background: config.bg, color: config.color }}>{config.icon}</div>
@@ -453,10 +465,22 @@ export default function UtilitiesScreen() {
                 </div>
                 <div className="utility-right">
                   <span className="status-badge" style={{
-                    background: isPaid ? '#D1FAE5' : '#FFF3CD',
-                    color: isPaid ? '#065F46' : '#856404'
+                    background: isPaid
+                      ? '#D1FAE5'
+                      : utility.approval_status === 'pending_approval'
+                        ? '#EDE9FE'
+                        : '#FFF3CD',
+                    color: isPaid
+                      ? '#065F46'
+                      : utility.approval_status === 'pending_approval'
+                        ? '#6D28D9'
+                        : '#856404'
                   }}>
-                    {isPaid ? '✓ Paid' : '⏳ Pending'}
+                    {isPaid
+                      ? '✓ Paid'
+                      : utility.approval_status === 'pending_approval'
+                        ? '🕐 Needs Approval'
+                        : '⏳ Pending'}
                   </span>
                   {utility.source === 'expenses' && <span className="source-label">📋 From Expenses</span>}
                   {isAdmin && (
