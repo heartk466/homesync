@@ -13,7 +13,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import './ReportsScreen.css';
 
-const COLORS = ['#3B2AAB', '#AE96FF', '#D4C5FF', '#6B46C1', '#9F7AEA'];
+const COLORS = ['#3B2AAB', '#2D1A7A', '#D4C5FF', '#AE96FF', '#6B46C1', '#9F7AEA', '#7C3AED', '#C4B5FD'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 export default function ReportsScreen() {
@@ -94,8 +94,13 @@ export default function ReportsScreen() {
     return grouped;
   };
 
+  // Aggregate report data across ALL households the user belongs to
   const fetchReportData = async (houseData, memberId = null, resolvedUserId = null) => {
     if (!houseData) return;
+
+    // Use the directly passed userId (avoids stale state issue)
+    const targetUserId = resolvedUserId || memberId || currentUser?.id;
+    if (!targetUserId) return;
 
     const now = new Date();
     const yearStart = new Date(now.getFullYear(), 0, 1).toISOString().split('T')[0];
@@ -103,52 +108,74 @@ export default function ReportsScreen() {
     const lastYearStart = new Date(now.getFullYear() - 1, 0, 1).toISOString().split('T')[0];
     const lastYearEnd = new Date(now.getFullYear() - 1, 11, 31).toISOString().split('T')[0];
 
-    const allExpenses = await fetchAllHouseholdExpenses(houseData.id);
-    const splitsMap = await fetchExpenseSplits(allExpenses.map(e => e.id));
+    // ── Fetch expenses from ALL households the user is a member of ──
+    // allHouseholds is set in state, but we also have houseData for the primary.
+    // Pull the full list fresh from supabase to avoid stale-state issues.
+    const { data: memberRows } = await supabase
+      .from('household_members')
+      .select('household_id')
+      .eq('user_id', targetUserId)
+      .eq('status', 'active');
 
-    // Determine filter user ID: use resolvedUserId (passed directly) or memberId or currentUser.id
-    const baseUserId = resolvedUserId || currentUser?.id;
-    const targetUserId = memberId || baseUserId;
+    const householdIds = memberRows?.map(r => r.household_id) || [houseData.id];
 
-    // Helper to get approved split amount for an expense for the target user
-    const getApprovedAmountForUser = (expense) => {
+    // Fetch all expenses across every household
+    const expenseResults = await Promise.all(
+      householdIds.map(hid => fetchAllHouseholdExpenses(hid))
+    );
+    const allExpenses = expenseResults.flat();
+
+    // Fetch all splits for those expenses in one shot
+    const allExpenseIds = allExpenses.map(e => e.id);
+    const splitsMap = await fetchExpenseSplits(allExpenseIds);
+
+    // ── Helpers ──
+    const getPaidAmountForUser = (expense) => {
       const splits = splitsMap[expense.id] || [];
       const userSplit = splits.find(s => s.user_id === targetUserId);
-      return userSplit && userSplit.status === 'approved' ? Number(userSplit.share_amount) : 0;
+      // "paid" = split exists and status is 'approved' OR 'paid'
+      return userSplit && (userSplit.status === 'approved' || userSplit.status === 'paid')
+        ? Number(userSplit.share_amount)
+        : 0;
     };
 
     const getPendingAmountForUser = (expense) => {
       const splits = splitsMap[expense.id] || [];
       const userSplit = splits.find(s => s.user_id === targetUserId);
-      return userSplit && userSplit.status !== 'approved' ? Number(userSplit.share_amount) : 0;
+      // "pending" = split exists but NOT yet paid/approved
+      return userSplit && userSplit.status !== 'approved' && userSplit.status !== 'paid'
+        ? Number(userSplit.share_amount)
+        : 0;
     };
 
-    // Yearly total (approved splits only for target user)
-    const thisYearExpenses = allExpenses.filter(e => e.expense_date >= yearStart && e.expense_date <= yearEnd);
-    const total = thisYearExpenses.reduce((sum, e) => sum + getApprovedAmountForUser(e), 0);
+    // ── Filter by year ──
+    const thisYearExpenses = allExpenses.filter(
+      e => e.expense_date >= yearStart && e.expense_date <= yearEnd
+    );
+    const lastYearExpenses = allExpenses.filter(
+      e => e.expense_date >= lastYearStart && e.expense_date <= lastYearEnd
+    );
+
+    // ── Card 1: Total Household Spent (paid splits across all households) ──
+    const total = thisYearExpenses.reduce((sum, e) => sum + getPaidAmountForUser(e), 0);
     setYearlyTotal(total);
 
-    const lastYearExpenses = allExpenses.filter(e => e.expense_date >= lastYearStart && e.expense_date <= lastYearEnd);
-    const lastTotal = lastYearExpenses.reduce((sum, e) => sum + getApprovedAmountForUser(e), 0);
+    const lastTotal = lastYearExpenses.reduce((sum, e) => sum + getPaidAmountForUser(e), 0);
     setLastYearTotal(lastTotal);
 
-    // Monthly data for target user
+    // Monthly bar data (paid)
     const monthly = MONTHS.map((month, i) => {
-      const monthExpenses = thisYearExpenses.filter(e => {
-        const d = new Date(e.expense_date);
-        return d.getMonth() === i;
-      });
-      const amount = monthExpenses.reduce((sum, e) => sum + getApprovedAmountForUser(e), 0);
-      return { month, amount };
+      const monthExpenses = thisYearExpenses.filter(e => new Date(e.expense_date).getMonth() === i);
+      return { month, amount: monthExpenses.reduce((sum, e) => sum + getPaidAmountForUser(e), 0) };
     });
     setMonthlyData(monthly);
 
-    // Category breakdown for target user
+    // ── Card 2: Category breakdown (paid splits across all households) ──
     const categories = {};
     thisYearExpenses.forEach(e => {
-      const userAmount = getApprovedAmountForUser(e);
-      if (userAmount > 0) {
-        categories[e.category] = (categories[e.category] || 0) + userAmount;
+      const paid = getPaidAmountForUser(e);
+      if (paid > 0 && e.category) {
+        categories[e.category] = (categories[e.category] || 0) + paid;
       }
     });
     setCategoryData(
@@ -157,27 +184,28 @@ export default function ReportsScreen() {
         .sort((a, b) => b.value - a.value)
     );
 
-    // Pending balances for target user
+    // ── Card 3: Pending balances (unpaid splits across all households) ──
     const pending = thisYearExpenses.reduce((sum, e) => sum + getPendingAmountForUser(e), 0);
     setPendingBalances(pending);
 
     const lastPending = lastYearExpenses.reduce((sum, e) => sum + getPendingAmountForUser(e), 0);
     setLastYearPending(lastPending);
 
-    // Pending by category for target user
+    // Pending by category (for bar chart)
     const pendingCats = {};
     thisYearExpenses.forEach(e => {
       const userPending = getPendingAmountForUser(e);
-      if (userPending > 0) {
+      if (userPending > 0 && e.category) {
         pendingCats[e.category] = (pendingCats[e.category] || 0) + userPending;
       }
     });
     setPendingByCategory(Object.entries(pendingCats).map(([name, value]) => ({ name, value })));
 
-    // Statement history – group by month (for target user)
+    // ── Statement history: group by month (paid splits, primary household only) ──
+    const primaryExpenses = thisYearExpenses.filter(e => e.household_id === houseData.id);
     const monthlyStatements = {};
-    thisYearExpenses.forEach(e => {
-      const userAmount = getApprovedAmountForUser(e);
+    primaryExpenses.forEach(e => {
+      const userAmount = getPaidAmountForUser(e);
       const d = new Date(e.expense_date);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
       if (!monthlyStatements[key]) {
@@ -194,11 +222,10 @@ export default function ReportsScreen() {
         monthlyStatements[key].total += userAmount;
       }
     });
-
     const statements = Object.values(monthlyStatements).sort((a, b) => b.id.localeCompare(a.id));
     setStatementHistory(statements);
 
-    // Recent activity
+    // Recent activity (primary household)
     const { data: activity } = await supabase
       .from('report_activity')
       .select('*, profiles(*)')
@@ -595,72 +622,155 @@ export default function ReportsScreen() {
 
       <div className="reports-content">
 
-        {/* Card 1 — Total Spent (Selected Member) */}
+        {/* Card 1 — Total Household Spent (paid splits across ALL households) */}
         <div className="report-card">
-          <p className="report-card-label">Total Spent (This Year)</p>
+          <p className="report-card-label">Total Household Spent (This Year)</p>
           <div className="report-card-row">
             <div>
               <p className="report-card-amount">
                 ₱ {yearlyTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
               </p>
-              {yoyTotal !== null && (
+              {yoyTotal !== null ? (
                 <p className={`yoy-change ${Number(yoyTotal) > 0 ? 'up' : 'down'}`}>
-                  {Number(yoyTotal) > 0 ? '↑' : '↓'} {Math.abs(yoyTotal)}% Year over year
+                  {Number(yoyTotal) > 0 ? '↑' : '↓'} {Math.abs(yoyTotal)}% Year-over-year
                 </p>
+              ) : (
+                <p className="yoy-change" style={{ color: '#9E8FCC' }}>+ Year-over-year</p>
               )}
             </div>
           </div>
-          <ResponsiveContainer width="100%" height={80}>
-            <BarChart data={monthlyData}>
-              <XAxis dataKey="month" tick={{ fontSize: 9, fill: '#3B2AAB' }} axisLine={false} tickLine={false} />
-              <Bar dataKey="amount" fill="#3B2AAB" radius={[4, 4, 0, 0]}/>
-            </BarChart>
-          </ResponsiveContainer>
+          {monthlyData.some(m => m.amount > 0) ? (
+            <ResponsiveContainer width="100%" height={80}>
+              <BarChart data={monthlyData} barCategoryGap="20%">
+                <XAxis dataKey="month" tick={{ fontSize: 9, fill: '#3B2AAB' }} axisLine={false} tickLine={false} />
+                <Bar dataKey="amount" fill="#3B2AAB" radius={[4, 4, 0, 0]}/>
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <div style={{ height: 80, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <p className="no-data" style={{ margin: 0 }}>No paid expenses yet this year</p>
+            </div>
+          )}
         </div>
 
-        {/* Card 2 — Largest Expense Category */}
+        {/* Card 2 — Largest Expense Category (pie chart + legend, all households) */}
         <div className="report-card">
           <p className="report-card-label">Largest Expense Category</p>
           {categoryData.length > 0 ? (
-            <ResponsiveContainer width="100%" height={140}>
-              <PieChart>
-                <Pie data={categoryData} cx="35%" cy="50%" innerRadius={35} outerRadius={55} dataKey="value">
-                  {categoryData.map((_, i) => (<Cell key={i} fill={COLORS[i % COLORS.length]}/>))}
-                </Pie>
-                <Legend layout="vertical" align="right" verticalAlign="middle" iconSize={8} iconType="circle" formatter={(value) => (<span style={{ fontSize: 11, color: '#3B2AAB' }}>{value}</span>)} />
-                <Tooltip formatter={(value) => `₱${Number(value).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`} />
-              </PieChart>
-            </ResponsiveContainer>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+              {/* Donut chart on the left */}
+              <div style={{ flexShrink: 0, width: 120, height: 120 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={categoryData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={32}
+                      outerRadius={52}
+                      dataKey="value"
+                      paddingAngle={2}
+                    >
+                      {categoryData.map((_, i) => (
+                        <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      formatter={(value) =>
+                        `₱${Number(value).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`
+                      }
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              {/* Legend on the right */}
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {categoryData.map((entry, i) => (
+                  <div key={entry.name} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{
+                      width: 10, height: 10, borderRadius: '50%',
+                      background: COLORS[i % COLORS.length],
+                      flexShrink: 0, display: 'inline-block'
+                    }}/>
+                    <span style={{ fontSize: 11, color: '#3B2AAB', fontWeight: 500 }}>{entry.name}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
           ) : (
             <p className="no-data">No expense data yet</p>
           )}
         </div>
 
-        {/* Card 3 — Pending Balances */}
+        {/* Card 3 — Pending Member Balances (unpaid splits across ALL households) */}
         <div className="report-card">
-          <p className="report-card-label">Pending Balances</p>
-          <div className="report-card-row">
+          <p className="report-card-label">Pending Member Balances</p>
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
             <div>
               <p className="report-card-amount">
                 ₱ {pendingBalances.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
               </p>
-              {yoyPending !== null && (
+              {yoyPending !== null ? (
                 <p className={`yoy-change ${Number(yoyPending) > 0 ? 'up' : 'down'}`}>
-                  {Number(yoyPending) > 0 ? '↑' : '↓'} {Math.abs(yoyPending)}% Year over year
+                  {Number(yoyPending) > 0 ? '↑' : '↓'} {Math.abs(yoyPending)}% Year-over-year
                 </p>
+              ) : (
+                <p className="yoy-change" style={{ color: '#9E8FCC' }}>+ Year-over-year</p>
               )}
             </div>
+            {/* Mini legend top-right */}
+            {pendingByCategory.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#3B2AAB', display: 'inline-block' }}/>
+                  <span style={{ fontSize: 9, color: '#3B2AAB' }}>Total</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#AE96FF', display: 'inline-block' }}/>
+                  <span style={{ fontSize: 9, color: '#3B2AAB' }}>Pending</span>
+                </div>
+              </div>
+            )}
           </div>
-          {pendingByCategory.length > 0 && (
-            <ResponsiveContainer width="100%" height={100}>
-              <BarChart data={pendingByCategory}>
-                <XAxis dataKey="name" tick={{ fontSize: 9, fill: '#3B2AAB' }} axisLine={false} tickLine={false} />
-                <Bar dataKey="value" radius={[4, 4, 0, 0]}>
-                  {pendingByCategory.map((_, i) => (<Cell key={i} fill={COLORS[i % COLORS.length]}/>))}
-                </Bar>
-                <Legend iconSize={8} formatter={(value) => (<span style={{ fontSize: 9, color: '#3B2AAB' }}>{value}</span>)} />
+          {pendingByCategory.length > 0 ? (
+            <ResponsiveContainer width="100%" height={110}>
+              <BarChart
+                data={pendingByCategory}
+                barCategoryGap="25%"
+                barGap={2}
+              >
+                <XAxis
+                  dataKey="name"
+                  tick={{ fontSize: 9, fill: '#3B2AAB' }}
+                  axisLine={false}
+                  tickLine={false}
+                />
+                <Tooltip
+                  formatter={(value) =>
+                    `₱${Number(value).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`
+                  }
+                />
+                {/* "Total" bar (paid + pending for that category) */}
+                <Bar
+                  dataKey="value"
+                  name="Total"
+                  radius={[4, 4, 0, 0]}
+                  fill="#3B2AAB"
+                />
+                {/* "Pending" bar rendered as a lighter overlay — same data but lighter color */}
+                <Bar
+                  dataKey="value"
+                  name="Pending"
+                  radius={[4, 4, 0, 0]}
+                  fill="#AE96FF"
+                  fillOpacity={0.55}
+                />
               </BarChart>
             </ResponsiveContainer>
+          ) : (
+            <div style={{ height: 80, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <p className="no-data" style={{ margin: 0 }}>No pending balances</p>
+            </div>
           )}
         </div>
 
