@@ -124,70 +124,62 @@ export default function ReportsScreen() {
       .from('household_members')
       .select('household_id')
       .eq('user_id', targetUserId);
-    // No status filter — include all memberships regardless of status field
 
-    const householdIds = (memberRows?.map(r => r.household_id) || [houseData.id])
-      .filter(Boolean);
+    const householdIds = (memberRows?.map(r => r.household_id) || [houseData.id]).filter(Boolean);
 
-    // ── Step 2: Fetch approved expenses from ALL households in parallel ──
-    // Only expenses with approval_status = 'approved' count (matches ExpensesScreen logic)
+    // ── Step 2: Fetch ALL expenses — no filter, we sort in JS ──
     const expenseResults = await Promise.all(
       householdIds.map(async (hid) => {
-        const { data, error } = await supabase
+        const { data } = await supabase
           .from('expenses')
           .select('*')
           .eq('household_id', hid)
-          .eq('approval_status', 'approved')   // ← KEY FIX: match ExpensesScreen filter
           .order('expense_date', { ascending: false });
-        if (error) { console.error('expenses fetch error', error); return []; }
         return data || [];
       })
     );
-    const allApprovedExpenses = expenseResults.flat();
+    const allExpenses = expenseResults.flat();
 
-    // ── Step 3: Fetch all splits for those expenses ──
-    const allExpenseIds = allApprovedExpenses.map(e => e.id);
-    const splitsMap = allExpenseIds.length > 0
-      ? await fetchExpenseSplits(allExpenseIds)
-      : {};
+    // ── Step 3: Fetch expense_splits for enrichment (best-effort) ──
+    const allExpenseIds = allExpenses.map(e => e.id);
+    const splitsMap = allExpenseIds.length > 0 ? await fetchExpenseSplits(allExpenseIds) : {};
 
-    // ── Get user's share from members_split JSONB ──────────────────────────
-    // members_split is stored as { "userId1": "3500.00", "userId2": "3500.00" }
-    // This is the primary source of truth — expense_splits table is only
-    // populated after proof submission and may be empty for older expenses.
+    // ── Helpers ──────────────────────────────────────────────────────────────
+    // members_split JSONB shape: { "userId": "3500.00", ... }
+    // This is always populated when expense is created — primary source of truth.
     const getUserShareAmount = (expense) => {
-      if (!expense.members_split) return 0;
-      const split = expense.members_split;
-      // Direct key lookup: split[userId] = share amount string
-      if (split[targetUserId] !== undefined) {
-        return Number(split[targetUserId]) || 0;
+      // 1. Try members_split JSONB object keyed by userId
+      if (expense.members_split && expense.members_split[targetUserId] !== undefined) {
+        return Number(expense.members_split[targetUserId]) || 0;
       }
-      // Fallback: try expense_splits table if available
-      const tableSplits = splitsMap[expense.id] || [];
-      const tableRow = tableSplits.find(s => s.user_id === targetUserId);
+      // 2. Try expense_splits table row
+      const tableRow = (splitsMap[expense.id] || []).find(s => s.user_id === targetUserId);
       if (tableRow) return Number(tableRow.share_amount) || 0;
+      // 3. If user is the only one (no split stored), use full amount
+      if (expense.paid_by === targetUserId && !expense.members_split) {
+        return Number(expense.amount) || 0;
+      }
       return 0;
     };
 
-    // "Paid" = expense.status === 'paid' (set by ExpensesScreen when all splits approved)
-    // "Pending" = expense is approved but status is 'pending' or 'verifying'
+    // Paid = expense.status === 'paid'  (ExpensesScreen sets this when all splits approved)
     const getPaidAmountForUser = (expense) => {
       if (expense.status !== 'paid') return 0;
       return getUserShareAmount(expense);
     };
 
+    // Pending = approved but not yet paid, and user has a share
     const getPendingAmountForUser = (expense) => {
       if (expense.status === 'paid') return 0;
-      // Only count if user has a split assigned (is part of this expense)
-      const share = getUserShareAmount(expense);
-      return share > 0 ? share : 0;
+      if (expense.approval_status === 'rejected') return 0;
+      return getUserShareAmount(expense);
     };
 
     // ── Step 4: Filter by year ──
-    const thisYearExpenses = allApprovedExpenses.filter(
+    const thisYearExpenses = allExpenses.filter(
       e => e.expense_date >= yearStart && e.expense_date <= yearEnd
     );
-    const lastYearExpenses = allApprovedExpenses.filter(
+    const lastYearExpenses = allExpenses.filter(
       e => e.expense_date >= lastYearStart && e.expense_date <= lastYearEnd
     );
 
@@ -395,12 +387,13 @@ export default function ReportsScreen() {
     return () => supabase.removeChannel(channel);
   }, [currentUser?.id, selectedHousehold?.id, selectedMemberId]);
 
+  // Only re-fetch when selectedMemberId changes (admin switching member view)
+  // Initial load is handled in fetchData() — this avoids double-fetch with stale state
   useEffect(() => {
-    if (selectedHousehold && currentUser) {
-      fetchHouseholdMembers(selectedHousehold.id, currentUser.id);
-      fetchReportData(selectedHousehold, selectedMemberId || currentUser.id, currentUser.id);
+    if (selectedHousehold && currentUser && selectedMemberId) {
+      fetchReportData(selectedHousehold, selectedMemberId, currentUser.id);
     }
-  }, [selectedHousehold, selectedMemberId, currentUser]);
+  }, [selectedMemberId]);
 
   const getYoYChange = (current, last) => {
     if (last === 0) return null;
