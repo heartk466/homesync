@@ -104,73 +104,92 @@ export default function ReportsScreen() {
 
     const now = new Date();
     const yearStart = new Date(now.getFullYear(), 0, 1).toISOString().split('T')[0];
-    const yearEnd = new Date(now.getFullYear(), 11, 31).toISOString().split('T')[0];
+    const yearEnd   = new Date(now.getFullYear(), 11, 31).toISOString().split('T')[0];
     const lastYearStart = new Date(now.getFullYear() - 1, 0, 1).toISOString().split('T')[0];
-    const lastYearEnd = new Date(now.getFullYear() - 1, 11, 31).toISOString().split('T')[0];
+    const lastYearEnd   = new Date(now.getFullYear() - 1, 11, 31).toISOString().split('T')[0];
 
-    // ── Fetch expenses from ALL households the user is a member of ──
-    // allHouseholds is set in state, but we also have houseData for the primary.
-    // Pull the full list fresh from supabase to avoid stale-state issues.
+    // ── Step 1: Get ALL household IDs this user belongs to ──
     const { data: memberRows } = await supabase
       .from('household_members')
       .select('household_id')
-      .eq('user_id', targetUserId)
-      .eq('status', 'active');
+      .eq('user_id', targetUserId);
+    // No status filter — include all memberships regardless of status field
 
-    const householdIds = memberRows?.map(r => r.household_id) || [houseData.id];
+    const householdIds = (memberRows?.map(r => r.household_id) || [houseData.id])
+      .filter(Boolean);
 
-    // Fetch all expenses across every household
+    // ── Step 2: Fetch approved expenses from ALL households in parallel ──
+    // Only expenses with approval_status = 'approved' count (matches ExpensesScreen logic)
     const expenseResults = await Promise.all(
-      householdIds.map(hid => fetchAllHouseholdExpenses(hid))
+      householdIds.map(async (hid) => {
+        const { data, error } = await supabase
+          .from('expenses')
+          .select('*')
+          .eq('household_id', hid)
+          .eq('approval_status', 'approved')   // ← KEY FIX: match ExpensesScreen filter
+          .order('expense_date', { ascending: false });
+        if (error) { console.error('expenses fetch error', error); return []; }
+        return data || [];
+      })
     );
-    const allExpenses = expenseResults.flat();
+    const allApprovedExpenses = expenseResults.flat();
 
-    // Fetch all splits for those expenses in one shot
-    const allExpenseIds = allExpenses.map(e => e.id);
-    const splitsMap = await fetchExpenseSplits(allExpenseIds);
+    // ── Step 3: Fetch all splits for those expenses ──
+    const allExpenseIds = allApprovedExpenses.map(e => e.id);
+    const splitsMap = allExpenseIds.length > 0
+      ? await fetchExpenseSplits(allExpenseIds)
+      : {};
 
-    // ── Helpers ──
-    const getPaidAmountForUser = (expense) => {
+    // ── Helpers using correct status values from expense_splits ──
+    // From ExpensesScreen: split.status === 'approved' means the user has paid/settled
+    // 'pending_verification' = proof submitted awaiting review
+    // anything else (null / 'pending') = not yet paid
+    const getUserSplit = (expense) => {
       const splits = splitsMap[expense.id] || [];
-      const userSplit = splits.find(s => s.user_id === targetUserId);
-      // "paid" = split exists and status is 'approved' OR 'paid'
-      return userSplit && (userSplit.status === 'approved' || userSplit.status === 'paid')
-        ? Number(userSplit.share_amount)
+      return splits.find(s => s.user_id === targetUserId) || null;
+    };
+
+    const getPaidAmountForUser = (expense) => {
+      const split = getUserSplit(expense);
+      // Paid = split is approved (settled)
+      return split && split.status === 'approved'
+        ? Number(split.share_amount || 0)
         : 0;
     };
 
     const getPendingAmountForUser = (expense) => {
-      const splits = splitsMap[expense.id] || [];
-      const userSplit = splits.find(s => s.user_id === targetUserId);
-      // "pending" = split exists but NOT yet paid/approved
-      return userSplit && userSplit.status !== 'approved' && userSplit.status !== 'paid'
-        ? Number(userSplit.share_amount)
+      const split = getUserSplit(expense);
+      // Pending = split exists but NOT yet approved
+      return split && split.status !== 'approved'
+        ? Number(split.share_amount || 0)
         : 0;
     };
 
-    // ── Filter by year ──
-    const thisYearExpenses = allExpenses.filter(
+    // ── Step 4: Filter by year ──
+    const thisYearExpenses = allApprovedExpenses.filter(
       e => e.expense_date >= yearStart && e.expense_date <= yearEnd
     );
-    const lastYearExpenses = allExpenses.filter(
+    const lastYearExpenses = allApprovedExpenses.filter(
       e => e.expense_date >= lastYearStart && e.expense_date <= lastYearEnd
     );
 
-    // ── Card 1: Total Household Spent (paid splits across all households) ──
+    // ── Card 1: Total Household Spent = sum of user's paid (approved) splits this year ──
     const total = thisYearExpenses.reduce((sum, e) => sum + getPaidAmountForUser(e), 0);
     setYearlyTotal(total);
 
     const lastTotal = lastYearExpenses.reduce((sum, e) => sum + getPaidAmountForUser(e), 0);
     setLastYearTotal(lastTotal);
 
-    // Monthly bar data (paid)
+    // Monthly bar chart (paid splits per month)
     const monthly = MONTHS.map((month, i) => {
-      const monthExpenses = thisYearExpenses.filter(e => new Date(e.expense_date).getMonth() === i);
+      const monthExpenses = thisYearExpenses.filter(
+        e => new Date(e.expense_date).getMonth() === i
+      );
       return { month, amount: monthExpenses.reduce((sum, e) => sum + getPaidAmountForUser(e), 0) };
     });
     setMonthlyData(monthly);
 
-    // ── Card 2: Category breakdown (paid splits across all households) ──
+    // ── Card 2: Category breakdown (paid splits, all households) ──
     const categories = {};
     thisYearExpenses.forEach(e => {
       const paid = getPaidAmountForUser(e);
@@ -184,24 +203,24 @@ export default function ReportsScreen() {
         .sort((a, b) => b.value - a.value)
     );
 
-    // ── Card 3: Pending balances (unpaid splits across all households) ──
+    // ── Card 3: Pending balances (user's unpaid splits, all households) ──
     const pending = thisYearExpenses.reduce((sum, e) => sum + getPendingAmountForUser(e), 0);
     setPendingBalances(pending);
 
     const lastPending = lastYearExpenses.reduce((sum, e) => sum + getPendingAmountForUser(e), 0);
     setLastYearPending(lastPending);
 
-    // Pending by category (for bar chart)
+    // Pending by category (for grouped bar chart)
     const pendingCats = {};
     thisYearExpenses.forEach(e => {
-      const userPending = getPendingAmountForUser(e);
-      if (userPending > 0 && e.category) {
-        pendingCats[e.category] = (pendingCats[e.category] || 0) + userPending;
+      const amt = getPendingAmountForUser(e);
+      if (amt > 0 && e.category) {
+        pendingCats[e.category] = (pendingCats[e.category] || 0) + amt;
       }
     });
     setPendingByCategory(Object.entries(pendingCats).map(([name, value]) => ({ name, value })));
 
-    // ── Statement history: group by month (paid splits, primary household only) ──
+    // ── Statement history: group by month (primary household only) ──
     const primaryExpenses = thisYearExpenses.filter(e => e.household_id === houseData.id);
     const monthlyStatements = {};
     primaryExpenses.forEach(e => {
