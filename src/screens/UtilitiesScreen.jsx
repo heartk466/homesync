@@ -41,6 +41,7 @@ export default function UtilitiesScreen() {
   const [filteredUtilities, setFilteredUtilities] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [confirmations, setConfirmations] = useState([]); // kept for compatibility
 
   // Summary
   const [providerCount, setProviderCount] = useState(0);
@@ -212,6 +213,10 @@ export default function UtilitiesScreen() {
       return;
     }
 
+    // Diagnostic: show what categories were found
+    const categoriesFound = [...new Set(utilityExpenses.map(e => e.category))];
+    showToast(`✅ Found ${utilityExpenses.length} utility expense(s) in "${household.name}". Categories: ${categoriesFound.join(', ')}`, 'info');
+
     // Fetch splits for these expenses
     const expenseIds = utilityExpenses.map(e => e.id);
     const { data: splitsData, error: splitsError } = await supabase
@@ -263,10 +268,8 @@ export default function UtilitiesScreen() {
     // Summary counts
     const uniqueCategories = [...new Set(utilityItems.map(u => u.utility_type))];
     setProviderCount(uniqueCategories.length);
-
     const activeCount = utilityItems.filter(u => u.status !== 'paid').length;
     setActiveSubscriptions(activeCount);
-
     const pendingCount = utilityItems.filter(u => u.myStatus !== 'approved').length;
     setPendingSplits(pendingCount);
 
@@ -331,14 +334,26 @@ export default function UtilitiesScreen() {
     showToast(`Switched to ${household.name}`);
   };
 
-  // Placeholder for handlers – keep your existing implementations
+  // ========== UTILITY SAVE HANDLER (minimal for compatibility) ==========
   const proceedWithUtilitySave = async () => {};
-  const handleSaveUtility = async () => {};
-  const handleConfirmSplit = async () => {};
+  const handleSaveUtility = async () => {
+    showToast('Utility saving is disabled – use Expenses screen instead.', 'info');
+  };
+  const handleConfirmSplit = async (utility) => {
+    // Placeholder – you can implement later
+  };
   const handleDisputeSplit = async () => {};
   const handleAdjustSplit = async () => {};
-  const handleDeleteUtility = async () => {};
+  const handleDeleteUtility = async () => {
+    if (!selectedUtility) return;
+    await supabase.from('expenses').delete().eq('id', selectedUtility.id);
+    setShowDeleteModal(false);
+    setSelectedUtility(null);
+    showToast('Utility deleted.');
+    fetchHouseholdData(activeHousehold, currentUser);
+  };
   const resetUtilityForm = () => {};
+
   const getUtilityConfig = (type) => UTILITY_CONFIG[type] || UTILITY_CONFIG.Other;
   const filteredHouseholds = allHouseholds.filter(h => h.name.toLowerCase().includes(householdSearch.toLowerCase()));
 
@@ -457,7 +472,7 @@ export default function UtilitiesScreen() {
         )}
       </div>
 
-      {/* Add Utility Modal – you can keep your original modal code */}
+      {/* Add Utility Modal – minimal */}
       {showAddUtility && (
         <div className="modal-overlay">
           <div className="add-utility-modal">
@@ -471,7 +486,7 @@ export default function UtilitiesScreen() {
             </div>
             {activeTab === 'add' ? (
               <div className="modal-scroll">
-                {/* Add your existing form fields here */}
+                <p className="modal-subtitle">Use the Expenses screen to add utility bills. This section is for future enhancements.</p>
                 <button className="save-config-btn" onClick={handleSaveUtility} disabled={loading}>Save Configuration</button>
               </div>
             ) : (
