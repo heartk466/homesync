@@ -149,15 +149,24 @@ export default function ReportsScreen() {
     // This is always populated when expense is created — primary source of truth.
     const getUserShareAmount = (expense) => {
       // 1. Try members_split JSONB object keyed by userId
-      if (expense.members_split && expense.members_split[targetUserId] !== undefined) {
-        return Number(expense.members_split[targetUserId]) || 0;
+      if (expense.members_split) {
+        const val = expense.members_split[targetUserId];
+        if (val !== undefined && val !== null) return Number(val) || 0;
+        // Also try if members_split is an array of objects
+        if (Array.isArray(expense.members_split)) {
+          const row = expense.members_split.find(s => s.user_id === targetUserId);
+          if (row) return Number(row.share_amount || row.amount) || 0;
+        }
       }
       // 2. Try expense_splits table row
       const tableRow = (splitsMap[expense.id] || []).find(s => s.user_id === targetUserId);
       if (tableRow) return Number(tableRow.share_amount) || 0;
-      // 3. If user is the only one (no split stored), use full amount
-      if (expense.paid_by === targetUserId && !expense.members_split) {
-        return Number(expense.amount) || 0;
+      // 3. paid_by = this user and no split defined → full amount
+      if (expense.paid_by === targetUserId) return Number(expense.amount) || 0;
+      // 4. Equal split fallback — if user is in same household, divide equally
+      if (expense.split_type === 'equal') {
+        const splitCount = Object.keys(expense.members_split || {}).length;
+        if (splitCount > 0) return Number(expense.amount) / splitCount;
       }
       return 0;
     };
@@ -287,9 +296,7 @@ export default function ReportsScreen() {
       const userMember = membersWithProfiles.find(m => m.user_id === uid);
       setIsAdmin(userMember?.role === 'owner');
       // If admin and no member selected, default to current user
-      if (!selectedMemberId && uid) {
-        setSelectedMemberId(uid);
-      }
+      // Don't auto-set selectedMemberId here — fetchData passes userId directly
     } else {
       setHouseholdMembers([]);
       setIsAdmin(false);
@@ -387,13 +394,8 @@ export default function ReportsScreen() {
     return () => supabase.removeChannel(channel);
   }, [currentUser?.id, selectedHousehold?.id, selectedMemberId]);
 
-  // Only re-fetch when selectedMemberId changes (admin switching member view)
-  // Initial load is handled in fetchData() — this avoids double-fetch with stale state
-  useEffect(() => {
-    if (selectedHousehold && currentUser && selectedMemberId) {
-      fetchReportData(selectedHousehold, selectedMemberId, currentUser.id);
-    }
-  }, [selectedMemberId]);
+  // selectedMemberId changes are handled directly in handleMemberChange()
+  // No useEffect here — avoids stale currentUser causing 0 values on initial load
 
   const getYoYChange = (current, last) => {
     if (last === 0) return null;
