@@ -9,6 +9,7 @@ import TopBar from '../components/TopBar';
 import BottomNav from '../components/BottomNav';
 import './UtilitiesScreen.css';
 import {
+  fetchAllUtilityItems,
   checkDuplicate,
   mergeItems,
   markItemAsPaid,
@@ -41,7 +42,6 @@ export default function UtilitiesScreen() {
   const [filteredUtilities, setFilteredUtilities] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
-  const [confirmations, setConfirmations] = useState([]); // kept for compatibility
 
   // Summary
   const [providerCount, setProviderCount] = useState(0);
@@ -190,7 +190,7 @@ export default function UtilitiesScreen() {
     const userMember = membersList.find(m => m.user_id === user.id);
     setIsAdmin(userMember?.role === 'owner');
 
-    // Fetch all utility expenses (approved or pending)
+    // ========== DIRECT EXPENSE QUERY (same as ExpensesScreen) ==========
     const { data: utilityExpenses, error: expError } = await supabase
       .from('expenses')
       .select('*')
@@ -209,19 +209,15 @@ export default function UtilitiesScreen() {
       setProviderCount(0);
       setPendingSplits(0);
       setActiveSubscriptions(0);
-      showToast(`No utility expenses found in "${household.name}". Add one via Expenses screen.`, 'info');
+      setUtilities([]);
       return;
     }
-
-    // Diagnostic: show what categories were found
-    const categoriesFound = [...new Set(utilityExpenses.map(e => e.category))];
-    showToast(`✅ Found ${utilityExpenses.length} utility expense(s) in "${household.name}". Categories: ${categoriesFound.join(', ')}`, 'info');
 
     // Fetch splits for these expenses
     const expenseIds = utilityExpenses.map(e => e.id);
     const { data: splitsData, error: splitsError } = await supabase
       .from('expense_splits')
-      .select('*')
+      .select('*, profiles:user_id (id, full_name, email, avatar_url)')
       .in('expense_id', expenseIds);
 
     if (splitsError) {
@@ -234,31 +230,27 @@ export default function UtilitiesScreen() {
       splitsByExpense[split.expense_id].push(split);
     });
 
-    // Build utility items from expenses
+    // Build utility items
     const utilityItems = utilityExpenses.map(exp => {
       const splits = splitsByExpense[exp.id] || [];
       const mySplit = splits.find(s => s.user_id === user.id);
-      const myStatus = mySplit ? mySplit.status : 'unpaid';
-      const myShareAmount = mySplit ? Number(mySplit.share_amount) : 0;
-
       return {
         id: exp.id,
-        household_id: exp.household_id,
-        utility_type: exp.category,
-        provider_name: exp.title,
+        title: exp.title,
         amount: exp.amount,
-        billing_date: exp.expense_date,
+        category: exp.category,
+        expense_date: exp.expense_date,
+        location: exp.location || household.name,
         split_method: exp.split_type,
-        members_split: exp.members_split,
         status: exp.status,
         approval_status: exp.approval_status,
-        location: exp.location || household.name,
+        paid_by: exp.paid_by,
+        members_split: exp.members_split,
         source: 'expenses',
-        created_at: exp.created_at,
         splits: splits,
         mySplit: mySplit,
-        myStatus: myStatus,
-        myShareAmount: myShareAmount,
+        myShareAmount: mySplit ? Number(mySplit.share_amount) : 0,
+        myStatus: mySplit ? mySplit.status : 'unpaid',
       };
     });
 
@@ -266,7 +258,7 @@ export default function UtilitiesScreen() {
     setFilteredUtilities(utilityItems);
 
     // Summary counts
-    const uniqueCategories = [...new Set(utilityItems.map(u => u.utility_type))];
+    const uniqueCategories = [...new Set(utilityItems.map(u => u.category))];
     setProviderCount(uniqueCategories.length);
     const activeCount = utilityItems.filter(u => u.status !== 'paid').length;
     setActiveSubscriptions(activeCount);
@@ -315,14 +307,14 @@ export default function UtilitiesScreen() {
     let result = [...utilities];
     if (searchQuery) {
       result = result.filter(u =>
-        u.provider_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        u.utility_type?.toLowerCase().includes(searchQuery.toLowerCase())
+        u.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        u.category?.toLowerCase().includes(searchQuery.toLowerCase())
       );
     }
     if (filterStatus.length > 0) result = result.filter(u => filterStatus.includes(u.status));
-    if (filterType.length > 0) result = result.filter(u => filterType.includes(u.utility_type));
-    if (filterFrom) result = result.filter(u => u.billing_date >= filterFrom);
-    if (filterTo) result = result.filter(u => u.billing_date <= filterTo);
+    if (filterType.length > 0) result = result.filter(u => filterType.includes(u.category));
+    if (filterFrom) result = result.filter(u => u.expense_date >= filterFrom);
+    if (filterTo) result = result.filter(u => u.expense_date <= filterTo);
     setFilteredUtilities(result);
   }, [searchQuery, filterStatus, filterType, filterFrom, filterTo, utilities]);
 
@@ -334,14 +326,11 @@ export default function UtilitiesScreen() {
     showToast(`Switched to ${household.name}`);
   };
 
-  // ========== UTILITY SAVE HANDLER (minimal for compatibility) ==========
   const proceedWithUtilitySave = async () => {};
   const handleSaveUtility = async () => {
-    showToast('Utility saving is disabled – use Expenses screen instead.', 'info');
+    showToast('Add utility expenses from the Expenses screen instead.', 'info');
   };
-  const handleConfirmSplit = async (utility) => {
-    // Placeholder – you can implement later
-  };
+  const handleConfirmSplit = async (utility) => {};
   const handleDisputeSplit = async () => {};
   const handleAdjustSplit = async () => {};
   const handleDeleteUtility = async () => {
@@ -354,7 +343,17 @@ export default function UtilitiesScreen() {
   };
   const resetUtilityForm = () => {};
 
-  const getUtilityConfig = (type) => UTILITY_CONFIG[type] || UTILITY_CONFIG.Other;
+  const getUtilityConfig = (type) => {
+    const map = {
+      Electricity: UTILITY_CONFIG.Power,
+      Water: UTILITY_CONFIG.Water,
+      Gas: UTILITY_CONFIG.Gas,
+      Internet: UTILITY_CONFIG.Internet,
+      Entertainment: UTILITY_CONFIG.Other,
+    };
+    return map[type] || UTILITY_CONFIG.Other;
+  };
+
   const filteredHouseholds = allHouseholds.filter(h => h.name.toLowerCase().includes(householdSearch.toLowerCase()));
 
   return (
@@ -436,15 +435,15 @@ export default function UtilitiesScreen() {
           </div>
         ) : (
           filteredUtilities.map(utility => {
-            const config = getUtilityConfig(utility.utility_type);
+            const config = getUtilityConfig(utility.category);
             const myShare = utility.myShareAmount;
             const isPaid = utility.myStatus === 'approved';
             return (
               <div key={utility.id} className="utility-item">
                 <div className="utility-icon-wrap" style={{ background: config.bg, color: config.color }}>{config.icon}</div>
                 <div className="utility-details">
-                  <p className="utility-name">{utility.utility_type} – {utility.provider_name}: ₱{Number(utility.amount).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
-                  <p className="utility-meta">{utility.split_method} | {utility.billing_date} | {utility.location}</p>
+                  <p className="utility-name">{utility.category} – {utility.title}: ₱{Number(utility.amount).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                  <p className="utility-meta">{utility.split_method} | {utility.expense_date} | {utility.location}</p>
                   {myShare > 0 && <p className="utility-my-share">Your share: ₱{myShare.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>}
                   {!isAdmin && !isPaid && (
                     <div className="confirmation-row">
@@ -472,7 +471,7 @@ export default function UtilitiesScreen() {
         )}
       </div>
 
-      {/* Add Utility Modal – minimal */}
+      {/* Minimal Add Utility Modal */}
       {showAddUtility && (
         <div className="modal-overlay">
           <div className="add-utility-modal">
@@ -486,8 +485,8 @@ export default function UtilitiesScreen() {
             </div>
             {activeTab === 'add' ? (
               <div className="modal-scroll">
-                <p className="modal-subtitle">Use the Expenses screen to add utility bills. This section is for future enhancements.</p>
-                <button className="save-config-btn" onClick={handleSaveUtility} disabled={loading}>Save Configuration</button>
+                <p className="modal-subtitle">Use the Expenses screen to add utility bills.</p>
+                <button className="save-config-btn" onClick={handleSaveUtility}>OK</button>
               </div>
             ) : (
               <div className="modal-scroll">
@@ -497,12 +496,12 @@ export default function UtilitiesScreen() {
                 ) : (
                   utilities.filter(u => u.status === 'paid').map(u => (
                     <div key={u.id} className="history-item">
-                      <div className="utility-icon-wrap small" style={{ background: getUtilityConfig(u.utility_type).bg, color: getUtilityConfig(u.utility_type).color }}>
-                        {getUtilityConfig(u.utility_type).icon}
+                      <div className="utility-icon-wrap small" style={{ background: getUtilityConfig(u.category).bg, color: getUtilityConfig(u.category).color }}>
+                        {getUtilityConfig(u.category).icon}
                       </div>
                       <div className="history-details">
-                        <p className="history-name">{u.utility_type} – {u.provider_name}</p>
-                        <p className="history-meta">{u.billing_date} | {u.split_method}</p>
+                        <p className="history-name">{u.category} – {u.title}</p>
+                        <p className="history-meta">{u.expense_date} | {u.split_method}</p>
                       </div>
                       <p className="history-amount">₱{Number(u.amount).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
                     </div>
@@ -520,7 +519,6 @@ export default function UtilitiesScreen() {
           <div className="small-modal">
             <AlertCircle size={40} color="#e53e3e"/>
             <h2>Delete Utility?</h2>
-            <p className="modal-subtitle">This action cannot be undone.</p>
             <button className="delete-confirm-btn" onClick={handleDeleteUtility}>Yes, Delete</button>
             <button className="cancel-btn" onClick={() => setShowDeleteModal(false)}>Cancel</button>
           </div>
@@ -532,12 +530,11 @@ export default function UtilitiesScreen() {
         <div className="modal-overlay">
           <div className="small-modal">
             <h2>Submit Payment Proof</h2>
-            <p className="modal-subtitle">Upload your GCash/bank screenshot</p>
             {proofForm.screenshotPreview && <img src={proofForm.screenshotPreview} alt="proof" className="proof-preview"/>}
             <button className="save-config-btn" style={{ background: '#F0EDFF', color: '#3B2AAB', marginTop: 0 }} onClick={() => proofInputRef.current.click()}>
               📷 {proofForm.screenshot ? 'Change Screenshot' : 'Upload Screenshot'}
             </button>
-            <textarea className="reject-textarea" placeholder="Optional note (e.g. GCash ref# 12345)" value={proofForm.note} onChange={e => setProofForm(prev => ({ ...prev, note: e.target.value }))} />
+            <textarea placeholder="Optional note" value={proofForm.note} onChange={e => setProofForm(prev => ({ ...prev, note: e.target.value }))} className="reject-textarea" />
             <button className="save-config-btn" onClick={async () => {
               if (!proofForm.screenshot) { showToast('Please upload a screenshot.', 'error'); return; }
               setLoading(true);
@@ -547,12 +544,6 @@ export default function UtilitiesScreen() {
               if (uploadError) { showToast('Upload failed.', 'error'); setLoading(false); return; }
               const { data: urlData } = supabase.storage.from('payment-proofs').getPublicUrl(fileName);
               await markItemAsPaid(selectedUtility, urlData.publicUrl, proofForm.note, currentUser.id);
-              await supabase.from('notifications').insert({
-                user_id: activeHousehold?.created_by,
-                title: 'Payment Proof Submitted 📸',
-                message: `${profile?.full_name} submitted payment proof for "${selectedUtility.provider_name}"`,
-                type: 'payment_proof',
-              });
               setShowPaymentProofModal(false);
               setProofForm({ note: '', screenshot: null, screenshotPreview: null });
               setSelectedUtility(null);
