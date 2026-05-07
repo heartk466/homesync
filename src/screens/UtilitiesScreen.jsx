@@ -121,8 +121,7 @@ export default function UtilitiesScreen() {
       const { data: memberData, error: memberError } = await supabase
         .from('household_members')
         .select('household_id, role, status')
-        .eq('user_id', user.id)
-        .eq('status', 'active');
+        .eq('user_id', user.id);
 
       if (memberError) {
         showToast('Error loading household memberships.', 'error');
@@ -153,7 +152,9 @@ export default function UtilitiesScreen() {
       }));
 
       setAllHouseholds(householdsWithRole);
-      const primary = householdsWithRole[0];
+      // Prefer the household where the user is owner; otherwise pick first
+      const primary = householdsWithRole.find(h => h.role === 'owner') || householdsWithRole[0];
+      console.log('[Utilities] Active household set to:', primary?.name, primary?.id);
       setActiveHousehold(primary);
 
       await fetchHouseholdData(primary, user);
@@ -171,12 +172,10 @@ export default function UtilitiesScreen() {
     const { data: members, error: membersError } = await supabase
       .from('household_members')
       .select('user_id, role, status, profiles(id, full_name, email, avatar_url)')
-      .eq('household_id', household.id)
-      .eq('status', 'active');
+      .eq('household_id', household.id);
 
     if (membersError) {
-      console.error(membersError);
-      return;
+      console.error('Members fetch error:', membersError);
     }
 
     const membersList = (members || []).map(m => ({
@@ -190,7 +189,8 @@ export default function UtilitiesScreen() {
     const userMember = membersList.find(m => m.user_id === user.id);
     setIsAdmin(userMember?.role === 'owner');
 
-    // ========== DIRECT EXPENSE QUERY (same as ExpensesScreen) ==========
+    // ========== EXPENSE QUERY — utility categories ==========
+    console.log('[Utilities] Fetching expenses for household:', household.id, 'categories:', UTILITY_CATEGORIES);
     const { data: utilityExpenses, error: expError } = await supabase
       .from('expenses')
       .select('*')
@@ -198,18 +198,21 @@ export default function UtilitiesScreen() {
       .in('category', UTILITY_CATEGORIES)
       .order('expense_date', { ascending: false });
 
+    console.log('[Utilities] Expense query result:', { utilityExpenses, expError });
+
     if (expError) {
+      console.error('[Utilities] Expense fetch error:', expError);
       showToast('Error loading utility expenses.', 'error');
       return;
     }
 
     if (!utilityExpenses || utilityExpenses.length === 0) {
+      console.log('[Utilities] No utility expenses found for household', household.id);
       setUtilities([]);
       setFilteredUtilities([]);
       setProviderCount(0);
       setPendingSplits(0);
       setActiveSubscriptions(0);
-      setUtilities([]);
       return;
     }
 
