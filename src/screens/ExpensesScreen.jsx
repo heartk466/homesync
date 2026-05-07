@@ -540,32 +540,94 @@ export default function ExpensesScreen() {
     await handleHouseholdSelect(selectedHousehold, currentUser, profile);
   };
 
+  const handleMarkAsPaid = async (expense) => {
+    // Owner manually marks a stuck 'verifying' expense as fully paid
+    setLoading(true);
+    await supabase.from('expenses')
+      .update({ status: 'paid' })
+      .eq('id', expense.id);
+    // Also approve all remaining expense_splits for this expense
+    await supabase.from('expense_splits')
+      .update({ status: 'approved', updated_at: new Date().toISOString() })
+      .eq('expense_id', expense.id);
+    showToast('Expense marked as Paid ✅');
+    setLoading(false);
+    await handleHouseholdSelect(selectedHousehold, currentUser, profile);
+  };
+
   const handleConfirmPayment = async (proof, split) => {
     setLoading(true);
-    await supabase.from('payment_proofs').update({ status: 'verified' }).eq('id', proof.id);
-    await supabase.from('expense_splits').update({ status: 'approved', updated_at: new Date().toISOString() }).eq('id', split.id);
 
+    // 1. Mark this proof as verified
+    await supabase.from('payment_proofs').update({ status: 'verified' }).eq('id', proof.id);
+
+    // 2. Mark this split as approved
+    await supabase.from('expense_splits')
+      .update({ status: 'approved', updated_at: new Date().toISOString() })
+      .eq('id', split.id);
+
+    // 3. Fetch the full expense to know paid_by and members_split
     const { data: expense } = await supabase
       .from('expenses')
-      .select('approval_status')
+      .select('*')
       .eq('id', split.expense_id)
       .single();
-    if (expense && expense.approval_status === 'pending_approval') {
-      await supabase
-        .from('expenses')
-        .update({ approval_status: 'approved' })
-        .eq('id', split.expense_id);
+
+    if (expense) {
+      // 4. Auto-approve the paid_by person's split if it exists in expense_splits
+      //    (they don't submit proof — owner paid upfront)
+      if (expense.paid_by) {
+        const { data: payerSplit } = await supabase
+          .from('expense_splits')
+          .select('id, status')
+          .eq('expense_id', split.expense_id)
+          .eq('user_id', expense.paid_by)
+          .maybeSingle();
+
+        if (payerSplit && payerSplit.status !== 'approved') {
+          await supabase.from('expense_splits')
+            .update({ status: 'approved', updated_at: new Date().toISOString() })
+            .eq('id', payerSplit.id);
+        }
+      }
+
+      // 5. Check completion — compare approved splits against members_split JSONB
+      //    members_split is the authoritative list of who owes what
+      const memberIds = expense.members_split ? Object.keys(expense.members_split) : [];
+
+      const { data: allSplits } = await supabase
+        .from('expense_splits')
+        .select('user_id, status')
+        .eq('expense_id', split.expense_id);
+
+      const approvedUserIds = new Set((allSplits || []).filter(s => s.status === 'approved').map(s => s.user_id));
+
+      // A member is "settled" if:
+      // - they have an approved split row, OR
+      // - they are the paid_by person (they funded the expense upfront)
+      const allSettled = memberIds.length === 0
+        ? (allSplits || []).every(s => s.status === 'approved')
+        : memberIds.every(id => approvedUserIds.has(id) || id === expense.paid_by);
+
+      if (allSettled) {
+        await supabase.from('expenses').update({ status: 'paid' }).eq('id', split.expense_id);
+      } else {
+        // Keep status as 'verifying' only if there are still pending splits
+        // If expense was 'pending' before and now at least one is approved, keep 'verifying'
+        if (expense.status === 'pending') {
+          await supabase.from('expenses').update({ status: 'verifying' }).eq('id', split.expense_id);
+        }
+      }
+
+      // 6. Approve the expense itself if still pending_approval
+      if (expense.approval_status === 'pending_approval') {
+        await supabase.from('expenses')
+          .update({ approval_status: 'approved' })
+          .eq('id', split.expense_id);
+      }
     }
 
-    const { data: allSplits } = await supabase
-      .from('expense_splits')
-      .select('status')
-      .eq('expense_id', split.expense_id);
-    const allApproved = allSplits.every(s => s.status === 'approved');
-    if (allApproved) {
-      await supabase.from('expenses').update({ status: 'paid' }).eq('id', split.expense_id);
-    }
-
+    // 7. Notify the submitter
     await supabase.from('notifications').insert({
       user_id: proof.submitted_by,
       title: 'Payment Confirmed! ✅',
@@ -819,6 +881,16 @@ export default function ExpensesScreen() {
               </div>
               {isAdmin && (
                 <div className="expense-admin-col">
+                  {expense.status === 'verifying' && (
+                    <button
+                      className="icon-btn"
+                      title="Mark as Paid"
+                      onClick={() => handleMarkAsPaid(expense)}
+                      style={{ background: '#f0fff4', color: '#38a169', fontSize: 10, fontWeight: 700, padding: '4px 8px', borderRadius: 8, whiteSpace: 'nowrap' }}
+                    >
+                      ✓ Paid
+                    </button>
+                  )}
                   <button className="icon-btn delete" onClick={() => { setSelectedExpense(expense); setShowDeleteModal(true); }}><Trash2 size={14} /></button>
                 </div>
               )}
