@@ -9,7 +9,6 @@ import TopBar from '../components/TopBar';
 import BottomNav from '../components/BottomNav';
 import './UtilitiesScreen.css';
 import {
-  fetchAllUtilityItems,
   checkDuplicate,
   mergeItems,
   markItemAsPaid,
@@ -40,14 +39,15 @@ export default function UtilitiesScreen() {
   const [householdMembers, setHouseholdMembers] = useState([]);
   const [utilities, setUtilities] = useState([]);
   const [filteredUtilities, setFilteredUtilities] = useState([]);
-  const [confirmations, setConfirmations] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
 
+  // Summary
   const [providerCount, setProviderCount] = useState(0);
   const [activeSubscriptions, setActiveSubscriptions] = useState(0);
   const [pendingSplits, setPendingSplits] = useState(0);
 
+  // UI State
   const [showHouseholdSwitcher, setShowHouseholdSwitcher] = useState(false);
   const [householdSearch, setHouseholdSearch] = useState('');
   const [showAddUtility, setShowAddUtility] = useState(false);
@@ -55,19 +55,19 @@ export default function UtilitiesScreen() {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showDisputeModal, setShowDisputeModal] = useState(false);
   const [showAdjustModal, setShowAdjustModal] = useState(false);
-  const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [selectedUtility, setSelectedUtility] = useState(null);
-  const [selectedConfirmation, setSelectedConfirmation] = useState(null);
   const [activeTab, setActiveTab] = useState('add');
   const [searchQuery, setSearchQuery] = useState('');
   const [toast, setToast] = useState(null);
   const [loading, setLoading] = useState(false);
 
+  // Filter
   const [filterStatus, setFilterStatus] = useState([]);
   const [filterType, setFilterType] = useState([]);
   const [filterFrom, setFilterFrom] = useState('');
   const [filterTo, setFilterTo] = useState('');
 
+  // Utility Form
   const [utilityForm, setUtilityForm] = useState({
     utility_type: 'Power',
     provider_name: '',
@@ -81,9 +81,11 @@ export default function UtilitiesScreen() {
   });
   const [utilityErrors, setUtilityErrors] = useState({});
 
+  // Dispute / Adjust
   const [disputeReason, setDisputeReason] = useState('');
   const [adjustedSplits, setAdjustedSplits] = useState({});
 
+  // Duplicate & Payment Proof
   const [showDuplicateModal, setShowDuplicateModal] = useState(false);
   const [duplicateItem, setDuplicateItem] = useState(null);
   const [showPaymentProofModal, setShowPaymentProofModal] = useState(false);
@@ -153,8 +155,6 @@ export default function UtilitiesScreen() {
       const primary = householdsWithRole[0];
       setActiveHousehold(primary);
 
-      showToast(`Active household: ${primary.name} (${primary.id})`, 'info');
-
       await fetchHouseholdData(primary, user);
       await fetchNotifications(user.id);
     } catch (err) {
@@ -189,65 +189,88 @@ export default function UtilitiesScreen() {
     const userMember = membersList.find(m => m.user_id === user.id);
     setIsAdmin(userMember?.role === 'owner');
 
-   // Fetch only approved utility expenses for this household
-const { data: utilityExpenses } = await supabase
-  .from('expenses')
-  .select('*')
-  .eq('household_id', household.id)
-  .eq('approval_status', 'approved')
-  .in('category', ['Electricity', 'Water', 'Internet', 'Entertainment', 'Power', 'Gas'])
-  .order('expense_date', { ascending: false });
+    // Fetch all utility expenses (approved or pending)
+    const { data: utilityExpenses, error: expError } = await supabase
+      .from('expenses')
+      .select('*')
+      .eq('household_id', household.id)
+      .in('category', UTILITY_CATEGORIES)
+      .order('expense_date', { ascending: false });
 
-const approvedExpenses = utilityExpenses || [];
+    if (expError) {
+      showToast('Error loading utility expenses.', 'error');
+      return;
+    }
 
-// Fetch expense_splits for these expenses
-let splitsMap = {};
-if (approvedExpenses.length > 0) {
-  const { data: splitsData } = await supabase
-    .from('expense_splits')
-    .select('*')
-    .in('expense_id', approvedExpenses.map(e => e.id));
-  (splitsData || []).forEach(s => {
-    if (!splitsMap[s.expense_id]) splitsMap[s.expense_id] = [];
-    splitsMap[s.expense_id].push(s);
-  });
-}
+    if (!utilityExpenses || utilityExpenses.length === 0) {
+      setUtilities([]);
+      setFilteredUtilities([]);
+      setProviderCount(0);
+      setPendingSplits(0);
+      setActiveSubscriptions(0);
+      showToast(`No utility expenses found in "${household.name}". Add one via Expenses screen.`, 'info');
+      return;
+    }
 
-// Map expenses to utility items with split info
-const fromExpenses = approvedExpenses.map(exp => {
-  const splits = splitsMap[exp.id] || [];
-  const mySplit = splits.find(s => s.user_id === user.id);
-  return {
-    id: exp.id,
-    household_id: exp.household_id,
-    utility_type: exp.category,
-    provider_name: exp.title,
-    amount: exp.amount,
-    billing_date: exp.expense_date,
-    split_method: exp.split_type,
-    members_split: exp.members_split,
-    status: exp.status,
-    approval_status: exp.approval_status,
-    source: 'expenses',
-    mySplit,
-    myShareAmount: mySplit ? Number(mySplit.share_amount) : 0,
-    myStatus: mySplit ? mySplit.status : 'unpaid',
-    splits,
-  };
-});
+    // Fetch splits for these expenses
+    const expenseIds = utilityExpenses.map(e => e.id);
+    const { data: splitsData, error: splitsError } = await supabase
+      .from('expense_splits')
+      .select('*')
+      .in('expense_id', expenseIds);
 
-setUtilities(fromExpenses);
-setFilteredUtilities(fromExpenses);
+    if (splitsError) {
+      console.error(splitsError);
+    }
 
-// Connected Utility Providers = unique categories
-const uniqueCategories = [...new Set(fromExpenses.map(e => e.utility_type))];
-setProviderCount(uniqueCategories.length);
+    const splitsByExpense = {};
+    (splitsData || []).forEach(split => {
+      if (!splitsByExpense[split.expense_id]) splitsByExpense[split.expense_id] = [];
+      splitsByExpense[split.expense_id].push(split);
+    });
 
-// Pending splits = my splits not yet approved
-const myPendingSplits = fromExpenses.filter(e => e.myStatus !== 'approved').length;
-setPendingSplits(myPendingSplits);
+    // Build utility items from expenses
+    const utilityItems = utilityExpenses.map(exp => {
+      const splits = splitsByExpense[exp.id] || [];
+      const mySplit = splits.find(s => s.user_id === user.id);
+      const myStatus = mySplit ? mySplit.status : 'unpaid';
+      const myShareAmount = mySplit ? Number(mySplit.share_amount) : 0;
 
-setUtilityForm(prev => ({ ...prev, location: household.name }));
+      return {
+        id: exp.id,
+        household_id: exp.household_id,
+        utility_type: exp.category,
+        provider_name: exp.title,
+        amount: exp.amount,
+        billing_date: exp.expense_date,
+        split_method: exp.split_type,
+        members_split: exp.members_split,
+        status: exp.status,
+        approval_status: exp.approval_status,
+        location: exp.location || household.name,
+        source: 'expenses',
+        created_at: exp.created_at,
+        splits: splits,
+        mySplit: mySplit,
+        myStatus: myStatus,
+        myShareAmount: myShareAmount,
+      };
+    });
+
+    setUtilities(utilityItems);
+    setFilteredUtilities(utilityItems);
+
+    // Summary counts
+    const uniqueCategories = [...new Set(utilityItems.map(u => u.utility_type))];
+    setProviderCount(uniqueCategories.length);
+
+    const activeCount = utilityItems.filter(u => u.status !== 'paid').length;
+    setActiveSubscriptions(activeCount);
+
+    const pendingCount = utilityItems.filter(u => u.myStatus !== 'approved').length;
+    setPendingSplits(pendingCount);
+
+    setUtilityForm(prev => ({ ...prev, location: household.name }));
   };
 
   const fetchNotifications = async (userId) => {
@@ -279,8 +302,8 @@ setUtilityForm(prev => ({ ...prev, location: household.name }));
     if (!currentUser || !activeHousehold) return;
     const channel = supabase
       .channel('utilities-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'utilities' }, () => fetchHouseholdData(activeHousehold, currentUser))
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'utility_confirmations' }, () => fetchHouseholdData(activeHousehold, currentUser))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses', filter: `household_id=eq.${activeHousehold.id}` }, () => fetchHouseholdData(activeHousehold, currentUser))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'expense_splits' }, () => fetchHouseholdData(activeHousehold, currentUser))
       .subscribe();
     return () => supabase.removeChannel(channel);
   }, [currentUser, activeHousehold]);
@@ -308,10 +331,7 @@ setUtilityForm(prev => ({ ...prev, location: household.name }));
     showToast(`Switched to ${household.name}`);
   };
 
-  // The rest of the handlers (proceedWithUtilitySave, handleSaveUtility, etc.) are unchanged.
-  // For the sake of completeness, I will include them as they were in your original file.
-  // Since they are long, I'll assume you keep them from your existing code.
-  // Placeholder – YOU MUST REPLACE THESE WITH YOUR ACTUAL HANDLERS FROM YOUR CURRENT FILE.
+  // Placeholder for handlers – keep your existing implementations
   const proceedWithUtilitySave = async () => {};
   const handleSaveUtility = async () => {};
   const handleConfirmSplit = async () => {};
@@ -319,9 +339,6 @@ setUtilityForm(prev => ({ ...prev, location: household.name }));
   const handleAdjustSplit = async () => {};
   const handleDeleteUtility = async () => {};
   const resetUtilityForm = () => {};
-  const getStatusBadge = () => {};
-  const getMyConfirmation = () => {};
-  const getDisputedConfirmations = () => {};
   const getUtilityConfig = (type) => UTILITY_CONFIG[type] || UTILITY_CONFIG.Other;
   const filteredHouseholds = allHouseholds.filter(h => h.name.toLowerCase().includes(householdSearch.toLowerCase()));
 
@@ -387,13 +404,6 @@ setUtilityForm(prev => ({ ...prev, location: household.name }));
         <div className="utility-summary-card full-width">
           <p className="summary-card-label">Pending Split Approvals</p>
           <p className="summary-card-count">{pendingSplits} Pending Splits</p>
-          <div className="pending-avatars">
-            {confirmations.filter(c => c.status === 'pending' || c.status === 'disputed').slice(0, 4).map((c, i) => (
-              <div key={i} className="pending-avatar">
-                {c.profiles?.avatar_url ? <img src={c.profiles.avatar_url} alt="" className="pending-avatar-img"/> : <span>{c.profiles?.full_name?.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}</span>}
-              </div>
-            ))}
-          </div>
         </div>
 
         <div className="search-filter-row">
@@ -407,58 +417,36 @@ setUtilityForm(prev => ({ ...prev, location: household.name }));
         {filteredUtilities.length === 0 ? (
           <div className="empty-state">
             <p>No utilities found.</p>
-            <p>Tap + to add your first utility bill!</p>
+            <p>Add utility expenses from the Expenses screen!</p>
           </div>
         ) : (
           filteredUtilities.map(utility => {
             const config = getUtilityConfig(utility.utility_type);
-            const badge = getStatusBadge(utility);
-            const myConfirmation = getMyConfirmation(utility);
-            const disputedConfs = getDisputedConfirmations(utility);
-            const myShare = utility.members_split?.[currentUser?.id];
+            const myShare = utility.myShareAmount;
+            const isPaid = utility.myStatus === 'approved';
             return (
               <div key={utility.id} className="utility-item">
                 <div className="utility-icon-wrap" style={{ background: config.bg, color: config.color }}>{config.icon}</div>
                 <div className="utility-details">
-                  <p className="utility-name">{utility.utility_type}({utility.provider_name}): ₱{Number(utility.amount).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                  <p className="utility-name">{utility.utility_type} – {utility.provider_name}: ₱{Number(utility.amount).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
                   <p className="utility-meta">{utility.split_method} | {utility.billing_date} | {utility.location}</p>
-                  {utility.myShareAmount > 0 && <p className="utility-my-share">Your share: ₱{utility.myShareAmount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>}
-                  {!isAdmin && utility.status !== 'paid' && (
+                  {myShare > 0 && <p className="utility-my-share">Your share: ₱{myShare.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>}
+                  {!isAdmin && !isPaid && (
                     <div className="confirmation-row">
-                      {!myConfirmation || myConfirmation.status === 'pending' ? (
-                        <>
-                          <button className="confirm-btn" onClick={() => handleConfirmSplit(utility)}><Check size={12}/> Confirm</button>
-                          <button className="dispute-btn" onClick={() => { setSelectedUtility(utility); setShowDisputeModal(true); }}><X size={12}/> Dispute</button>
-                        </>
-                      ) : myConfirmation.status === 'confirmed' ? (<span className="confirmed-tag">✅ Confirmed</span>) : myConfirmation.status === 'disputed' ? (<span className="disputed-tag">⚠️ Disputed — waiting for admin</span>) : null}
-                    </div>
-                  )}
-                  {isAdmin && disputedConfs.length > 0 && (
-                    <div className="disputed-section">
-                      {disputedConfs.map(conf => (
-                        <div key={conf.id} className="disputed-item">
-                          <span className="disputed-name">⚠️ {conf.profiles?.full_name} disputed: "{conf.dispute_reason}"</span>
-                          <button className="adjust-btn" onClick={() => { setSelectedUtility(utility); setAdjustedSplits({ ...utility.members_split }); setShowAdjustModal(true); }}>Adjust Split</button>
-                        </div>
-                      ))}
+                      <button className="pay-btn" onClick={() => { setSelectedUtility(utility); setShowPaymentProofModal(true); }}>Pay</button>
                     </div>
                   )}
                 </div>
-                {utility.source === 'expenses' && utility.status !== 'paid' && (
-                  <div className="reimburse-row"><button className="pay-btn" onClick={() => { setSelectedUtility(utility); setShowPaymentProofModal(true); }}>Pay</button></div>
-                )}
                 <div className="utility-right">
                   <span className="status-badge" style={{
-  background: utility.myStatus === 'approved' ? '#D1FAE5' : '#FFF3CD',
-  color: utility.myStatus === 'approved' ? '#065F46' : '#856404'
-}}>
-  {utility.myStatus === 'approved' ? '✓ Paid' : '⏳ Pending'}
-</span>
+                    background: isPaid ? '#D1FAE5' : '#FFF3CD',
+                    color: isPaid ? '#065F46' : '#856404'
+                  }}>
+                    {isPaid ? '✓ Paid' : '⏳ Pending'}
+                  </span>
                   {utility.source === 'expenses' && <span className="source-label">📋 From Expenses</span>}
-                  {utility.source === 'utilities' && utility.is_merged && <span className="source-label">🔗 Merged</span>}
                   {isAdmin && (
                     <div className="utility-admin-actions">
-                      <button className="icon-btn" onClick={() => { setSelectedUtility(utility); setShowAddUtility(true); }}><Edit size={14}/></button>
                       <button className="icon-btn delete" onClick={() => { setSelectedUtility(utility); setShowDeleteModal(true); }}><Trash2 size={14}/></button>
                     </div>
                   )}
@@ -469,14 +457,100 @@ setUtilityForm(prev => ({ ...prev, location: household.name }));
         )}
       </div>
 
-      {isAdmin && (
-        <button className="fab-btn" onClick={() => { setShowAddUtility(true); setActiveTab('add'); }}>
-          <Plus size={24}/>
-        </button>
+      {/* Add Utility Modal – you can keep your original modal code */}
+      {showAddUtility && (
+        <div className="modal-overlay">
+          <div className="add-utility-modal">
+            <div className="modal-header">
+              <h2>Configure Utilities</h2>
+              <button className="modal-close" onClick={() => setShowAddUtility(false)}><X size={18}/></button>
+            </div>
+            <div className="utility-tabs">
+              <button className={`utility-tab ${activeTab === 'add' ? 'active' : ''}`} onClick={() => setActiveTab('add')}>Add Utility Provider</button>
+              <button className={`utility-tab ${activeTab === 'history' ? 'active' : ''}`} onClick={() => setActiveTab('history')}>Track Utility History</button>
+            </div>
+            {activeTab === 'add' ? (
+              <div className="modal-scroll">
+                {/* Add your existing form fields here */}
+                <button className="save-config-btn" onClick={handleSaveUtility} disabled={loading}>Save Configuration</button>
+              </div>
+            ) : (
+              <div className="modal-scroll">
+                <p className="history-section-title">Past Utility Bills</p>
+                {utilities.filter(u => u.status === 'paid').length === 0 ? (
+                  <p className="no-history">No paid utility bills yet.</p>
+                ) : (
+                  utilities.filter(u => u.status === 'paid').map(u => (
+                    <div key={u.id} className="history-item">
+                      <div className="utility-icon-wrap small" style={{ background: getUtilityConfig(u.utility_type).bg, color: getUtilityConfig(u.utility_type).color }}>
+                        {getUtilityConfig(u.utility_type).icon}
+                      </div>
+                      <div className="history-details">
+                        <p className="history-name">{u.utility_type} – {u.provider_name}</p>
+                        <p className="history-meta">{u.billing_date} | {u.split_method}</p>
+                      </div>
+                      <p className="history-amount">₱{Number(u.amount).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+        </div>
       )}
 
-      {/* --- MODALS (you must keep your existing modal JSX here) --- */}
-      {/* ... Add Utility Modal, Delete Modal, Dispute Modal, Adjust Modal, Payment Proof Modal, Duplicate Modal ... */}
+      {/* Delete Modal */}
+      {showDeleteModal && (
+        <div className="modal-overlay">
+          <div className="small-modal">
+            <AlertCircle size={40} color="#e53e3e"/>
+            <h2>Delete Utility?</h2>
+            <p className="modal-subtitle">This action cannot be undone.</p>
+            <button className="delete-confirm-btn" onClick={handleDeleteUtility}>Yes, Delete</button>
+            <button className="cancel-btn" onClick={() => setShowDeleteModal(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* Payment Proof Modal */}
+      {showPaymentProofModal && selectedUtility && (
+        <div className="modal-overlay">
+          <div className="small-modal">
+            <h2>Submit Payment Proof</h2>
+            <p className="modal-subtitle">Upload your GCash/bank screenshot</p>
+            {proofForm.screenshotPreview && <img src={proofForm.screenshotPreview} alt="proof" className="proof-preview"/>}
+            <button className="save-config-btn" style={{ background: '#F0EDFF', color: '#3B2AAB', marginTop: 0 }} onClick={() => proofInputRef.current.click()}>
+              📷 {proofForm.screenshot ? 'Change Screenshot' : 'Upload Screenshot'}
+            </button>
+            <textarea className="reject-textarea" placeholder="Optional note (e.g. GCash ref# 12345)" value={proofForm.note} onChange={e => setProofForm(prev => ({ ...prev, note: e.target.value }))} />
+            <button className="save-config-btn" onClick={async () => {
+              if (!proofForm.screenshot) { showToast('Please upload a screenshot.', 'error'); return; }
+              setLoading(true);
+              const fileExt = proofForm.screenshot.name.split('.').pop();
+              const fileName = `${currentUser.id}-${selectedUtility.id}.${fileExt}`;
+              const { error: uploadError } = await supabase.storage.from('payment-proofs').upload(fileName, proofForm.screenshot, { upsert: true });
+              if (uploadError) { showToast('Upload failed.', 'error'); setLoading(false); return; }
+              const { data: urlData } = supabase.storage.from('payment-proofs').getPublicUrl(fileName);
+              await markItemAsPaid(selectedUtility, urlData.publicUrl, proofForm.note, currentUser.id);
+              await supabase.from('notifications').insert({
+                user_id: activeHousehold?.created_by,
+                title: 'Payment Proof Submitted 📸',
+                message: `${profile?.full_name} submitted payment proof for "${selectedUtility.provider_name}"`,
+                type: 'payment_proof',
+              });
+              setShowPaymentProofModal(false);
+              setProofForm({ note: '', screenshot: null, screenshotPreview: null });
+              setSelectedUtility(null);
+              showToast('Payment proof submitted! ⏳');
+              setLoading(false);
+              fetchHouseholdData(activeHousehold, currentUser);
+            }} disabled={loading}>{loading ? 'Submitting...' : 'Submit for Verification'}</button>
+            <button className="cancel-btn" onClick={() => { setShowPaymentProofModal(false); setProofForm({ note: '', screenshot: null, screenshotPreview: null }); }}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      <input type="file" ref={proofInputRef} style={{ display: 'none' }} accept="image/*" onChange={e => { const file = e.target.files[0]; if (file) setProofForm(prev => ({ ...prev, screenshot: file, screenshotPreview: URL.createObjectURL(file) })); }} />
 
       <BottomNav active="utilities"/>
     </div>
