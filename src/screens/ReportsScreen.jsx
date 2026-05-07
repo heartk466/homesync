@@ -266,7 +266,7 @@ export default function ReportsScreen() {
     // Recent activity (primary household)
     const { data: activity } = await supabase
       .from('report_activity')
-      .select('*, profiles(*)')
+      .select('*')
       .eq('household_id', houseData.id)
       .order('created_at', { ascending: false })
       .limit(10);
@@ -279,8 +279,7 @@ export default function ReportsScreen() {
     const { data: memberRows } = await supabase
       .from('household_members')
       .select('user_id, role, status')
-      .eq('household_id', householdId)
-      .eq('status', 'active');
+      .eq('household_id', householdId);
     if (memberRows && memberRows.length) {
       const userIds = memberRows.map(m => m.user_id);
       const { data: profilesData } = await supabase
@@ -354,7 +353,7 @@ export default function ReportsScreen() {
         .select('*')
         .eq('user_id', user.id)
         .eq('household_id', primary?.id)
-        .single();
+        .maybeSingle();
       if (schedule) {
         setReportSchedule(schedule);
         setScheduleForm({
