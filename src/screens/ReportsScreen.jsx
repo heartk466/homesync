@@ -13,7 +13,18 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import './ReportsScreen.css';
 
-const COLORS = ['#3B2AAB', '#2D1A7A', '#D4C5FF', '#AE96FF', '#6B46C1', '#9F7AEA', '#7C3AED', '#C4B5FD'];
+const COLORS = [
+  '#2D1A7A', // darkest
+  '#3B2AAB',
+  '#5A3FCC',
+  '#6B46C1',
+  '#7C3AED',
+  '#9F7AEA',
+  '#AE96FF',
+  '#C4B5FD',
+  '#D4C5FF',
+  '#E8DEFF', // lightest
+];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 export default function ReportsScreen() {
@@ -267,11 +278,11 @@ export default function ReportsScreen() {
   const fetchHouseholdMembers = async (householdId, resolvedUserId = null) => {
     if (!householdId) return;
     const uid = resolvedUserId || currentUser?.id;
+    // No status filter — avoids 400 errors from schema mismatches
     const { data: memberRows } = await supabase
       .from('household_members')
       .select('user_id, role, status')
-      .eq('household_id', householdId)
-      .eq('status', 'active');
+      .eq('household_id', householdId);
     if (memberRows && memberRows.length) {
       const userIds = memberRows.map(m => m.user_id);
       const { data: profilesData } = await supabase
@@ -669,10 +680,28 @@ export default function ReportsScreen() {
             </div>
           </div>
           {monthlyData.some(m => m.amount > 0) ? (
-            <ResponsiveContainer width="100%" height={80}>
-              <BarChart data={monthlyData} barCategoryGap="20%">
-                <XAxis dataKey="month" tick={{ fontSize: 9, fill: '#3B2AAB' }} axisLine={false} tickLine={false} />
-                <Bar dataKey="amount" fill="#3B2AAB" radius={[4, 4, 0, 0]}/>
+            <ResponsiveContainer width="100%" height={90}>
+              <BarChart data={monthlyData} barCategoryGap="18%" margin={{ top: 4, bottom: 0, left: 0, right: 0 }}>
+                <XAxis
+                  dataKey="month"
+                  tick={{ fontSize: 8, fill: '#9E8FCC', fontFamily: 'Poppins' }}
+                  axisLine={false}
+                  tickLine={false}
+                />
+                <Tooltip
+                  formatter={(v) => [`₱${Number(v).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`, 'Paid']}
+                  contentStyle={{ borderRadius: 12, fontSize: 11, fontFamily: 'Poppins', border: 'none', boxShadow: '0 4px 16px rgba(59,42,171,0.15)' }}
+                />
+                <Bar dataKey="amount" radius={[5, 5, 0, 0]}>
+                  {monthlyData.map((entry, i) => (
+                    <Cell
+                      key={i}
+                      fill={entry.amount > 0
+                        ? (i === new Date().getMonth() ? '#3B2AAB' : '#AE96FF')
+                        : '#E8DEFF'}
+                    />
+                  ))}
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
           ) : (
@@ -686,19 +715,21 @@ export default function ReportsScreen() {
         <div className="report-card">
           <p className="report-card-label">Largest Expense Category</p>
           {categoryData.length > 0 ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
-              {/* Donut chart on the left */}
-              <div style={{ flexShrink: 0, width: 120, height: 120 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 10 }}>
+              {/* Donut chart — left */}
+              <div style={{ flexShrink: 0, width: 130, height: 130, position: 'relative' }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie
                       data={categoryData}
                       cx="50%"
                       cy="50%"
-                      innerRadius={32}
-                      outerRadius={52}
+                      innerRadius={38}
+                      outerRadius={58}
                       dataKey="value"
-                      paddingAngle={2}
+                      paddingAngle={3}
+                      startAngle={90}
+                      endAngle={-270}
                     >
                       {categoryData.map((_, i) => (
                         <Cell key={i} fill={COLORS[i % COLORS.length]} />
@@ -708,22 +739,45 @@ export default function ReportsScreen() {
                       formatter={(value) =>
                         `₱${Number(value).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`
                       }
+                      contentStyle={{ borderRadius: 12, fontSize: 10, fontFamily: 'Poppins', border: 'none', boxShadow: '0 4px 16px rgba(59,42,171,0.15)' }}
                     />
                   </PieChart>
                 </ResponsiveContainer>
-              </div>
-              {/* Legend on the right */}
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {categoryData.map((entry, i) => (
-                  <div key={entry.name} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{
-                      width: 10, height: 10, borderRadius: '50%',
-                      background: COLORS[i % COLORS.length],
-                      flexShrink: 0, display: 'inline-block'
-                    }}/>
-                    <span style={{ fontSize: 11, color: '#3B2AAB', fontWeight: 500 }}>{entry.name}</span>
+                {/* Center label */}
+                <div style={{
+                  position: 'absolute', top: '50%', left: '50%',
+                  transform: 'translate(-50%, -50%)',
+                  textAlign: 'center', pointerEvents: 'none',
+                }}>
+                  <div style={{ fontSize: 9, color: '#9E8FCC', fontFamily: 'Poppins', fontWeight: 600, lineHeight: 1.2 }}>Top</div>
+                  <div style={{ fontSize: 9, color: '#2D1A7A', fontFamily: 'Poppins', fontWeight: 700, lineHeight: 1.2 }}>
+                    {categoryData[0]?.name?.substring(0, 6)}
                   </div>
-                ))}
+                </div>
+              </div>
+              {/* Legend — right */}
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 7 }}>
+                {categoryData.map((entry, i) => {
+                  const total = categoryData.reduce((s, c) => s + c.value, 0);
+                  const pct = total > 0 ? ((entry.value / total) * 100).toFixed(0) : 0;
+                  return (
+                    <div key={entry.name} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                      <span style={{
+                        width: 10, height: 10, borderRadius: '50%',
+                        background: COLORS[i % COLORS.length],
+                        flexShrink: 0,
+                      }}/>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 11, color: '#2D1A7A', fontWeight: 600, fontFamily: 'Poppins', lineHeight: 1.2 }}>
+                          {entry.name}
+                        </div>
+                        <div style={{ fontSize: 9, color: '#9E8FCC', fontFamily: 'Poppins' }}>
+                          {pct}% · ₱{Number(entry.value).toLocaleString('en-PH', { minimumFractionDigits: 0 })}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           ) : (
@@ -734,9 +788,11 @@ export default function ReportsScreen() {
         {/* Card 3 — Pending Member Balances (unpaid splits across ALL households) */}
         <div className="report-card">
           <p className="report-card-label">Pending Member Balances</p>
-          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+
+          {/* Amount + legend row */}
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 8 }}>
             <div>
-              <p className="report-card-amount">
+              <p className="report-card-amount" style={{ marginBottom: 0 }}>
                 ₱ {pendingBalances.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
               </p>
               {yoyPending !== null ? (
@@ -747,58 +803,61 @@ export default function ReportsScreen() {
                 <p className="yoy-change" style={{ color: '#9E8FCC' }}>+ Year-over-year</p>
               )}
             </div>
-            {/* Mini legend top-right */}
-            {pendingByCategory.length > 0 && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#3B2AAB', display: 'inline-block' }}/>
-                  <span style={{ fontSize: 9, color: '#3B2AAB' }}>Total</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#AE96FF', display: 'inline-block' }}/>
-                  <span style={{ fontSize: 9, color: '#3B2AAB' }}>Pending</span>
-                </div>
+            {/* Legend */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 5, alignItems: 'flex-end', paddingTop: 4 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                <span style={{ width: 10, height: 10, borderRadius: 3, background: '#3B2AAB', display: 'inline-block' }}/>
+                <span style={{ fontSize: 10, color: '#3B2AAB', fontFamily: 'Poppins', fontWeight: 600 }}>Total</span>
               </div>
-            )}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                <span style={{ width: 10, height: 10, borderRadius: 3, background: '#AE96FF', display: 'inline-block' }}/>
+                <span style={{ fontSize: 10, color: '#3B2AAB', fontFamily: 'Poppins', fontWeight: 600 }}>Pending</span>
+              </div>
+            </div>
           </div>
-          {pendingByCategory.length > 0 ? (
-            <ResponsiveContainer width="100%" height={110}>
-              <BarChart
-                data={pendingByCategory}
-                barCategoryGap="25%"
-                barGap={2}
-              >
-                <XAxis
-                  dataKey="name"
-                  tick={{ fontSize: 9, fill: '#3B2AAB' }}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <Tooltip
-                  formatter={(value) =>
-                    `₱${Number(value).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`
-                  }
-                />
-                {/* "Total" bar (paid + pending for that category) */}
-                <Bar
-                  dataKey="value"
-                  name="Total"
-                  radius={[4, 4, 0, 0]}
-                  fill="#3B2AAB"
-                />
-                {/* "Pending" bar rendered as a lighter overlay — same data but lighter color */}
-                <Bar
-                  dataKey="value"
-                  name="Pending"
-                  radius={[4, 4, 0, 0]}
-                  fill="#AE96FF"
-                  fillOpacity={0.55}
-                />
-              </BarChart>
-            </ResponsiveContainer>
-          ) : (
+
+          {/* Side-by-side bar chart: Total bar + Pending bar per category */}
+          {pendingByCategory.length > 0 ? (() => {
+            // Build combined data: each category has totalPaid + pending
+            const combinedData = pendingByCategory.map(cat => {
+              const paidEntry = categoryData.find(c => c.name === cat.name);
+              const totalPaid = paidEntry ? paidEntry.value : 0;
+              return {
+                name: cat.name.length > 5 ? cat.name.substring(0, 5) : cat.name,
+                fullName: cat.name,
+                total: totalPaid + cat.value,
+                pending: cat.value,
+              };
+            });
+            return (
+              <ResponsiveContainer width="100%" height={120}>
+                <BarChart
+                  data={combinedData}
+                  barCategoryGap="20%"
+                  barGap={3}
+                  margin={{ top: 4, bottom: 0, left: 0, right: 0 }}
+                >
+                  <XAxis
+                    dataKey="name"
+                    tick={{ fontSize: 8, fill: '#9E8FCC', fontFamily: 'Poppins' }}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <Tooltip
+                    formatter={(value, name) => [
+                      `₱${Number(value).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`,
+                      name === 'total' ? 'Total' : 'Pending'
+                    ]}
+                    contentStyle={{ borderRadius: 12, fontSize: 10, fontFamily: 'Poppins', border: 'none', boxShadow: '0 4px 16px rgba(59,42,171,0.15)' }}
+                  />
+                  <Bar dataKey="total" name="total" fill="#3B2AAB" radius={[4, 4, 0, 0]} maxBarSize={20}/>
+                  <Bar dataKey="pending" name="pending" fill="#AE96FF" radius={[4, 4, 0, 0]} maxBarSize={20}/>
+                </BarChart>
+              </ResponsiveContainer>
+            );
+          })() : (
             <div style={{ height: 80, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <p className="no-data" style={{ margin: 0 }}>No pending balances</p>
+              <p className="no-data" style={{ margin: 0 }}>No pending balances 🎉</p>
             </div>
           )}
         </div>

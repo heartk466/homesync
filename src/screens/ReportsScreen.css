@@ -706,3 +706,61 @@
 
 .toast-error { background: #e53e3e; }
 .toast-info { background: #3B2AAB; }
+/* ── Enhanced Report Cards ────────────────────────────────────────────── */
+
+.report-card {
+  transition: box-shadow 0.2s ease;
+}
+
+.report-card:hover {
+  box-shadow: 0 6px 24px rgba(59,42,171,0.14);
+}
+
+/* Card amount — tighten spacing */
+.report-card-amount {
+  margin-bottom: 2px !important;
+}
+
+/* Pie center label sits absolutely inside ResponsiveContainer */
+.pie-center-label {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  pointer-events: none;
+  font-family: 'Poppins', sans-serif;
+}
+
+/* Category legend item */
+.cat-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.cat-legend-dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.cat-legend-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: #2D1A7A;
+  font-family: 'Poppins', sans-serif;
+  line-height: 1.2;
+}
+
+.cat-legend-pct {
+  font-size: 9px;
+  color: #9E8FCC;
+  font-family: 'Poppins', sans-serif;
+}
+
+/* Pending bar legend */
+.pending-legend-dot {
+  width: 10px; height: 10px;
+  border-radius: 3px;
+  display: inline-block;
+}
