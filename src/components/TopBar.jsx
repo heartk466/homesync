@@ -216,10 +216,10 @@ export default function TopBar({
 
       {/* Top Bar */}
       <div className="topbar">
-  <img src={logo} alt="homesync" className="topbar-logo-icon" />
-  <span>{title}</span>
-</div>
-        
+        <div className="topbar-title">
+          <img src={logo} alt="homesync" className="topbar-logo-icon" />
+          <span>{title}</span>
+        </div>
         <div className="topbar-actions">
           {showBell && (
             <button
