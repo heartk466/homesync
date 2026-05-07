@@ -326,15 +326,22 @@ export default function ReportsScreen() {
         .single();
       setProfile(profileData);
 
+      // Step 1: get household IDs the user belongs to
       const { data: memberData } = await supabase
         .from('household_members')
-        .select('*, households(*)')
+        .select('household_id, role')
         .eq('user_id', user.id);
 
-      const households = memberData?.map(m => ({
-        ...m.households,
-        role: m.role,
-      })) || [];
+      // Step 2: fetch household details separately (no FK join needed)
+      const householdIds = (memberData || []).map(m => m.household_id).filter(Boolean);
+      const { data: householdsData } = householdIds.length > 0
+        ? await supabase.from('households').select('*').in('id', householdIds)
+        : { data: [] };
+
+      const households = (householdsData || []).map(h => ({
+        ...h,
+        role: memberData?.find(m => m.household_id === h.id)?.role || 'member',
+      }));
       setAllHouseholds(households);
 
       const primary = households.find(h => h.id === profileData.household_id) || households[0];
@@ -348,21 +355,24 @@ export default function ReportsScreen() {
       }
       await fetchNotifications(user.id);
 
-      const { data: schedule } = await supabase
-        .from('report_schedules')
-        .select('*')
-        .eq('user_id', user.id)
-        .eq('household_id', primary?.id)
-        .maybeSingle();
-      if (schedule) {
-        setReportSchedule(schedule);
-        setScheduleForm({
-          frequency: schedule.frequency,
-          day_of_month: schedule.day_of_month,
-          custom_interval_days: schedule.custom_interval_days || 30,
-          category_filter: schedule.category_filter || [],
-        });
-      }
+      // report_schedules may not exist — wrap to prevent crash
+      try {
+        const { data: schedule } = await supabase
+          .from('report_schedules')
+          .select('*')
+          .eq('user_id', user.id)
+          .eq('household_id', primary?.id)
+          .maybeSingle();
+        if (schedule) {
+          setReportSchedule(schedule);
+          setScheduleForm({
+            frequency: schedule.frequency,
+            day_of_month: schedule.day_of_month,
+            custom_interval_days: schedule.custom_interval_days || 30,
+            category_filter: schedule.category_filter || [],
+          });
+        }
+      } catch (_) { /* table may not exist yet */ }
     } catch (err) {
       console.error(err);
     }
