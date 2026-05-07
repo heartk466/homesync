@@ -67,6 +67,8 @@ export default function GroupDetailScreen() {
   const [showUploadAfterAdd, setShowUploadAfterAdd] = useState(false);
   const [justAddedExpense, setJustAddedExpense] = useState(null);
   const [loadingAction, setLoadingAction] = useState(false);
+  const [showPaymentCard, setShowPaymentCard] = useState(false);
+  const [paymentCardMember, setPaymentCardMember] = useState(null);
 
   const [expenseForm, setExpenseForm] = useState({
     title: '', amount: '', category: 'Food',
@@ -163,7 +165,7 @@ export default function GroupDetailScreen() {
       if (userIds.length > 0) {
         const { data: profiles } = await supabase
           .from('profiles')
-          .select('id, full_name, email, avatar_url')
+          .select('id, full_name, email, avatar_url, gcash_number, bank_name, bank_account_number, bank_account_name')
           .in('id', userIds);
         profilesMap = Object.fromEntries((profiles || []).map(p => [p.id, p]));
       }
@@ -893,7 +895,13 @@ export default function GroupDetailScreen() {
           <div className="members-list">
             {members.map(member => (
               <div key={member.user_id} className="member-row">
-                <div className="member-avatar-tooltip">{getMemberAvatar(member)}</div>
+                <button
+                  className="member-avatar-tooltip member-avatar-clickable"
+                  onClick={() => { setPaymentCardMember(member); setShowPaymentCard(true); }}
+                  title="View payment details"
+                >
+                  {getMemberAvatar(member)}
+                </button>
                 <div className="member-info">
                   <span className="member-name">{member.profiles?.full_name}</span>
                   <span className="member-role">{member.role === 'owner' ? 'Owner' : 'Member'}</span>
@@ -1402,6 +1410,53 @@ export default function GroupDetailScreen() {
       <input type="file" ref={proofInputRef} style={{ display: 'none' }} accept="image/*" onChange={e => { const file = e.target.files[0]; if (file) setProofForm({ ...proofForm, screenshot: file, screenshotPreview: URL.createObjectURL(file) }); }} />
 
       {toast && <div className={`toast-detail toast-${toast.type}`}>{toast.msg}</div>}
+
+      {/* Payment Details Card */}
+      {showPaymentCard && paymentCardMember && (
+        <div className="modal-overlay-detail" onClick={() => setShowPaymentCard(false)}>
+          <div className="modal-detail-card" onClick={e => e.stopPropagation()} style={{ maxWidth: 320 }}>
+            <div className="modal-header" style={{ marginBottom: 16 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div className="member-avatar-tooltip" style={{ width: 44, height: 44, minWidth: 44, minHeight: 44 }}>
+                  {getMemberAvatar(paymentCardMember)}
+                </div>
+                <div>
+                  <h2 style={{ margin: 0, fontSize: 16, color: '#2D1A7A', fontWeight: 700 }}>{paymentCardMember.profiles?.full_name}</h2>
+                  <span style={{ fontSize: 11, color: '#9E8FCC' }}>{paymentCardMember.role === 'owner' ? '👑 Owner' : '👤 Member'}</span>
+                </div>
+              </div>
+              <button className="modal-close" onClick={() => setShowPaymentCard(false)}><X size={20} /></button>
+            </div>
+            <p style={{ fontSize: 11, fontWeight: 700, color: '#5A4AAA', margin: '0 0 10px', textTransform: 'uppercase', letterSpacing: 0.5 }}>💳 Payment Details</p>
+            {[
+              { label: 'GCash', value: paymentCardMember.profiles?.gcash_number },
+              { label: 'Bank', value: paymentCardMember.profiles?.bank_name },
+              { label: 'Account #', value: paymentCardMember.profiles?.bank_account_number },
+              { label: 'Account Name', value: paymentCardMember.profiles?.bank_account_name },
+            ].map(({ label, value }) => (
+              <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid #F0EDFF' }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: '#5A4AAA' }}>{label}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 13, fontWeight: value ? 700 : 400, color: value ? '#2D1A7A' : '#C4B5FD' }}>{value || 'Not set'}</span>
+                  {value && (
+                    <button onClick={() => { navigator.clipboard?.writeText(value); showToast(`${label} copied!`); }}
+                      style={{ background: '#F0EDFF', border: 'none', borderRadius: 6, padding: '3px 8px', cursor: 'pointer', color: '#3B2AAB', fontSize: 10, fontWeight: 700, fontFamily: 'Poppins' }}>
+                      Copy
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+            {!paymentCardMember.profiles?.gcash_number && !paymentCardMember.profiles?.bank_name && !paymentCardMember.profiles?.bank_account_number && (
+              <p style={{ fontSize: 12, color: '#9E8FCC', textAlign: 'center', padding: '16px 0 4px', margin: 0 }}>No payment details set yet</p>
+            )}
+            <button onClick={() => setShowPaymentCard(false)}
+              style={{ width: '100%', marginTop: 16, background: '#3B2AAB', color: 'white', border: 'none', borderRadius: 50, padding: '12px 0', fontFamily: 'Poppins', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+              Close
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

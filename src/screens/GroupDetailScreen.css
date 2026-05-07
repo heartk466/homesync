@@ -583,3 +583,20 @@
   width: 100%;
   height: 100%;
 }
+/* Clickable member avatar in members list */
+.member-avatar-clickable {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.member-avatar-clickable:hover {
+  transform: scale(1.08);
+  box-shadow: 0 0 0 3px #AE96FF;
+}
+
+.member-avatar-clickable:active {
+  transform: scale(0.96);
+}
