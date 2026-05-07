@@ -78,18 +78,29 @@ export default function ReportsScreen() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  // Helper to fetch expense splits
+  // Helper to fetch expense splits - no foreign key join to avoid 400 errors
   const fetchExpenseSplits = async (expenseIds) => {
-    if (!expenseIds.length) return {};
-    const { data, error } = await supabase
-      .from('expense_splits')
-      .select('*, profiles:user_id(id, full_name, avatar_url)')
-      .in('expense_id', expenseIds);
-    if (error) console.error(error);
+    if (!expenseIds || !expenseIds.length) return {};
+    // Chunk into 500 to stay under Supabase .in() limits
+    const chunks = [];
+    for (let i = 0; i < expenseIds.length; i += 500) {
+      chunks.push(expenseIds.slice(i, i + 500));
+    }
+    const results = await Promise.all(
+      chunks.map(chunk =>
+        supabase
+          .from('expense_splits')
+          .select('id, expense_id, user_id, share_amount, status')
+          .in('expense_id', chunk)
+      )
+    );
     const grouped = {};
-    data?.forEach(split => {
-      if (!grouped[split.expense_id]) grouped[split.expense_id] = [];
-      grouped[split.expense_id].push(split);
+    results.forEach(({ data, error }) => {
+      if (error) { console.error('fetchExpenseSplits error:', error); return; }
+      (data || []).forEach(split => {
+        if (!grouped[split.expense_id]) grouped[split.expense_id] = [];
+        grouped[split.expense_id].push(split);
+      });
     });
     return grouped;
   };
@@ -140,10 +151,9 @@ export default function ReportsScreen() {
       ? await fetchExpenseSplits(allExpenseIds)
       : {};
 
-    // ── Helpers using correct status values from expense_splits ──
-    // From ExpensesScreen: split.status === 'approved' means the user has paid/settled
-    // 'pending_verification' = proof submitted awaiting review
-    // anything else (null / 'pending') = not yet paid
+    // ── Helpers using CONFIRMED DB status values ──
+    // expense_splits.status confirmed values: 'approved' (paid) | 'unpaid' (pending)
+    // expenses.approval_status confirmed values: 'approved' only in this dataset
     const getUserSplit = (expense) => {
       const splits = splitsMap[expense.id] || [];
       return splits.find(s => s.user_id === targetUserId) || null;
@@ -151,7 +161,7 @@ export default function ReportsScreen() {
 
     const getPaidAmountForUser = (expense) => {
       const split = getUserSplit(expense);
-      // Paid = split is approved (settled)
+      // 'approved' = split has been paid and verified
       return split && split.status === 'approved'
         ? Number(split.share_amount || 0)
         : 0;
@@ -159,8 +169,8 @@ export default function ReportsScreen() {
 
     const getPendingAmountForUser = (expense) => {
       const split = getUserSplit(expense);
-      // Pending = split exists but NOT yet approved
-      return split && split.status !== 'approved'
+      // 'unpaid' = split exists but user has not yet paid
+      return split && split.status === 'unpaid'
         ? Number(split.share_amount || 0)
         : 0;
     };
