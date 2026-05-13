@@ -61,6 +61,12 @@ export default function SettingsScreen() {
   const [newHouseholdName, setNewHouseholdName] = useState('');
   const [expandedSection, setExpandedSection] = useState(null);
 
+  // Payment Details modal
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [paymentForm, setPaymentForm] = useState({ gcash_number: '', bank_name: '', bank_account_number: '', bank_account_name: '' });
+  const [paymentLoading, setPaymentLoading] = useState(false);
+  const [paymentSuccess, setPaymentSuccess] = useState(false);
+
   // Push notification status display
   const [pushStatus, setPushStatus] = useState('unknown'); // 'granted' | 'denied' | 'default' | 'unsupported'
 
@@ -471,6 +477,48 @@ export default function SettingsScreen() {
     setExpandedSection(expandedSection === section ? null : section);
   };
 
+  const handleOpenPaymentModal = () => {
+    setPaymentForm({
+      gcash_number: profile?.gcash_number || '',
+      bank_name: profile?.bank_name || '',
+      bank_account_number: profile?.bank_account_number || '',
+      bank_account_name: profile?.bank_account_name || '',
+    });
+    setPaymentSuccess(false);
+    setShowPaymentModal(true);
+  };
+
+  const handleSavePaymentDetails = async () => {
+    setPaymentLoading(true);
+    const { error } = await supabase
+      .from('profiles')
+      .update({
+        gcash_number: paymentForm.gcash_number,
+        bank_name: paymentForm.bank_name,
+        bank_account_number: paymentForm.bank_account_number,
+        bank_account_name: paymentForm.bank_account_name,
+      })
+      .eq('id', currentUser.id);
+
+    if (error) {
+      showToast('Failed to save payment details.', 'error');
+    } else {
+      setProfile(prev => ({
+        ...prev,
+        gcash_number: paymentForm.gcash_number,
+        bank_name: paymentForm.bank_name,
+        bank_account_number: paymentForm.bank_account_number,
+        bank_account_name: paymentForm.bank_account_name,
+      }));
+      setPaymentSuccess(true);
+      setTimeout(() => {
+        setShowPaymentModal(false);
+        setPaymentSuccess(false);
+      }, 1500);
+    }
+    setPaymentLoading(false);
+  };
+
   const Toggle = ({ value, onToggle }) => (
     <div
       className={`toggle-switch ${value ? 'on' : ''}`}
@@ -579,7 +627,28 @@ export default function SettingsScreen() {
                 <span className="payment-label">Account Name</span>
                 <span className="payment-value">{profile?.bank_account_name || 'Not set'}</span>
               </div>
-              <p className="settings-hint">Edit these in your profile via the top bar avatar.</p>
+              <button
+                onClick={handleOpenPaymentModal}
+                style={{
+                  marginTop: 6,
+                  width: '100%',
+                  background: '#3B2AAB',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: 50,
+                  padding: '10px 0',
+                  fontFamily: 'Poppins, sans-serif',
+                  fontSize: 13,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 6,
+                }}
+              >
+                ✏️ Edit Payment Details
+              </button>
             </div>
           )}
         </div>
@@ -842,6 +911,73 @@ export default function SettingsScreen() {
         </button>
 
       </div>
+
+      {/* Payment Details Modal */}
+      {showPaymentModal && (
+        <div className="settings-modal-overlay">
+          <div className="settings-modal">
+            <div className="modal-top-row">
+              <h2>💳 Payment Details</h2>
+              <button className="modal-x-btn" onClick={() => setShowPaymentModal(false)}>
+                <X size={18}/>
+              </button>
+            </div>
+
+            {paymentSuccess ? (
+              <div style={{ textAlign: 'center', padding: '16px 0', fontSize: 14, color: '#38a169', fontWeight: 600, fontFamily: 'Poppins, sans-serif' }}>
+                ✅ Payment details updated!
+              </div>
+            ) : (
+              <>
+                <div className="topbar-input-group" style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: '#5A4AAA', paddingLeft: 4, fontFamily: 'Poppins, sans-serif' }}>GCash Number</label>
+                  <input
+                    type="text"
+                    className="settings-modal-input"
+                    value={paymentForm.gcash_number}
+                    onChange={e => setPaymentForm({ ...paymentForm, gcash_number: e.target.value })}
+                    placeholder="e.g. 09XX XXX XXXX"
+                  />
+                </div>
+                <div className="topbar-input-group" style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: '#5A4AAA', paddingLeft: 4, fontFamily: 'Poppins, sans-serif' }}>Bank Name</label>
+                  <input
+                    type="text"
+                    className="settings-modal-input"
+                    value={paymentForm.bank_name}
+                    onChange={e => setPaymentForm({ ...paymentForm, bank_name: e.target.value })}
+                    placeholder="e.g. BDO, BPI, Metrobank"
+                  />
+                </div>
+                <div className="topbar-input-group" style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: '#5A4AAA', paddingLeft: 4, fontFamily: 'Poppins, sans-serif' }}>Bank Account Number</label>
+                  <input
+                    type="text"
+                    className="settings-modal-input"
+                    value={paymentForm.bank_account_number}
+                    onChange={e => setPaymentForm({ ...paymentForm, bank_account_number: e.target.value })}
+                    placeholder="Account number"
+                  />
+                </div>
+                <div className="topbar-input-group" style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: '#5A4AAA', paddingLeft: 4, fontFamily: 'Poppins, sans-serif' }}>Account Name</label>
+                  <input
+                    type="text"
+                    className="settings-modal-input"
+                    value={paymentForm.bank_account_name}
+                    onChange={e => setPaymentForm({ ...paymentForm, bank_account_name: e.target.value })}
+                    placeholder="Account name"
+                  />
+                </div>
+                <button className="modal-primary-btn" onClick={handleSavePaymentDetails} disabled={paymentLoading}>
+                  {paymentLoading ? 'Saving...' : 'Save Payment Details'}
+                </button>
+                <button className="modal-ghost-btn" onClick={() => setShowPaymentModal(false)}>Cancel</button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Sign Out Modal */}
       {showSignOutModal && (
