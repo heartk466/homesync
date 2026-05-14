@@ -432,6 +432,8 @@ for (const expense of expenses) {
       if (existing && existing.length > 0) { showToast('You are already a member of this household', 'error'); return; }
       const { error: insertError } = await supabase.from('household_members').insert({ household_id: householdData.id, user_id: user.id, role: 'member', status: 'active' });
       if (insertError) { showToast(`Failed to join: ${insertError.message}`, 'error'); return; }
+      // Also update profile so household_id stays in sync
+      await supabase.from('profiles').update({ household_id: householdData.id }).eq('id', user.id);
       showToast(`Joined "${householdData.name}" successfully!`);
       setShowJoinModal(false);
       setJoinCode('');
