@@ -161,28 +161,31 @@ export default function ReportsScreen() {
     const splitsMap = allExpenseIds.length > 0 ? await fetchExpenseSplits(allExpenseIds) : {};
 
     // ── Helpers ──────────────────────────────────────────────────────────────
-    // members_split JSONB shape: { "userId": "3500.00", ... }
-    // This is always populated when expense is created — primary source of truth.
+    // Priority: expense_splits table row (most authoritative) → members_split JSONB → 0
+    // We deliberately do NOT fall back to full expense.amount when paid_by matches,
+    // because Sasha paying the bill doesn't mean she owes the full amount — her share is in the split.
     const getUserShareAmount = (expense) => {
-      // 1. Try members_split JSONB object keyed by userId
-      if (expense.members_split) {
-        const val = expense.members_split[targetUserId];
-        if (val !== undefined && val !== null) return Number(val) || 0;
-        // Also try if members_split is an array of objects
-        if (Array.isArray(expense.members_split)) {
-          const row = expense.members_split.find(s => s.user_id === targetUserId);
-          if (row) return Number(row.share_amount || row.amount) || 0;
-        }
-      }
-      // 2. Try expense_splits table row
+      // 1. expense_splits table row — authoritative, written when expense is approved
       const tableRow = (splitsMap[expense.id] || []).find(s => s.user_id === targetUserId);
       if (tableRow) return Number(tableRow.share_amount) || 0;
-      // 3. paid_by = this user and no split defined → full amount
-      if (expense.paid_by === targetUserId) return Number(expense.amount) || 0;
-      // 4. Equal split fallback — if user is in same household, divide equally
-      if (expense.split_type === 'equal') {
-        const splitCount = Object.keys(expense.members_split || {}).length;
-        if (splitCount > 0) return Number(expense.amount) / splitCount;
+
+      // 2. members_split JSONB object keyed by userId — written at creation time
+      if (expense.members_split && !Array.isArray(expense.members_split)) {
+        const val = expense.members_split[targetUserId];
+        if (val !== undefined && val !== null) return Number(val) || 0;
+        // User is not in this expense's split — they owe nothing
+        if (Object.keys(expense.members_split).length > 0) return 0;
+      }
+      // members_split as array of objects (legacy shape)
+      if (Array.isArray(expense.members_split)) {
+        const row = expense.members_split.find(s => s.user_id === targetUserId);
+        if (row) return Number(row.share_amount || row.amount) || 0;
+        if (expense.members_split.length > 0) return 0;
+      }
+
+      // 3. No split data at all — only count if user created/paid the expense alone
+      if (expense.paid_by === targetUserId && expense.split_type === 'none') {
+        return Number(expense.amount) || 0;
       }
       return 0;
     };
