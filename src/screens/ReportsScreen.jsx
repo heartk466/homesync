@@ -118,16 +118,21 @@ export default function ReportsScreen() {
     const lastYearStart = new Date(now.getFullYear() - 1, 0, 1).toISOString().split('T')[0];
     const lastYearEnd   = new Date(now.getFullYear() - 1, 11, 31).toISOString().split('T')[0];
 
-    // ── Step 1: Get ALL household IDs this user belongs to ──
+    // ── Step 1: Get ALL household IDs and group IDs this user belongs to ──
     const { data: memberRows } = await supabase
       .from('household_members')
       .select('household_id')
       .eq('user_id', targetUserId);
-
     const householdIds = (memberRows?.map(r => r.household_id) || [houseData.id]).filter(Boolean);
 
-    // ── Step 2: Fetch ALL expenses — no filter, we sort in JS ──
-    const expenseResults = await Promise.all(
+    const { data: groupMemberRows } = await supabase
+      .from('group_members')
+      .select('group_id')
+      .eq('user_id', targetUserId);
+    const groupIds = (groupMemberRows || []).map(r => r.group_id).filter(Boolean);
+
+    // ── Step 2: Fetch ALL expenses from households AND groups ──
+    const householdExpenseResults = await Promise.all(
       householdIds.map(async (hid) => {
         const { data } = await supabase
           .from('expenses')
@@ -137,7 +142,19 @@ export default function ReportsScreen() {
         return data || [];
       })
     );
-    const allExpenses = expenseResults.flat();
+    const groupExpenseResults = groupIds.length > 0
+      ? await Promise.all(
+          groupIds.map(async (gid) => {
+            const { data } = await supabase
+              .from('expenses')
+              .select('*')
+              .eq('group_id', gid)
+              .order('expense_date', { ascending: false });
+            return data || [];
+          })
+        )
+      : [];
+    const allExpenses = [...householdExpenseResults.flat(), ...groupExpenseResults.flat()];
 
     // ── Step 3: Fetch expense_splits for enrichment (best-effort) ──
     const allExpenseIds = allExpenses.map(e => e.id);
@@ -176,10 +193,22 @@ export default function ReportsScreen() {
       return getUserShareAmount(expense);
     };
 
-    // Pending = approved but not yet paid, and user has a share
+    // Pending = expense is approved, but this user's specific split is still unpaid
     const getPendingAmountForUser = (expense) => {
-      if (expense.status === 'paid') return 0;
+      // Expense itself must be approved (not pending_approval, not rejected)
       if (expense.approval_status === 'rejected') return 0;
+      if (expense.approval_status === 'pending_approval') return 0;
+
+      // Check split-level status for this user — the authoritative source
+      const userSplit = (splitsMap[expense.id] || []).find(s => s.user_id === targetUserId);
+      if (userSplit) {
+        // If split is already approved/paid, it's not pending
+        if (userSplit.status === 'approved') return 0;
+        return Number(userSplit.share_amount) || 0;
+      }
+
+      // Fallback: no split row yet but expense is approved and not fully paid
+      if (expense.status === 'paid') return 0;
       return getUserShareAmount(expense);
     };
 
@@ -430,7 +459,8 @@ export default function ReportsScreen() {
   const handleMemberChange = (memberId) => {
     setSelectedMemberId(memberId);
     setShowMemberDropdown(false);
-    fetchReportData(selectedHousehold, memberId, currentUser?.id);
+    // Pass memberId as resolvedUserId so fetchReportData uses it as targetUserId
+    fetchReportData(selectedHousehold, memberId, memberId);
     showToast(`Viewing report for ${householdMembers.find(m => m.user_id === memberId)?.profiles?.full_name}`);
   };
 
