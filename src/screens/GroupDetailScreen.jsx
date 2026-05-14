@@ -3,7 +3,7 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import {
   ArrowLeft, Users, Plus, Check, X, Camera,
-  Copy, Share2, AlertCircle, Trash2, Eye, RefreshCw
+  Copy, Share2, AlertCircle, Trash2, Eye, RefreshCw, Pencil
 } from 'lucide-react';
 import './GroupDetailScreen.css';
 
@@ -69,6 +69,13 @@ export default function GroupDetailScreen() {
   const [loadingAction, setLoadingAction] = useState(false);
   const [showPaymentCard, setShowPaymentCard] = useState(false);
   const [paymentCardMember, setPaymentCardMember] = useState(null);
+
+  // Edit Amount state
+  const [showEditAmountModal, setShowEditAmountModal] = useState(false);
+  const [editAmountExpense, setEditAmountExpense] = useState(null);
+  const [editAmountValue, setEditAmountValue] = useState('');
+  const [editAmountLoading, setEditAmountLoading] = useState(false);
+  const [editCustomSplits, setEditCustomSplits] = useState({});
 
   const [expenseForm, setExpenseForm] = useState({
     title: '', amount: '', category: 'Food',
@@ -840,6 +847,69 @@ export default function GroupDetailScreen() {
     fetchGroupAndData();
   };
 
+  const openEditAmount = (expense) => {
+    setEditAmountExpense(expense);
+    setEditAmountValue(String(expense.amount));
+    // Pre-fill custom splits from existing splits in DB
+    const splits = expenseSplits[expense.id] || [];
+    const prefilled = {};
+    splits.forEach(s => { prefilled[s.user_id] = String(s.share_amount); });
+    setEditCustomSplits(prefilled);
+    setShowEditAmountModal(true);
+  };
+
+  const handleSaveEditAmount = async () => {
+    const newAmount = Number(editAmountValue);
+    if (!newAmount || isNaN(newAmount) || newAmount <= 0) {
+      showToast('Please enter a valid amount', 'error');
+      return;
+    }
+    const splits = expenseSplits[editAmountExpense.id] || [];
+    const splitType = editAmountExpense.split_type;
+    let newMembersSplit = {};
+
+    if (splitType === 'equal') {
+      const share = newAmount / splits.length;
+      splits.forEach(s => { newMembersSplit[s.user_id] = share.toFixed(2); });
+    } else {
+      // custom — validate total
+      let total = 0;
+      splits.forEach(s => { total += Number(editCustomSplits[s.user_id]) || 0; });
+      if (Math.abs(total - newAmount) > 0.01) {
+        showToast(`Custom split total ₱${total.toFixed(2)} doesn't equal ₱${newAmount.toFixed(2)}`, 'error');
+        return;
+      }
+      splits.forEach(s => { newMembersSplit[s.user_id] = (Number(editCustomSplits[s.user_id]) || 0).toFixed(2); });
+    }
+
+    setEditAmountLoading(true);
+    // Update expense amount and members_split
+    await supabase.from('expenses').update({ amount: newAmount, members_split: newMembersSplit }).eq('id', editAmountExpense.id);
+    // Update each expense_split share_amount
+    for (const split of splits) {
+      await supabase.from('expense_splits').update({ share_amount: Number(newMembersSplit[split.user_id]) }).eq('id', split.id);
+    }
+
+    // Notify all members that the amount was changed
+    const notifTargets = members.filter(m => m.user_id !== currentUser.id);
+    for (const m of notifTargets) {
+      await supabase.from('notifications').insert({
+        user_id: m.user_id,
+        title: '✏️ Expense Amount Updated',
+        message: `The owner updated "${editAmountExpense.title}" from ₱${Number(editAmountExpense.amount).toFixed(2)} to ₱${newAmount.toFixed(2)}.`,
+        type: 'expense_updated',
+        link_path: `/groups/${id}?type=${contextType}`,
+        link_state: JSON.stringify({ type: contextType }),
+      });
+    }
+
+    setShowEditAmountModal(false);
+    setEditAmountExpense(null);
+    setEditAmountLoading(false);
+    showToast('Amount updated and members notified! ✅');
+    fetchGroupAndData();
+  };
+
   if (loading) {
     return (
       <div className="group-detail-screen">
@@ -1079,9 +1149,14 @@ export default function GroupDetailScreen() {
                     {badge.label}
                   </div>
                   {isAdmin && (
-                    <button className="icon-btn delete" onClick={() => { setSelectedExpense(expense); setShowDeleteModal(true); }}>
-                      <Trash2 size={14} />
-                    </button>
+                    <>
+                      <button className="icon-btn" onClick={() => openEditAmount(expense)} title="Edit amount" style={{ color: '#3B2AAB' }}>
+                        <Pencil size={14} />
+                      </button>
+                      <button className="icon-btn delete" onClick={() => { setSelectedExpense(expense); setShowDeleteModal(true); }}>
+                        <Trash2 size={14} />
+                      </button>
+                    </>
                   )}
                 </div>
               </div>
@@ -1127,15 +1202,42 @@ export default function GroupDetailScreen() {
                 <button className={`split-btn ${expenseForm.split_type === 'equal' ? 'active' : ''}`} onClick={() => setExpenseForm({ ...expenseForm, split_type: 'equal' })}>Equal</button>
                 <button className={`split-btn ${expenseForm.split_type === 'custom' ? 'active' : ''}`} onClick={() => setExpenseForm({ ...expenseForm, split_type: 'custom' })}>Custom</button>
               </div>
-              {expenseForm.split_type === 'custom' && expenseForm.selected_members.map(uid => {
+              {expenseForm.split_type === 'custom' && expenseForm.selected_members.map((uid, i) => {
                 const member = members.find(m => m.user_id === uid);
+                const totalAmt = Number(expenseForm.amount) || 0;
+                const prevTotal = expenseForm.selected_members.slice(0, i).reduce((sum, pid) => sum + (Number(expenseForm.custom_splits[pid]) || 0), 0);
+                const thisRemaining = totalAmt - prevTotal;
+                const hasEntered = Number(expenseForm.custom_splits[uid]) > 0;
+                const afterThis = thisRemaining - (Number(expenseForm.custom_splits[uid]) || 0);
                 return (
-                  <div key={uid} className="custom-split-row">
-                    <span>{member?.profiles?.full_name}</span>
-                    <div className="amount-input-wrap small"><span className="peso-sign">₱</span><input type="number" placeholder="0.00" value={expenseForm.custom_splits[uid] || ''} onChange={e => setExpenseForm({ ...expenseForm, custom_splits: { ...expenseForm.custom_splits, [uid]: e.target.value } })} /></div>
+                  <div key={uid} style={{ marginBottom: 10 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: '#2D1A7A' }}>{member?.profiles?.full_name}</span>
+                      {totalAmt > 0 && (
+                        <span style={{ fontSize: 10, color: '#9E8FCC' }}>
+                          {hasEntered
+                            ? `₱${afterThis.toFixed(2)} left after this`
+                            : `₱${thisRemaining.toFixed(2)} still needs to be split`}
+                        </span>
+                      )}
+                    </div>
+                    <div className="custom-split-row">
+                      <div className="amount-input-wrap small"><span className="peso-sign">₱</span><input type="number" placeholder="0.00" value={expenseForm.custom_splits[uid] || ''} onChange={e => setExpenseForm({ ...expenseForm, custom_splits: { ...expenseForm.custom_splits, [uid]: e.target.value } })} /></div>
+                    </div>
                   </div>
                 );
               })}
+              {expenseForm.split_type === 'custom' && (() => {
+                const totalAmt = Number(expenseForm.amount) || 0;
+                const customTotal = expenseForm.selected_members.reduce((sum, uid) => sum + (Number(expenseForm.custom_splits[uid]) || 0), 0);
+                const rem = totalAmt - customTotal;
+                if (totalAmt <= 0) return null;
+                return (
+                  <div style={{ padding: '8px 12px', borderRadius: 10, marginBottom: 8, fontSize: 12, fontWeight: 700, background: Math.abs(rem) < 0.01 ? '#D1FAE5' : '#FEE2E2', color: Math.abs(rem) < 0.01 ? '#065F46' : '#e53e3e' }}>
+                    {Math.abs(rem) < 0.01 ? '✅ Split total matches!' : `₱${Math.abs(rem).toFixed(2)} ${rem > 0 ? 'still unassigned' : 'over budget'}`}
+                  </div>
+                );
+              })()}
               <button className="add-expense-btn" onClick={handleAddExpense} disabled={loadingAction}>{loadingAction ? 'Adding...' : 'Add Expense'}</button>
             </div>
           </div>
@@ -1457,6 +1559,126 @@ export default function GroupDetailScreen() {
           </div>
         </div>
       )}
+      {/* Edit Amount Modal */}
+      {showEditAmountModal && editAmountExpense && (() => {
+        const splits = expenseSplits[editAmountExpense.id] || [];
+        const newAmount = Number(editAmountValue) || 0;
+        const isCustom = editAmountExpense.split_type === 'custom';
+        const equalShare = splits.length > 0 ? (newAmount / splits.length) : 0;
+
+        // Running total for custom split "remaining" logic
+        let runningTotal = 0;
+        const splitEntries = splits.map((s, i) => {
+          const entered = Number(editCustomSplits[s.user_id]) || 0;
+          const remaining = newAmount - runningTotal;
+          const isLast = i === splits.length - 1;
+          runningTotal += entered;
+          return { s, entered, remaining, isLast };
+        });
+        const customTotal = splits.reduce((sum, s) => sum + (Number(editCustomSplits[s.user_id]) || 0), 0);
+        const customRemaining = newAmount - customTotal;
+
+        return (
+          <div className="modal-overlay-detail">
+            <div className="modal-detail-card">
+              <div className="modal-header">
+                <h2>Edit Expense Amount</h2>
+                <button className="modal-close" onClick={() => setShowEditAmountModal(false)}><X size={20} /></button>
+              </div>
+              <div className="modal-body-scroll">
+                <div style={{ background: '#F8F6FF', borderRadius: 12, padding: '10px 14px', marginBottom: 12, fontSize: 12, color: '#5A4AAA' }}>
+                  <strong>{editAmountExpense.title}</strong> · Original: ₱{Number(editAmountExpense.amount).toFixed(2)}
+                </div>
+
+                <label style={{ fontSize: 12, fontWeight: 600, color: '#5A4AAA' }}>New Amount</label>
+                <div className="amount-input-wrap" style={{ marginTop: 6, marginBottom: 12 }}>
+                  <span className="peso-sign">₱</span>
+                  <input
+                    type="number"
+                    placeholder="0.00"
+                    value={editAmountValue}
+                    onChange={e => {
+                      setEditAmountValue(e.target.value);
+                      // Reset custom splits when amount changes
+                      if (isCustom) setEditCustomSplits({});
+                    }}
+                  />
+                </div>
+
+                {/* Equal split preview */}
+                {!isCustom && newAmount > 0 && splits.length > 0 && (
+                  <div style={{ background: '#F0EDFF', borderRadius: 12, padding: '10px 14px', marginBottom: 12 }}>
+                    <p style={{ margin: 0, fontSize: 12, fontWeight: 700, color: '#3B2AAB' }}>Equal Split Preview</p>
+                    {splits.map(s => (
+                      <div key={s.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: 12, color: '#2D1A7A' }}>
+                        <span>{s.profiles?.full_name}</span>
+                        <span style={{ fontWeight: 700 }}>₱{equalShare.toFixed(2)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Custom split inputs with running remainder */}
+                {isCustom && (
+                  <>
+                    <div style={{ background: '#FFF3CD', borderRadius: 10, padding: '8px 12px', marginBottom: 10, fontSize: 11, color: '#856404' }}>
+                      ⚠️ This expense uses custom splits. Adjust each member's share below. Suggested equal share: ₱{equalShare.toFixed(2)} each.
+                    </div>
+                    {splitEntries.map(({ s, remaining }) => {
+                      const prevTotal = splits.slice(0, splits.indexOf(s)).reduce((sum, ps) => sum + (Number(editCustomSplits[ps.user_id]) || 0), 0);
+                      const thisRemaining = newAmount - prevTotal;
+                      return (
+                        <div key={s.id} style={{ marginBottom: 10 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                            <span style={{ fontSize: 12, fontWeight: 600, color: '#2D1A7A' }}>{s.profiles?.full_name}</span>
+                            {newAmount > 0 && (
+                              <span style={{ fontSize: 10, color: '#9E8FCC' }}>
+                                {Number(editCustomSplits[s.user_id]) > 0
+                                  ? `₱${thisRemaining.toFixed(2)} left to assign`
+                                  : `₱${thisRemaining.toFixed(2)} still needs to be split`}
+                              </span>
+                            )}
+                          </div>
+                          <div className="amount-input-wrap small">
+                            <span className="peso-sign">₱</span>
+                            <input
+                              type="number"
+                              placeholder="0.00"
+                              value={editCustomSplits[s.user_id] || ''}
+                              onChange={e => setEditCustomSplits(prev => ({ ...prev, [s.user_id]: e.target.value }))}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {newAmount > 0 && (
+                      <div style={{
+                        padding: '8px 12px', borderRadius: 10, marginBottom: 8, fontSize: 12, fontWeight: 700,
+                        background: Math.abs(customRemaining) < 0.01 ? '#D1FAE5' : '#FEE2E2',
+                        color: Math.abs(customRemaining) < 0.01 ? '#065F46' : '#e53e3e'
+                      }}>
+                        {Math.abs(customRemaining) < 0.01
+                          ? '✅ Split total matches!'
+                          : `₱${Math.abs(customRemaining).toFixed(2)} ${customRemaining > 0 ? 'still unassigned' : 'over budget'}`}
+                      </div>
+                    )}
+                  </>
+                )}
+
+                <div style={{ background: '#FFF3CD', borderRadius: 10, padding: '8px 12px', marginBottom: 12, fontSize: 11, color: '#856404' }}>
+                  📢 All household members will be notified of this change.
+                </div>
+
+                <button className="add-expense-btn" onClick={handleSaveEditAmount} disabled={editAmountLoading}>
+                  {editAmountLoading ? 'Saving…' : 'Save Changes'}
+                </button>
+                <button className="cancel-btn" onClick={() => setShowEditAmountModal(false)}>Cancel</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
     </div>
   );
 }
