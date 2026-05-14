@@ -361,20 +361,21 @@ export default function RegisterScreen() {
         </div>
 
         {formData.householdType !== 'none' && (
-          <input
-            type="text"
-            name="householdCode"
-            placeholder={
-              formData.householdType === 'join'
-                ? 'Household Code / Name'
-                : 'Create a Household Name'
-            }
-            value={formData.householdCode}
-            onChange={handleChange}
-            className={errors.householdCode ? 'input-error' : ''}
-          />
-          {errors.householdCode && <span className="error-text">{errors.householdCode}</span>}
-        </div>
+          <div className="input-group">
+            <input
+              type="text"
+              name="householdCode"
+              placeholder={
+                formData.householdType === 'join'
+                  ? 'Household Code / Name'
+                  : 'Create a Household Name'
+              }
+              value={formData.householdCode}
+              onChange={handleChange}
+              className={errors.householdCode ? 'input-error' : ''}
+            />
+            {errors.householdCode && <span className="error-text">{errors.householdCode}</span>}
+          </div>
         )}
 
         <button
