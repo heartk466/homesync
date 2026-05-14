@@ -491,7 +491,7 @@ for (const expense of expenses) {
 </div>
         {(item.pendingOwed || 0) > 0 && (
           <div className="pending-badge-group">
-            <DollarSign size={12} /> ₱{item.pendingOwed.toFixed(2)} pending from you
+            ₱{item.pendingOwed.toFixed(2)} pending from you
           </div>
         )}
       </div>
