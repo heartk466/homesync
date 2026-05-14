@@ -196,23 +196,33 @@ export default function ReportsScreen() {
       return getUserShareAmount(expense);
     };
 
-    // Pending = expense is approved, but this user's specific split is still unpaid
+    // Pending = expense is approved, this user has an unpaid split
+    // Split statuses: 'unpaid' → member submits proof → 'pending_verification' → owner approves → 'approved'
     const getPendingAmountForUser = (expense) => {
-      // Expense itself must be approved (not pending_approval, not rejected)
+      // Expense must be fully approved first
       if (expense.approval_status === 'rejected') return 0;
       if (expense.approval_status === 'pending_approval') return 0;
 
-      // Check split-level status for this user — the authoritative source
+      // Check split-level status — this is the authoritative source
       const userSplit = (splitsMap[expense.id] || []).find(s => s.user_id === targetUserId);
       if (userSplit) {
-        // If split is already approved/paid, it's not pending
-        if (userSplit.status === 'approved') return 0;
+        // 'approved' = owner confirmed payment — not pending
+        // 'pending_verification' = member submitted proof, awaiting owner — already paid by member, not pending
+        if (userSplit.status === 'approved' || userSplit.status === 'pending_verification') return 0;
+        // 'unpaid' = genuinely still owes money
         return Number(userSplit.share_amount) || 0;
       }
 
-      // Fallback: no split row yet but expense is approved and not fully paid
+      // No split row at all — if expense is fully paid, nothing pending
       if (expense.status === 'paid') return 0;
-      return getUserShareAmount(expense);
+      // No split row and expense not paid — use members_split JSONB as fallback
+      // but only if user is actually listed in the split
+      if (expense.members_split && !Array.isArray(expense.members_split)) {
+        const val = expense.members_split[targetUserId];
+        if (val === undefined || val === null) return 0; // user not in this split
+        return Number(val) || 0;
+      }
+      return 0;
     };
 
     // ── Step 4: Filter by year ──
