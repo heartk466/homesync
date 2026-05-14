@@ -78,10 +78,9 @@ export default function ReportsScreen() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  // Helper to fetch expense splits - no foreign key join to avoid 400 errors
+  // Helper to fetch expense splits — plain select, no FK join to avoid 400 errors
   const fetchExpenseSplits = async (expenseIds) => {
     if (!expenseIds || !expenseIds.length) return {};
-    // Chunk into 500 to stay under Supabase .in() limits
     const chunks = [];
     for (let i = 0; i < expenseIds.length; i += 500) {
       chunks.push(expenseIds.slice(i, i + 500));
@@ -90,7 +89,7 @@ export default function ReportsScreen() {
       chunks.map(chunk =>
         supabase
           .from('expense_splits')
-          .select('id, expense_id, user_id, share_amount, status, profiles:user_id(id, full_name)')
+          .select('id, expense_id, user_id, share_amount, status')
           .in('expense_id', chunk)
       )
     );
@@ -263,14 +262,19 @@ export default function ReportsScreen() {
     const statements = Object.values(monthlyStatements).sort((a, b) => b.id.localeCompare(a.id));
     setStatementHistory(statements);
 
-    // Recent activity (primary household)
-    const { data: activity } = await supabase
-      .from('report_activity')
-      .select('*')
-      .eq('household_id', houseData.id)
-      .order('created_at', { ascending: false })
-      .limit(10);
-    setRecentActivity(activity || []);
+    // Recent activity — table may not exist yet, safe fallback
+    try {
+      const { data: activity, error: actError } = await supabase
+        .from('report_activity')
+        .select('*')
+        .eq('household_id', houseData.id)
+        .order('created_at', { ascending: false })
+        .limit(10);
+      if (!actError) setRecentActivity(activity || []);
+      else setRecentActivity([]);
+    } catch (_) {
+      setRecentActivity([]);
+    }
   };
 
   const fetchHouseholdMembers = async (householdId, resolvedUserId = null) => {
@@ -385,22 +389,25 @@ export default function ReportsScreen() {
 
   useEffect(() => {
     if (!currentUser?.id || !selectedHousehold?.id) return;
+    const channelName = `reports-rt-${selectedHousehold.id}-${currentUser.id}`;
     const channel = supabase
-      .channel(`reports-realtime-${selectedHousehold.id}`)
+      .channel(channelName)
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'expenses',
         filter: `household_id=eq.${selectedHousehold.id}`,
-      }, () => fetchReportData(selectedHousehold, selectedMemberId, currentUser?.id))
+      }, () => {
+        if (currentUser?.id && selectedHousehold?.id)
+          fetchReportData(selectedHousehold, selectedMemberId || currentUser.id, currentUser.id);
+      })
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'expense_splits',
-      }, () => fetchReportData(selectedHousehold, selectedMemberId, currentUser?.id))
-      .on('postgres_changes', {
-        event: '*', schema: 'public', table: 'utilities',
-        filter: `household_id=eq.${selectedHousehold.id}`,
-      }, () => fetchReportData(selectedHousehold, selectedMemberId, currentUser?.id))
+      }, () => {
+        if (currentUser?.id && selectedHousehold?.id)
+          fetchReportData(selectedHousehold, selectedMemberId || currentUser.id, currentUser.id);
+      })
       .subscribe();
 
-    return () => supabase.removeChannel(channel);
+    return () => { supabase.removeChannel(channel); };
   }, [currentUser?.id, selectedHousehold?.id, selectedMemberId]);
 
   // selectedMemberId changes are handled directly in handleMemberChange()
@@ -430,12 +437,14 @@ export default function ReportsScreen() {
   const handleGenerateReport = async () => {
     setLoading(true);
     try {
-      await supabase.from('report_activity').insert({
-        user_id: currentUser.id,
-        household_id: selectedHousehold?.id,
-        action: 'generated',
-        description: `${profile?.full_name} generated a report for ${selectedHousehold?.name}`,
-      });
+      try {
+        await supabase.from('report_activity').insert({
+          user_id: currentUser.id,
+          household_id: selectedHousehold?.id,
+          action: 'generated',
+          description: `${profile?.full_name} generated a report for ${selectedHousehold?.name}`,
+        });
+      } catch (_) { /* table may not exist */ }
       showToast('Report generated! ✅');
       setShowGenerateModal(false);
       await fetchReportData(selectedHousehold, selectedMemberId || currentUser?.id, currentUser?.id);
@@ -502,12 +511,14 @@ export default function ReportsScreen() {
 
       doc.save(`HomeSync-Report-${statement?.period || 'Full-Year'}.pdf`);
 
-      await supabase.from('report_activity').insert({
-        user_id: currentUser.id,
-        household_id: selectedHousehold?.id,
-        action: 'exported',
-        description: `${profile?.full_name} exported "${selectedHousehold?.name}" Statement for ${memberName}`,
-      });
+      try {
+        await supabase.from('report_activity').insert({
+          user_id: currentUser.id,
+          household_id: selectedHousehold?.id,
+          action: 'exported',
+          description: `${profile?.full_name} exported "${selectedHousehold?.name}" Statement for ${memberName}`,
+        });
+      } catch (_) { /* table may not exist */ }
 
       showToast('PDF exported! ✅');
     } catch (err) {
@@ -681,12 +692,14 @@ export default function ReportsScreen() {
             </div>
           </div>
           {monthlyData.some(m => m.amount > 0) ? (
-            <ResponsiveContainer width="100%" height={80}>
-              <BarChart data={monthlyData} barCategoryGap="20%">
-                <XAxis dataKey="month" tick={{ fontSize: 9, fill: '#3B2AAB' }} axisLine={false} tickLine={false} />
-                <Bar dataKey="amount" fill="#3B2AAB" radius={[4, 4, 0, 0]}/>
-              </BarChart>
-            </ResponsiveContainer>
+            <div style={{ width: '100%', height: 80 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={monthlyData} barCategoryGap="20%">
+                  <XAxis dataKey="month" tick={{ fontSize: 9, fill: '#3B2AAB' }} axisLine={false} tickLine={false} />
+                  <Bar dataKey="amount" fill="#3B2AAB" radius={[4, 4, 0, 0]}/>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
           ) : (
             <div style={{ height: 80, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <p className="no-data" style={{ margin: 0 }}>No paid expenses yet this year</p>
@@ -774,40 +787,40 @@ export default function ReportsScreen() {
             )}
           </div>
           {pendingByCategory.length > 0 ? (
-            <ResponsiveContainer width="100%" height={110}>
-              <BarChart
-                data={pendingByCategory}
-                barCategoryGap="25%"
-                barGap={2}
-              >
-                <XAxis
-                  dataKey="name"
-                  tick={{ fontSize: 9, fill: '#3B2AAB' }}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <Tooltip
-                  formatter={(value) =>
-                    `₱${Number(value).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`
-                  }
-                />
-                {/* "Total" bar (paid + pending for that category) */}
-                <Bar
-                  dataKey="value"
-                  name="Total"
-                  radius={[4, 4, 0, 0]}
-                  fill="#3B2AAB"
-                />
-                {/* "Pending" bar rendered as a lighter overlay — same data but lighter color */}
-                <Bar
-                  dataKey="value"
-                  name="Pending"
-                  radius={[4, 4, 0, 0]}
-                  fill="#AE96FF"
-                  fillOpacity={0.55}
-                />
-              </BarChart>
-            </ResponsiveContainer>
+            <div style={{ width: '100%', height: 110 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={pendingByCategory}
+                  barCategoryGap="25%"
+                  barGap={2}
+                >
+                  <XAxis
+                    dataKey="name"
+                    tick={{ fontSize: 9, fill: '#3B2AAB' }}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <Tooltip
+                    formatter={(value) =>
+                      `₱${Number(value).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`
+                    }
+                  />
+                  <Bar
+                    dataKey="value"
+                    name="Total"
+                    radius={[4, 4, 0, 0]}
+                    fill="#3B2AAB"
+                  />
+                  <Bar
+                    dataKey="value"
+                    name="Pending"
+                    radius={[4, 4, 0, 0]}
+                    fill="#AE96FF"
+                    fillOpacity={0.55}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
           ) : (
             <div style={{ height: 80, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <p className="no-data" style={{ margin: 0 }}>No pending balances</p>
