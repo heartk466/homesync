@@ -78,10 +78,9 @@ export default function ReportsScreen() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  // Helper to fetch expense splits - no foreign key join to avoid 400 errors
+  // Helper to fetch expense splits — plain select, no FK join to avoid 400 errors
   const fetchExpenseSplits = async (expenseIds) => {
     if (!expenseIds || !expenseIds.length) return {};
-    // Chunk into 500 to stay under Supabase .in() limits
     const chunks = [];
     for (let i = 0; i < expenseIds.length; i += 500) {
       chunks.push(expenseIds.slice(i, i + 500));
@@ -90,7 +89,7 @@ export default function ReportsScreen() {
       chunks.map(chunk =>
         supabase
           .from('expense_splits')
-          .select('id, expense_id, user_id, share_amount, status, profiles:user_id(id, full_name)')
+          .select('id, expense_id, user_id, share_amount, status')
           .in('expense_id', chunk)
       )
     );
@@ -119,16 +118,21 @@ export default function ReportsScreen() {
     const lastYearStart = new Date(now.getFullYear() - 1, 0, 1).toISOString().split('T')[0];
     const lastYearEnd   = new Date(now.getFullYear() - 1, 11, 31).toISOString().split('T')[0];
 
-    // ── Step 1: Get ALL household IDs this user belongs to ──
+    // ── Step 1: Get ALL household IDs and group IDs this user belongs to ──
     const { data: memberRows } = await supabase
       .from('household_members')
       .select('household_id')
       .eq('user_id', targetUserId);
-
     const householdIds = (memberRows?.map(r => r.household_id) || [houseData.id]).filter(Boolean);
 
-    // ── Step 2: Fetch ALL expenses — no filter, we sort in JS ──
-    const expenseResults = await Promise.all(
+    const { data: groupMemberRows } = await supabase
+      .from('group_members')
+      .select('group_id')
+      .eq('user_id', targetUserId);
+    const groupIds = (groupMemberRows || []).map(r => r.group_id).filter(Boolean);
+
+    // ── Step 2: Fetch ALL expenses from households AND groups ──
+    const householdExpenseResults = await Promise.all(
       householdIds.map(async (hid) => {
         const { data } = await supabase
           .from('expenses')
@@ -138,35 +142,50 @@ export default function ReportsScreen() {
         return data || [];
       })
     );
-    const allExpenses = expenseResults.flat();
+    const groupExpenseResults = groupIds.length > 0
+      ? await Promise.all(
+          groupIds.map(async (gid) => {
+            const { data } = await supabase
+              .from('expenses')
+              .select('*')
+              .eq('group_id', gid)
+              .order('expense_date', { ascending: false });
+            return data || [];
+          })
+        )
+      : [];
+    const allExpenses = [...householdExpenseResults.flat(), ...groupExpenseResults.flat()];
 
     // ── Step 3: Fetch expense_splits for enrichment (best-effort) ──
     const allExpenseIds = allExpenses.map(e => e.id);
     const splitsMap = allExpenseIds.length > 0 ? await fetchExpenseSplits(allExpenseIds) : {};
 
     // ── Helpers ──────────────────────────────────────────────────────────────
-    // members_split JSONB shape: { "userId": "3500.00", ... }
-    // This is always populated when expense is created — primary source of truth.
+    // Priority: expense_splits table row (most authoritative) → members_split JSONB → 0
+    // We deliberately do NOT fall back to full expense.amount when paid_by matches,
+    // because Sasha paying the bill doesn't mean she owes the full amount — her share is in the split.
     const getUserShareAmount = (expense) => {
-      // 1. Try members_split JSONB object keyed by userId
-      if (expense.members_split) {
-        const val = expense.members_split[targetUserId];
-        if (val !== undefined && val !== null) return Number(val) || 0;
-        // Also try if members_split is an array of objects
-        if (Array.isArray(expense.members_split)) {
-          const row = expense.members_split.find(s => s.user_id === targetUserId);
-          if (row) return Number(row.share_amount || row.amount) || 0;
-        }
-      }
-      // 2. Try expense_splits table row
+      // 1. expense_splits table row — authoritative, written when expense is approved
       const tableRow = (splitsMap[expense.id] || []).find(s => s.user_id === targetUserId);
       if (tableRow) return Number(tableRow.share_amount) || 0;
-      // 3. paid_by = this user and no split defined → full amount
-      if (expense.paid_by === targetUserId) return Number(expense.amount) || 0;
-      // 4. Equal split fallback — if user is in same household, divide equally
-      if (expense.split_type === 'equal') {
-        const splitCount = Object.keys(expense.members_split || {}).length;
-        if (splitCount > 0) return Number(expense.amount) / splitCount;
+
+      // 2. members_split JSONB object keyed by userId — written at creation time
+      if (expense.members_split && !Array.isArray(expense.members_split)) {
+        const val = expense.members_split[targetUserId];
+        if (val !== undefined && val !== null) return Number(val) || 0;
+        // User is not in this expense's split — they owe nothing
+        if (Object.keys(expense.members_split).length > 0) return 0;
+      }
+      // members_split as array of objects (legacy shape)
+      if (Array.isArray(expense.members_split)) {
+        const row = expense.members_split.find(s => s.user_id === targetUserId);
+        if (row) return Number(row.share_amount || row.amount) || 0;
+        if (expense.members_split.length > 0) return 0;
+      }
+
+      // 3. No split data at all — only count if user created/paid the expense alone
+      if (expense.paid_by === targetUserId && expense.split_type === 'none') {
+        return Number(expense.amount) || 0;
       }
       return 0;
     };
@@ -177,11 +196,33 @@ export default function ReportsScreen() {
       return getUserShareAmount(expense);
     };
 
-    // Pending = approved but not yet paid, and user has a share
+    // Pending = expense is approved, this user has an unpaid split
+    // Split statuses: 'unpaid' → member submits proof → 'pending_verification' → owner approves → 'approved'
     const getPendingAmountForUser = (expense) => {
-      if (expense.status === 'paid') return 0;
+      // Expense must be fully approved first
       if (expense.approval_status === 'rejected') return 0;
-      return getUserShareAmount(expense);
+      if (expense.approval_status === 'pending_approval') return 0;
+
+      // Check split-level status — this is the authoritative source
+      const userSplit = (splitsMap[expense.id] || []).find(s => s.user_id === targetUserId);
+      if (userSplit) {
+        // 'approved' = owner confirmed payment — not pending
+        // 'pending_verification' = member submitted proof, awaiting owner — already paid by member, not pending
+        if (userSplit.status === 'approved' || userSplit.status === 'pending_verification') return 0;
+        // 'unpaid' = genuinely still owes money
+        return Number(userSplit.share_amount) || 0;
+      }
+
+      // No split row at all — if expense is fully paid, nothing pending
+      if (expense.status === 'paid') return 0;
+      // No split row and expense not paid — use members_split JSONB as fallback
+      // but only if user is actually listed in the split
+      if (expense.members_split && !Array.isArray(expense.members_split)) {
+        const val = expense.members_split[targetUserId];
+        if (val === undefined || val === null) return 0; // user not in this split
+        return Number(val) || 0;
+      }
+      return 0;
     };
 
     // ── Step 4: Filter by year ──
@@ -263,14 +304,19 @@ export default function ReportsScreen() {
     const statements = Object.values(monthlyStatements).sort((a, b) => b.id.localeCompare(a.id));
     setStatementHistory(statements);
 
-    // Recent activity (primary household)
-    const { data: activity } = await supabase
-      .from('report_activity')
-      .select('*')
-      .eq('household_id', houseData.id)
-      .order('created_at', { ascending: false })
-      .limit(10);
-    setRecentActivity(activity || []);
+    // Recent activity — table may not exist yet, safe fallback
+    try {
+      const { data: activity, error: actError } = await supabase
+        .from('report_activity')
+        .select('*')
+        .eq('household_id', houseData.id)
+        .order('created_at', { ascending: false })
+        .limit(10);
+      if (!actError) setRecentActivity(activity || []);
+      else setRecentActivity([]);
+    } catch (_) {
+      setRecentActivity([]);
+    }
   };
 
   const fetchHouseholdMembers = async (householdId, resolvedUserId = null) => {
@@ -385,22 +431,25 @@ export default function ReportsScreen() {
 
   useEffect(() => {
     if (!currentUser?.id || !selectedHousehold?.id) return;
+    const channelName = `reports-rt-${selectedHousehold.id}-${currentUser.id}`;
     const channel = supabase
-      .channel(`reports-realtime-${selectedHousehold.id}`)
+      .channel(channelName)
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'expenses',
         filter: `household_id=eq.${selectedHousehold.id}`,
-      }, () => fetchReportData(selectedHousehold, selectedMemberId, currentUser?.id))
+      }, () => {
+        if (currentUser?.id && selectedHousehold?.id)
+          fetchReportData(selectedHousehold, selectedMemberId || currentUser.id, currentUser.id);
+      })
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'expense_splits',
-      }, () => fetchReportData(selectedHousehold, selectedMemberId, currentUser?.id))
-      .on('postgres_changes', {
-        event: '*', schema: 'public', table: 'utilities',
-        filter: `household_id=eq.${selectedHousehold.id}`,
-      }, () => fetchReportData(selectedHousehold, selectedMemberId, currentUser?.id))
+      }, () => {
+        if (currentUser?.id && selectedHousehold?.id)
+          fetchReportData(selectedHousehold, selectedMemberId || currentUser.id, currentUser.id);
+      })
       .subscribe();
 
-    return () => supabase.removeChannel(channel);
+    return () => { supabase.removeChannel(channel); };
   }, [currentUser?.id, selectedHousehold?.id, selectedMemberId]);
 
   // selectedMemberId changes are handled directly in handleMemberChange()
@@ -423,19 +472,22 @@ export default function ReportsScreen() {
   const handleMemberChange = (memberId) => {
     setSelectedMemberId(memberId);
     setShowMemberDropdown(false);
-    fetchReportData(selectedHousehold, memberId, currentUser?.id);
+    // Pass memberId as resolvedUserId so fetchReportData uses it as targetUserId
+    fetchReportData(selectedHousehold, memberId, memberId);
     showToast(`Viewing report for ${householdMembers.find(m => m.user_id === memberId)?.profiles?.full_name}`);
   };
 
   const handleGenerateReport = async () => {
     setLoading(true);
     try {
-      await supabase.from('report_activity').insert({
-        user_id: currentUser.id,
-        household_id: selectedHousehold?.id,
-        action: 'generated',
-        description: `${profile?.full_name} generated a report for ${selectedHousehold?.name}`,
-      });
+      try {
+        await supabase.from('report_activity').insert({
+          user_id: currentUser.id,
+          household_id: selectedHousehold?.id,
+          action: 'generated',
+          description: `${profile?.full_name} generated a report for ${selectedHousehold?.name}`,
+        });
+      } catch (_) { /* table may not exist */ }
       showToast('Report generated! ✅');
       setShowGenerateModal(false);
       await fetchReportData(selectedHousehold, selectedMemberId || currentUser?.id, currentUser?.id);
@@ -502,12 +554,14 @@ export default function ReportsScreen() {
 
       doc.save(`HomeSync-Report-${statement?.period || 'Full-Year'}.pdf`);
 
-      await supabase.from('report_activity').insert({
-        user_id: currentUser.id,
-        household_id: selectedHousehold?.id,
-        action: 'exported',
-        description: `${profile?.full_name} exported "${selectedHousehold?.name}" Statement for ${memberName}`,
-      });
+      try {
+        await supabase.from('report_activity').insert({
+          user_id: currentUser.id,
+          household_id: selectedHousehold?.id,
+          action: 'exported',
+          description: `${profile?.full_name} exported "${selectedHousehold?.name}" Statement for ${memberName}`,
+        });
+      } catch (_) { /* table may not exist */ }
 
       showToast('PDF exported! ✅');
     } catch (err) {
@@ -681,12 +735,14 @@ export default function ReportsScreen() {
             </div>
           </div>
           {monthlyData.some(m => m.amount > 0) ? (
-            <ResponsiveContainer width="100%" height={80}>
-              <BarChart data={monthlyData} barCategoryGap="20%">
-                <XAxis dataKey="month" tick={{ fontSize: 9, fill: '#3B2AAB' }} axisLine={false} tickLine={false} />
-                <Bar dataKey="amount" fill="#3B2AAB" radius={[4, 4, 0, 0]}/>
-              </BarChart>
-            </ResponsiveContainer>
+            <div style={{ width: '100%', height: 80 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={monthlyData} barCategoryGap="20%">
+                  <XAxis dataKey="month" tick={{ fontSize: 9, fill: '#3B2AAB' }} axisLine={false} tickLine={false} />
+                  <Bar dataKey="amount" fill="#3B2AAB" radius={[4, 4, 0, 0]}/>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
           ) : (
             <div style={{ height: 80, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <p className="no-data" style={{ margin: 0 }}>No paid expenses yet this year</p>
@@ -774,40 +830,40 @@ export default function ReportsScreen() {
             )}
           </div>
           {pendingByCategory.length > 0 ? (
-            <ResponsiveContainer width="100%" height={110}>
-              <BarChart
-                data={pendingByCategory}
-                barCategoryGap="25%"
-                barGap={2}
-              >
-                <XAxis
-                  dataKey="name"
-                  tick={{ fontSize: 9, fill: '#3B2AAB' }}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <Tooltip
-                  formatter={(value) =>
-                    `₱${Number(value).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`
-                  }
-                />
-                {/* "Total" bar (paid + pending for that category) */}
-                <Bar
-                  dataKey="value"
-                  name="Total"
-                  radius={[4, 4, 0, 0]}
-                  fill="#3B2AAB"
-                />
-                {/* "Pending" bar rendered as a lighter overlay — same data but lighter color */}
-                <Bar
-                  dataKey="value"
-                  name="Pending"
-                  radius={[4, 4, 0, 0]}
-                  fill="#AE96FF"
-                  fillOpacity={0.55}
-                />
-              </BarChart>
-            </ResponsiveContainer>
+            <div style={{ width: '100%', height: 110 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={pendingByCategory}
+                  barCategoryGap="25%"
+                  barGap={2}
+                >
+                  <XAxis
+                    dataKey="name"
+                    tick={{ fontSize: 9, fill: '#3B2AAB' }}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <Tooltip
+                    formatter={(value) =>
+                      `₱${Number(value).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`
+                    }
+                  />
+                  <Bar
+                    dataKey="value"
+                    name="Total"
+                    radius={[4, 4, 0, 0]}
+                    fill="#3B2AAB"
+                  />
+                  <Bar
+                    dataKey="value"
+                    name="Pending"
+                    radius={[4, 4, 0, 0]}
+                    fill="#AE96FF"
+                    fillOpacity={0.55}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
           ) : (
             <div style={{ height: 80, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <p className="no-data" style={{ margin: 0 }}>No pending balances</p>

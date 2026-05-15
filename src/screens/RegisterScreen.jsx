@@ -11,7 +11,7 @@ export default function RegisterScreen() {
     email: '',
     password: '',
     confirmPassword: '',
-    householdType: 'join',
+    householdType: 'none',
     householdCode: '',
   });
 
@@ -45,7 +45,7 @@ export default function RegisterScreen() {
     else if (formData.password !== formData.confirmPassword)
       newErrors.confirmPassword = 'Passwords do not match';
 
-    if (!formData.householdCode.trim())
+    if (formData.householdType !== 'none' && !formData.householdCode.trim())
       newErrors.householdCode = formData.householdType === 'join'
         ? 'Household code or name is required'
         : 'Household name is required';
@@ -101,7 +101,25 @@ export default function RegisterScreen() {
       const userId = authData.user.id;
 
       // 2. Handle household creation/joining
-      if (formData.householdType === 'create') {
+      if (formData.householdType === 'none') {
+        // No household — just create a bare profile
+        const { error: profileError } = await supabase
+          .from('profiles')
+          .insert({
+            id: userId,
+            full_name: formData.fullName.trim(),
+            email: formData.email,
+            household_id: null,
+          });
+
+        if (profileError) {
+          console.error('Profile creation error:', profileError);
+          setErrors({ general: `Failed to create profile: ${profileError.message}` });
+          setLoading(false);
+          return;
+        }
+
+      } else if (formData.householdType === 'create') {
         // Create new household
         const code = generateCode();
         const { data: household, error: householdError } = await supabase
@@ -330,23 +348,35 @@ export default function RegisterScreen() {
             />
             Create Household
           </label>
+          <label className="radio-label">
+            <input
+              type="radio"
+              name="householdType"
+              value="none"
+              checked={formData.householdType === 'none'}
+              onChange={handleChange}
+            />
+            I don't want to join or create a household
+          </label>
         </div>
 
-        <div className="input-group">
-          <input
-            type="text"
-            name="householdCode"
-            placeholder={
-              formData.householdType === 'join'
-                ? 'Household Code / Name'
-                : 'Create a Household Name'
-            }
-            value={formData.householdCode}
-            onChange={handleChange}
-            className={errors.householdCode ? 'input-error' : ''}
-          />
-          {errors.householdCode && <span className="error-text">{errors.householdCode}</span>}
-        </div>
+        {formData.householdType !== 'none' && (
+          <div className="input-group">
+            <input
+              type="text"
+              name="householdCode"
+              placeholder={
+                formData.householdType === 'join'
+                  ? 'Household Code / Name'
+                  : 'Create a Household Name'
+              }
+              value={formData.householdCode}
+              onChange={handleChange}
+              className={errors.householdCode ? 'input-error' : ''}
+            />
+            {errors.householdCode && <span className="error-text">{errors.householdCode}</span>}
+          </div>
+        )}
 
         <button
           className="register-btn"

@@ -392,11 +392,23 @@ export default function GroupsScreen() {
         .from('households').select('id, name').eq('code', joinCode.trim().toUpperCase()).single();
       if (findError || !householdData) { showToast('Invalid household code', 'error'); setJoinLoading(false); return; }
       const { data: existing } = await supabase
+<<<<<<< HEAD
         .from('household_members').select('id').eq('household_id', householdData.id).eq('user_id', user.id);
       if (existing && existing.length > 0) { showToast('You are already a member of this household', 'error'); setJoinLoading(false); return; }
       const { error: insertError } = await supabase
         .from('household_members').insert({ household_id: householdData.id, user_id: user.id, role: 'member', status: 'active' });
       if (insertError) { showToast(`Failed to join: ${insertError.message}`, 'error'); setJoinLoading(false); return; }
+=======
+        .from('household_members')
+        .select('id')
+        .eq('household_id', householdData.id)
+        .eq('user_id', user.id);
+      if (existing && existing.length > 0) { showToast('You are already a member of this household', 'error'); return; }
+      const { error: insertError } = await supabase.from('household_members').insert({ household_id: householdData.id, user_id: user.id, role: 'member', status: 'active' });
+      if (insertError) { showToast(`Failed to join: ${insertError.message}`, 'error'); return; }
+      // Also update profile so household_id stays in sync
+      await supabase.from('profiles').update({ household_id: householdData.id }).eq('id', user.id);
+>>>>>>> 1f55414f63e2a9d9c2e9046584fee0d253855d66
       showToast(`Joined "${householdData.name}" successfully!`);
       setShowJoinModal(false);
       setJoinCode('');
@@ -461,7 +473,7 @@ export default function GroupsScreen() {
         </div>
         {(item.pendingOwed || 0) > 0 && (
           <div className="pending-badge-group">
-            <DollarSign size={12} /> ₱{item.pendingOwed.toFixed(2)} pending from you
+            ₱{item.pendingOwed.toFixed(2)} pending from you
           </div>
         )}
       </div>
