@@ -539,11 +539,8 @@ export default function GroupsScreen() {
 
       {/* FABs */}
       <div className="fab-group">
-        <button className="fab-btn-group" onClick={() => { setCreateType('group'); setShowCreateModal(true); }} title="Create Group">
+        <button className="fab-btn-group" onClick={() => { setCreateType('group'); setShowCreateModal(true); }} title="Create">
           <Plus size={24} />
-        </button>
-        <button className="fab-btn-household" onClick={() => { setCreateType('household'); setShowCreateModal(true); }} title="Create Household">
-          <Home size={20} />
         </button>
         <button className="fab-btn-join" onClick={() => setShowJoinModal(true)} title="Join">
           <Users size={20} />

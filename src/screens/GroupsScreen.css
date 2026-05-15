@@ -239,7 +239,6 @@
 }
 
 .fab-btn-group,
-.fab-btn-household,
 .fab-btn-join {
   width: 52px;
   height: 52px;
@@ -255,10 +254,6 @@
   transition: transform 0.1s;
 }
 
-.fab-btn-household {
-  background: #2C7A7B;
-}
-
 .fab-btn-join {
   background: #5A4AAA;
   width: 44px;
@@ -267,7 +262,6 @@
 }
 
 .fab-btn-group:active,
-.fab-btn-household:active,
 .fab-btn-join:active {
   transform: scale(0.95);
 }
