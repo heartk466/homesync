@@ -1,0 +1,271 @@
+/* ── Global Dark Mode ─────────────────────────────────────────────────────── */
+/* Applied via data-theme="dark" on <html> set by AppContext */
+
+:root {
+  --dash-bg: linear-gradient(180deg, #EEEEEE 0%, #AE96FF 100%);
+  --card-bg: #ffffff;
+  --card-shadow: rgba(59,42,171,0.08);
+  --text-primary: #2D1A7A;
+  --text-secondary: #5A4AAA;
+  --text-muted: #9E8FCC;
+  --border-color: #F0EDFF;
+  --input-bg: #ffffff;
+  --input-border: #E0D9FF;
+  --icon-bg: #F0EDFF;
+  --nav-bg: #ffffff;
+  --nav-border: #F0EDFF;
+  --section-bg: #F8F6FF;
+  --accent: #3B2AAB;
+  --accent-light: #F0EDFF;
+}
+
+[data-theme="dark"] {
+  --dash-bg: linear-gradient(180deg, #12102b 0%, #1e1a3f 100%);
+  --card-bg: #1e1a3f;
+  --card-shadow: rgba(0,0,0,0.3);
+  --text-primary: #E8E0FF;
+  --text-secondary: #AE96FF;
+  --text-muted: #6B5FA0;
+  --border-color: #2D2A5E;
+  --input-bg: #2A2550;
+  --input-border: #3D3A6E;
+  --icon-bg: #2D2A5E;
+  --nav-bg: #1a1635;
+  --nav-border: #2D2A5E;
+  --section-bg: #2A2550;
+  --accent: #AE96FF;
+  --accent-light: #2D2A5E;
+}
+
+/* ── Apply to ALL screen backgrounds ── */
+[data-theme="dark"] .dashboard,
+[data-theme="dark"] .expenses-screen,
+[data-theme="dark"] .groups-screen,
+[data-theme="dark"] .utilities-screen,
+[data-theme="dark"] .reports-screen,
+[data-theme="dark"] .settings-screen,
+[data-theme="dark"] .group-detail-screen {
+  background: var(--dash-bg) !important;
+}
+
+/* ── Cards everywhere ── */
+[data-theme="dark"] .dash-card,
+[data-theme="dark"] .expense-card,
+[data-theme="dark"] .group-card,
+[data-theme="dark"] .utility-item,
+[data-theme="dark"] .utility-summary-card,
+[data-theme="dark"] .report-card,
+[data-theme="dark"] .report-section,
+[data-theme="dark"] .settings-section,
+[data-theme="dark"] .detail-members-section,
+[data-theme="dark"] .detail-pending-section,
+[data-theme="dark"] .detail-expenses-section,
+[data-theme="dark"] .expense-item-detail,
+[data-theme="dark"] .pending-expense-approval-wrap,
+[data-theme="dark"] .empty-state,
+[data-theme="dark"] .household-code-card {
+  background: var(--card-bg) !important;
+  box-shadow: 0 2px 12px var(--card-shadow) !important;
+}
+
+/* ── Text ── */
+[data-theme="dark"] .card-label,
+[data-theme="dark"] .card-amount,
+[data-theme="dark"] .group-name,
+[data-theme="dark"] .expense-title,
+[data-theme="dark"] .member-name,
+[data-theme="dark"] .detail-group-name,
+[data-theme="dark"] .section-title,
+[data-theme="dark"] .settings-profile-name,
+[data-theme="dark"] .household-name-display,
+[data-theme="dark"] .utility-name,
+[data-theme="dark"] .report-card-label,
+[data-theme="dark"] .report-card-amount,
+[data-theme="dark"] .report-section-title,
+[data-theme="dark"] .history-name,
+[data-theme="dark"] .settings-title,
+[data-theme="dark"] h2,
+[data-theme="dark"] h3,
+[data-theme="dark"] h4 {
+  color: var(--text-primary) !important;
+}
+
+[data-theme="dark"] .card-sub,
+[data-theme="dark"] .card-greeting,
+[data-theme="dark"] .group-meta,
+[data-theme="dark"] .expense-meta,
+[data-theme="dark"] .member-role,
+[data-theme="dark"] .detail-group-type,
+[data-theme="dark"] .settings-profile-email,
+[data-theme="dark"] .settings-subtitle,
+[data-theme="dark"] .utility-meta,
+[data-theme="dark"] .history-meta,
+[data-theme="dark"] .settings-value,
+[data-theme="dark"] .no-data,
+[data-theme="dark"] .empty-state {
+  color: var(--text-muted) !important;
+}
+
+/* ── Bottom Nav ── */
+[data-theme="dark"] .bottom-nav {
+  background: var(--nav-bg) !important;
+  border-top-color: var(--nav-border) !important;
+}
+
+[data-theme="dark"] .nav-item {
+  color: var(--text-muted) !important;
+}
+
+[data-theme="dark"] .nav-item.active {
+  color: var(--accent) !important;
+}
+
+/* ── Inputs & Selects ── */
+[data-theme="dark"] input,
+[data-theme="dark"] select,
+[data-theme="dark"] textarea,
+[data-theme="dark"] .detail-input,
+[data-theme="dark"] .group-input,
+[data-theme="dark"] .group-textarea,
+[data-theme="dark"] .search-input,
+[data-theme="dark"] .settings-modal-input,
+[data-theme="dark"] .form-group input,
+[data-theme="dark"] .form-group select {
+  background: var(--input-bg) !important;
+  border-color: var(--input-border) !important;
+  color: var(--text-primary) !important;
+}
+
+/* ── Icon buttons ── */
+[data-theme="dark"] .icon-btn-sm,
+[data-theme="dark"] .icon-btn,
+[data-theme="dark"] .fab-detail,
+[data-theme="dark"] .back-btn {
+  background: var(--icon-bg) !important;
+  color: var(--accent) !important;
+}
+
+/* ── Stat/summary section bg ── */
+[data-theme="dark"] .group-stats,
+[data-theme="dark"] .member-row,
+[data-theme="dark"] .settings-expanded,
+[data-theme="dark"] .settings-household-info,
+[data-theme="dark"] .section-bg,
+[data-theme="dark"] .group-summary-row,
+[data-theme="dark"] .group-row {
+  background: var(--section-bg) !important;
+}
+
+/* ── Modals ── */
+[data-theme="dark"] .modal-detail-card,
+[data-theme="dark"] .modal-group-card,
+[data-theme="dark"] .settings-modal,
+[data-theme="dark"] .group-modal,
+[data-theme="dark"] .add-utility-modal,
+[data-theme="dark"] .generate-modal {
+  background: var(--card-bg) !important;
+}
+
+/* ── Search bar ── */
+[data-theme="dark"] .search-input-wrap,
+[data-theme="dark"] .search-toggle,
+[data-theme="dark"] .filter-btn {
+  background: var(--card-bg) !important;
+  border-color: var(--input-border) !important;
+}
+
+/* ── Pill rows ── */
+[data-theme="dark"] .household-pill {
+  background: var(--card-bg) !important;
+  border-color: var(--input-border) !important;
+  color: var(--text-secondary) !important;
+}
+
+[data-theme="dark"] .household-pill.active {
+  background: var(--accent) !important;
+  border-color: var(--accent) !important;
+  color: #ffffff !important;
+}
+
+/* ── Settings rows ── */
+[data-theme="dark"] .settings-row {
+  color: var(--text-primary) !important;
+  border-bottom-color: var(--border-color) !important;
+}
+
+[data-theme="dark"] .settings-row.danger {
+  color: #FC8181 !important;
+}
+
+[data-theme="dark"] .settings-icon-wrap.purple {
+  background: var(--icon-bg) !important;
+}
+
+/* ── Topbar ── */
+[data-theme="dark"] .topbar {
+  background: transparent !important;
+}
+
+[data-theme="dark"] .topbar-title {
+  color: var(--text-primary) !important;
+}
+
+[data-theme="dark"] .topbar-bell-btn,
+[data-theme="dark"] .topbar-avatar-btn {
+  color: var(--text-primary) !important;
+}
+
+/* ── Split buttons / toggles ── */
+[data-theme="dark"] .split-btn {
+  background: var(--input-bg) !important;
+  border-color: var(--input-border) !important;
+  color: var(--text-muted) !important;
+}
+
+[data-theme="dark"] .split-btn.active {
+  background: #3B2AAB !important;
+  color: white !important;
+  border-color: #3B2AAB !important;
+}
+
+/* ── Quick action card ── */
+[data-theme="dark"] .quick-title {
+  color: var(--text-primary) !important;
+}
+
+/* ── Signout row ── */
+[data-theme="dark"] .signout-row {
+  background: var(--card-bg) !important;
+  color: #FC8181 !important;
+}
+
+/* ── Household dropdown ── */
+[data-theme="dark"] .household-dropdown {
+  background: var(--card-bg) !important;
+}
+
+[data-theme="dark"] .household-option {
+  border-bottom-color: var(--border-color) !important;
+  color: var(--text-primary) !important;
+}
+
+[data-theme="dark"] .household-option.active {
+  background: var(--icon-bg) !important;
+}
+
+[data-theme="dark"] .household-option-name {
+  color: var(--text-primary) !important;
+}
+
+/* ── Subscription preset picker ── */
+[data-theme="dark"] .detail-preset-btn,
+[data-theme="dark"] .subscription-preset-btn {
+  background: var(--input-bg) !important;
+  border-color: var(--input-border) !important;
+}
+
+[data-theme="dark"] .detail-preset-btn.active,
+[data-theme="dark"] .subscription-preset-btn.active {
+  background: var(--icon-bg) !important;
+  border-color: var(--accent) !important;
+}

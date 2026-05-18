@@ -11,9 +11,11 @@ import './DashboardScreen.css';
 import TopBar from '../components/TopBar';
 import BottomNav from '../components/BottomNav';
 import { fetchAllHouseholdExpenses, UTILITY_CATEGORIES } from '../utils/expenseUtils';
+import { useAppContext } from '../AppContext';
 
 export default function DashboardScreen() {
   const navigate = useNavigate();
+  const { currencySymbol } = useAppContext();
 
   const [profile, setProfile] = useState(null);
   const [currentUser, setCurrentUser] = useState(null);
@@ -311,7 +313,7 @@ export default function DashboardScreen() {
           <div className="card-left">
             <p className="card-greeting">{getGreeting()}, {getFirstName()}!</p>
             <p className="card-label">Your Total Spent</p>
-            <p className="card-amount">₱ {totalSpent.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+            <p className="card-amount">{currencySymbol} {totalSpent.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
             <p className="card-sub">this month{allHouseholds.length >= 2 ? ` · ${household?.name}` : ''}</p>
             {percentChange !== null && (
               <p className={`card-change ${Number(percentChange) > 0 ? 'up' : 'down'}`}>
@@ -319,7 +321,7 @@ export default function DashboardScreen() {
               </p>
             )}
             {pendingAmount > 0 && (
-              <span className="pending-badge">Pending: ₱{pendingAmount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span>
+              <span className="pending-badge">Pending: {currencySymbol}{pendingAmount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span>
             )}
           </div>
           <div className="card-chart">
@@ -335,7 +337,7 @@ export default function DashboardScreen() {
         <div className="dash-card">
           <div className="card-left">
             <p className="card-label">Utilities Paid</p>
-            <p className="card-amount">₱ {utilitiesTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+            <p className="card-amount">{currencySymbol} {utilitiesTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
             <p className="card-sub">your share of utilities this month</p>
           </div>
           <div className="card-chart"><Zap size={32} color="#3B2AAB" /></div>
@@ -344,7 +346,7 @@ export default function DashboardScreen() {
         <div className="dash-card group-spending-card" onClick={() => setShowGroupModal(true)}>
           <div className="card-left">
             <p className="card-label">Group Spending</p>
-            <p className="card-amount">₱ {totalGroupPaid.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+            <p className="card-amount">{currencySymbol} {totalGroupPaid.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
             <p className="card-sub">your share across groups this month</p>
           </div>
           <div className="card-chart"><p className="group-card-action">View details</p></div>
@@ -370,7 +372,7 @@ export default function DashboardScreen() {
               <p className="modal-sub">Your share of paid group expenses this month.</p>
               <div className="group-summary-row">
                 <span>Total your share across groups</span>
-                <strong>₱ {totalGroupPaid.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</strong>
+                <strong>{currencySymbol} {totalGroupPaid.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</strong>
               </div>
               <div className="group-list">
                 {groupSpending.length === 0
@@ -381,7 +383,7 @@ export default function DashboardScreen() {
                         <p className="group-name">{group.name}</p>
                         <p className="group-role">{group.role || 'Member'}</p>
                       </div>
-                      <span className="group-amount">₱ {group.currentMonthPaid.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span>
+                      <span className="group-amount">{currencySymbol} {group.currentMonthPaid.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span>
                     </div>
                   ))
                 }

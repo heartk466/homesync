@@ -13,6 +13,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { usePushNotifications } from '../hooks/usePushNotifications';
 import './SettingsScreen.css';
+import { useAppContext } from '../AppContext';
 
 // ─── VAPID helper (must match usePushNotifications.js) ────────────────────────
 const VAPID_PUBLIC_KEY = 'BBcMhS6ZOXie4qlsAsjdMhgVqYVoS697eMkuiHI4J_PiB20t6J6vT4npuIFiHPO9kavudjoyg9w_VP4zHOnPNMA';
@@ -35,7 +36,6 @@ export default function SettingsScreen() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
-  const [isDark, setIsDark] = useState(false);
   const [notifPrefs, setNotifPrefs] = useState({
     expense_approvals: true,
     payment_confirmations: true,
@@ -44,7 +44,8 @@ export default function SettingsScreen() {
     group_invites: true,
   });
   const [reminderDays, setReminderDays] = useState(5);
-  const [currency, setCurrency] = useState('PHP');
+
+  const { currency, setCurrency: setContextCurrency, isDark, setIsDark: setContextDark } = useAppContext();
 
   // UI State
   const [showSignOutModal, setShowSignOutModal] = useState(false);
@@ -54,12 +55,17 @@ export default function SettingsScreen() {
   const [showMembersModal, setShowMembersModal] = useState(false);
   const [showEditHouseholdModal, setShowEditHouseholdModal] = useState(false);
   const [showLeaveModal, setShowLeaveModal] = useState(false);
+  const [showTermsModal, setShowTermsModal] = useState(false);
   const [toast, setToast] = useState(null);
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
   const [transferTarget, setTransferTarget] = useState('');
   const [newHouseholdName, setNewHouseholdName] = useState('');
   const [expandedSection, setExpandedSection] = useState(null);
+
+  // Delete account password confirmation
+  const [deletePassword, setDeletePassword] = useState('');
+  const [deletePasswordError, setDeletePasswordError] = useState('');
 
   // Payment Details modal
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -93,8 +99,9 @@ export default function SettingsScreen() {
 
       // Apply saved theme
       if (profileData?.theme === 'dark') {
-        setIsDark(true);
-        document.documentElement.setAttribute('data-theme', 'dark');
+        setContextDark(true);
+      } else {
+        setContextDark(false);
       }
 
       // Load preferences
@@ -105,7 +112,7 @@ export default function SettingsScreen() {
         setReminderDays(profileData.default_reminder_days);
       }
       if (profileData?.currency) {
-        setCurrency(profileData.currency);
+        setContextCurrency(profileData.currency);
       }
 
       if (profileData?.household_id) {
@@ -168,8 +175,7 @@ export default function SettingsScreen() {
 
   const handleToggleDark = async () => {
     const newTheme = isDark ? 'light' : 'dark';
-    setIsDark(!isDark);
-    document.documentElement.setAttribute('data-theme', newTheme);
+    setContextDark(!isDark);
     await supabase
       .from('profiles')
       .update({ theme: newTheme })
@@ -261,7 +267,7 @@ export default function SettingsScreen() {
   };
 
   const handleSaveCurrency = async (curr) => {
-    setCurrency(curr);
+    setContextCurrency(curr);
     await supabase
       .from('profiles')
       .update({ currency: curr })
@@ -411,7 +417,25 @@ export default function SettingsScreen() {
   };
 
   const handleDeleteAccount = async () => {
+    if (!deletePassword.trim()) {
+      setDeletePasswordError('Please enter your password to confirm.');
+      return;
+    }
     setLoading(true);
+    setDeletePasswordError('');
+
+    // Re-authenticate with password first
+    const { error: authError } = await supabase.auth.signInWithPassword({
+      email: profile?.email,
+      password: deletePassword,
+    });
+
+    if (authError) {
+      setDeletePasswordError('Incorrect password. Please try again.');
+      setLoading(false);
+      return;
+    }
+
     await supabase
       .from('profiles')
       .update({ deleted: true })
@@ -892,7 +916,7 @@ export default function SettingsScreen() {
             <span className="settings-value">HomeSync Team</span>
           </div>
 
-          <button className="settings-row no-border">
+          <button className="settings-row no-border" onClick={() => setShowTermsModal(true)}>
             <div className="settings-row-left">
               <div className="settings-icon-wrap purple">📄</div>
               <span>Terms of Service</span>
@@ -1004,12 +1028,32 @@ export default function SettingsScreen() {
             <h2>Delete Account?</h2>
             <p className="modal-msg">
               Your expenses will remain visible to your household admin.
-              This action cannot be undone.
+              This action <strong>cannot be undone</strong>.
             </p>
+            <p className="modal-msg" style={{ fontSize: 12 }}>
+              Enter your password to confirm:
+            </p>
+            <input
+              type="password"
+              className="settings-modal-input"
+              placeholder="Your password"
+              value={deletePassword}
+              onChange={e => { setDeletePassword(e.target.value); setDeletePasswordError(''); }}
+              style={{ borderColor: deletePasswordError ? '#e53e3e' : undefined }}
+            />
+            {deletePasswordError && (
+              <p style={{ fontSize: 11, color: '#e53e3e', margin: 0, alignSelf: 'flex-start', paddingLeft: 8 }}>
+                {deletePasswordError}
+              </p>
+            )}
             <button className="modal-danger-btn" onClick={handleDeleteAccount} disabled={loading}>
               {loading ? 'Deleting...' : 'Yes, Delete My Account'}
             </button>
-            <button className="modal-ghost-btn" onClick={() => setShowDeleteAccountModal(false)}>Cancel</button>
+            <button className="modal-ghost-btn" onClick={() => {
+              setShowDeleteAccountModal(false);
+              setDeletePassword('');
+              setDeletePasswordError('');
+            }}>Cancel</button>
           </div>
         </div>
       )}
@@ -1132,6 +1176,67 @@ export default function SettingsScreen() {
               {loading ? 'Transferring...' : 'Confirm Transfer'}
             </button>
             <button className="modal-ghost-btn" onClick={() => setShowTransferModal(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* Terms of Service Modal */}
+      {showTermsModal && (
+        <div className="settings-modal-overlay">
+          <div className="settings-modal wide" style={{ maxHeight: '80vh', overflowY: 'auto' }}>
+            <div className="modal-top-row">
+              <h2>📄 Terms of Service</h2>
+              <button className="modal-x-btn" onClick={() => setShowTermsModal(false)}><X size={18}/></button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6, fontFamily: 'Poppins, sans-serif' }}>
+              <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>Last updated: January 2025</p>
+
+              <div>
+                <p style={{ fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>1. Acceptance of Terms</p>
+                <p style={{ margin: 0 }}>By using HomeSync, you agree to be bound by these Terms of Service. If you do not agree, please do not use the app.</p>
+              </div>
+
+              <div>
+                <p style={{ fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>2. Use of the Service</p>
+                <p style={{ margin: 0 }}>HomeSync is a household expense tracking tool. You may use it only for lawful purposes. You are responsible for all activity under your account.</p>
+              </div>
+
+              <div>
+                <p style={{ fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>3. Account Responsibility</p>
+                <p style={{ margin: 0 }}>You are responsible for keeping your password secure. HomeSync is not liable for any loss due to unauthorized access to your account.</p>
+              </div>
+
+              <div>
+                <p style={{ fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>4. Data & Privacy</p>
+                <p style={{ margin: 0 }}>We collect only the data necessary to provide the service (expenses, household information, profile details). We do not sell your data to third parties. Expense data may remain visible to household admins even after you leave a household.</p>
+              </div>
+
+              <div>
+                <p style={{ fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>5. User Content</p>
+                <p style={{ margin: 0 }}>Any expense data, payment proofs, or other content you upload remains yours. By uploading content, you grant HomeSync a license to display it to authorized household members.</p>
+              </div>
+
+              <div>
+                <p style={{ fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>6. Account Deletion</p>
+                <p style={{ margin: 0 }}>You may delete your account at any time from Settings. Upon deletion, your profile is marked inactive. Shared expense records will remain visible to your household for record-keeping purposes.</p>
+              </div>
+
+              <div>
+                <p style={{ fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>7. Disclaimer</p>
+                <p style={{ margin: 0 }}>HomeSync is provided "as is" without warranties of any kind. We are not responsible for any financial decisions made based on data shown in the app.</p>
+              </div>
+
+              <div>
+                <p style={{ fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>8. Changes to Terms</p>
+                <p style={{ margin: 0 }}>We may update these terms from time to time. Continued use of the app after changes constitutes acceptance of the new terms.</p>
+              </div>
+
+              <div>
+                <p style={{ fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px' }}>9. Contact</p>
+                <p style={{ margin: 0 }}>For questions about these terms, contact us at support@homesync.app</p>
+              </div>
+            </div>
+            <button className="modal-primary-btn" onClick={() => setShowTermsModal(false)} style={{ marginTop: 8 }}>Got it</button>
           </div>
         </div>
       )}
