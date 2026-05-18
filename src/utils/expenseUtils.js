@@ -1,8 +1,25 @@
 import { supabase } from '../supabaseClient';
 
-export const UTILITY_CATEGORIES = ['Electricity', 'Water', 'Internet', 'Entertainment', 'Power', 'Gas'];
+export const UTILITY_CATEGORIES = ['Electricity', 'Water', 'Internet', 'Entertainment', 'Power', 'Gas', 'Subscription'];
 
 export const isUtilityCategory = (category) => UTILITY_CATEGORIES.includes(category);
+
+// ── Subscription presets ──────────────────────────────────────────────────────
+export const SUBSCRIPTION_PRESETS = [
+  { name: 'Netflix',         icon: '🎬', suggestedAmount: 549  },
+  { name: 'Spotify',         icon: '🎵', suggestedAmount: 179  },
+  { name: 'YouTube Premium', icon: '▶️',  suggestedAmount: 179  },
+  { name: 'Disney+',         icon: '✨', suggestedAmount: 279  },
+  { name: 'HBO Go',          icon: '📺', suggestedAmount: 299  },
+  { name: 'Apple TV+',       icon: '🍎', suggestedAmount: 225  },
+  { name: 'Amazon Prime',    icon: '📦', suggestedAmount: 400  },
+  { name: 'Canva Pro',       icon: '🎨', suggestedAmount: 499  },
+  { name: 'Adobe CC',        icon: '🖌️', suggestedAmount: 799  },
+  { name: 'ChatGPT Plus',    icon: '🤖', suggestedAmount: 1150 },
+  { name: 'iCloud+',         icon: '☁️', suggestedAmount: 49   },
+  { name: 'Google One',      icon: '🔵', suggestedAmount: 99   },
+];
+// ─────────────────────────────────────────────────────────────────────────────
 
 export async function fetchAllHouseholdExpenses(householdId) {
   if (!householdId) return [];
@@ -72,7 +89,7 @@ export async function checkDuplicate(householdId, category, amount, date) {
     .eq('category', category)
     .eq('amount', amount)
     .eq('expense_date', date);
-  
+
   const { data: existingUtilities } = await supabase
     .from('utilities')
     .select('id, provider_name, amount, billing_date, utility_type')
@@ -80,7 +97,7 @@ export async function checkDuplicate(householdId, category, amount, date) {
     .eq('utility_type', category)
     .eq('amount', amount)
     .eq('billing_date', date);
-  
+
   const dupes = [];
   if (existingExpenses?.length) dupes.push(...existingExpenses.map(e => ({ ...e, source: 'expenses' })));
   if (existingUtilities?.length) dupes.push(...existingUtilities.map(u => ({ ...u, source: 'utilities' })));
@@ -88,7 +105,6 @@ export async function checkDuplicate(householdId, category, amount, date) {
 }
 
 export async function mergeItems(duplicateId, newId) {
-  // Placeholder – implement if needed
   return true;
 }
 
