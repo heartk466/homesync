@@ -3,19 +3,27 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import {
   ArrowLeft, Users, Plus, Check, X, Camera,
-  Copy, Share2, AlertCircle, Trash2, Eye, RefreshCw, Pencil
+  Copy, Share2, AlertCircle, Trash2, Eye, RefreshCw, Pencil, ChevronDown
 } from 'lucide-react';
 import './GroupDetailScreen.css';
+import { SUBSCRIPTION_PRESETS } from '../utils/expenseUtils';
+
+const ALL_EXPENSE_CATEGORIES = [
+  'Rent', 'Electricity', 'Water', 'Internet',
+  'Food', 'Grocery', 'Transport', 'Entertainment', 'Subscription', 'Other',
+];
 
 const CATEGORY_ICONS = {
   Rent: '🏠', Electricity: '⚡', Water: '💧', Internet: '📶',
-  Food: '🍽️', Grocery: '🛒', Other: '📦', Transport: '🚗', Entertainment: '🎬'
+  Food: '🍽️', Grocery: '🛒', Other: '📦', Transport: '🚗',
+  Entertainment: '🎬', Subscription: '📱',
 };
 
 const CATEGORY_COLORS = {
   Rent: '#3B2AAB', Electricity: '#2B6CB0', Water: '#2C7A7B',
   Internet: '#6B46C1', Food: '#C05621', Grocery: '#276749',
-  Other: '#718096', Transport: '#DD6B20', Entertainment: '#D53F8C'
+  Other: '#718096', Transport: '#DD6B20', Entertainment: '#D53F8C',
+  Subscription: '#9B2C87',
 };
 
 export default function GroupDetailScreen() {
@@ -84,6 +92,7 @@ export default function GroupDetailScreen() {
     selected_members: [], custom_splits: {}
   });
   const [expenseErrors, setExpenseErrors] = useState({});
+  const [otherType, setOtherType] = useState('');
 
   const [proofForm, setProofForm] = useState({
     note: '', screenshot: null, screenshotPreview: null
@@ -294,6 +303,7 @@ export default function GroupDetailScreen() {
       split_type: 'equal', selected_members: [], custom_splits: {}
     });
     setExpenseErrors({});
+    setOtherType('');
   };
 
   const resetProofForm = () => {
@@ -368,10 +378,14 @@ export default function GroupDetailScreen() {
       }
     }
 
+    const finalCategory = expenseForm.category === 'Other' && otherType.trim()
+      ? otherType.trim()
+      : expenseForm.category;
+
     const insertData = {
       title: expenseForm.title.trim(),
       amount: Number(expenseForm.amount),
-      category: expenseForm.category,
+      category: finalCategory,
       expense_type: contextType === 'household' ? 'household' : 'group',
       expense_date: expenseForm.expense_date,
       location: expenseForm.location || group?.name,
@@ -1177,31 +1191,131 @@ export default function GroupDetailScreen() {
               <button className="modal-close" onClick={() => { setShowAddExpense(false); resetExpenseForm(); }}><X size={20} /></button>
             </div>
             <div className="modal-body-scroll">
-              <input type="text" placeholder="Description *" className="detail-input" value={expenseForm.title} onChange={e => setExpenseForm({ ...expenseForm, title: e.target.value })} />
-              <div className="amount-input-wrap"><span className="peso-sign">₱</span><input type="number" placeholder="0.00" value={expenseForm.amount} onChange={e => setExpenseForm({ ...expenseForm, amount: e.target.value })} /></div>
-              <input type="date" value={expenseForm.expense_date} onChange={e => setExpenseForm({ ...expenseForm, expense_date: e.target.value })} className="detail-input" />
-              <select value={expenseForm.category} onChange={e => setExpenseForm({ ...expenseForm, category: e.target.value })} className="detail-input">
-                {Object.keys(CATEGORY_ICONS).map(c => <option key={c}>{c}</option>)}
-              </select>
-              <select value={expenseForm.who_paid} onChange={e => setExpenseForm({ ...expenseForm, who_paid: e.target.value })} className="detail-input">
-                <option value="">Who paid? *</option>
-                {members.map(m => <option key={m.user_id} value={m.user_id}>{m.profiles?.full_name}</option>)}
-              </select>
-              <div className="split-members">
-                <label style={{ fontSize: 12, fontWeight: 600 }}>Split with: *</label>
-                {members.map(m => (
-                  <label key={m.user_id} className="member-checkbox">
-                    <input type="checkbox" checked={expenseForm.selected_members.includes(m.user_id)} onChange={e => {
-                      if (e.target.checked) setExpenseForm({ ...expenseForm, selected_members: [...expenseForm.selected_members, m.user_id] });
-                      else setExpenseForm({ ...expenseForm, selected_members: expenseForm.selected_members.filter(uid => uid !== m.user_id) });
-                    }} /> {m.profiles?.full_name}
-                  </label>
-                ))}
+
+              {/* Description */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: '#5A4AAA' }}>Description *</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Electricity bill"
+                  className={`detail-input${expenseErrors.title ? ' input-error' : ''}`}
+                  value={expenseForm.title}
+                  onChange={e => setExpenseForm({ ...expenseForm, title: e.target.value })}
+                />
               </div>
-              <div className="split-toggle">
-                <button className={`split-btn ${expenseForm.split_type === 'equal' ? 'active' : ''}`} onClick={() => setExpenseForm({ ...expenseForm, split_type: 'equal' })}>Equal</button>
-                <button className={`split-btn ${expenseForm.split_type === 'custom' ? 'active' : ''}`} onClick={() => setExpenseForm({ ...expenseForm, split_type: 'custom' })}>Custom</button>
+
+              {/* Amount */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: '#5A4AAA' }}>Amount *</label>
+                <div className="amount-input-wrap">
+                  <span className="peso-sign">₱</span>
+                  <input type="number" placeholder="0.00" value={expenseForm.amount} onChange={e => setExpenseForm({ ...expenseForm, amount: e.target.value })} />
+                </div>
               </div>
+
+              {/* Date */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: '#5A4AAA' }}>Date</label>
+                <input type="date" value={expenseForm.expense_date} onChange={e => setExpenseForm({ ...expenseForm, expense_date: e.target.value })} className="detail-input" />
+              </div>
+
+              {/* Category */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: '#5A4AAA' }}>Category</label>
+                <div style={{ position: 'relative' }}>
+                  <select
+                    value={expenseForm.category}
+                    onChange={e => {
+                      setExpenseForm({ ...expenseForm, category: e.target.value });
+                      if (e.target.value !== 'Other') setOtherType('');
+                    }}
+                    className="detail-input"
+                    style={{ appearance: 'none', paddingRight: 36 }}
+                  >
+                    {ALL_EXPENSE_CATEGORIES.map(c => <option key={c}>{c}</option>)}
+                  </select>
+                  <ChevronDown size={14} style={{ position: 'absolute', right: 14, top: '50%', transform: 'translateY(-50%)', color: '#9E8FCC', pointerEvents: 'none' }} />
+                </div>
+                {/* Other — custom type input */}
+                {expenseForm.category === 'Other' && (
+                  <input
+                    type="text"
+                    placeholder="Specify type (e.g. Pet supplies, Haircut)"
+                    className="detail-input"
+                    value={otherType}
+                    onChange={e => setOtherType(e.target.value)}
+                    style={{ marginTop: 6 }}
+                  />
+                )}
+              </div>
+
+              {/* Subscription preset picker */}
+              {expenseForm.category === 'Subscription' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: '#5A4AAA' }}>Quick Select</label>
+                  <div className="detail-subscription-presets">
+                    {SUBSCRIPTION_PRESETS.map(preset => (
+                      <button
+                        key={preset.name}
+                        type="button"
+                        className={`detail-preset-btn${expenseForm.title === preset.name ? ' active' : ''}`}
+                        onClick={() => setExpenseForm({
+                          ...expenseForm,
+                          title: preset.name,
+                          amount: String(preset.suggestedAmount),
+                        })}
+                      >
+                        <span>{preset.icon}</span>
+                        <span style={{ flex: 1, textAlign: 'left', fontSize: 12, fontWeight: 600, color: '#2D1A7A' }}>{preset.name}</span>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: '#9B2C87' }}>₱{preset.suggestedAmount}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Who paid */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: '#5A4AAA' }}>Who Paid *</label>
+                <div style={{ position: 'relative' }}>
+                  <select
+                    value={expenseForm.who_paid}
+                    onChange={e => setExpenseForm({ ...expenseForm, who_paid: e.target.value })}
+                    className={`detail-input${expenseErrors.who_paid ? ' input-error' : ''}`}
+                    style={{ appearance: 'none', paddingRight: 36 }}
+                  >
+                    <option value="">Select member</option>
+                    {members.map(m => <option key={m.user_id} value={m.user_id}>{m.profiles?.full_name}</option>)}
+                  </select>
+                  <ChevronDown size={14} style={{ position: 'absolute', right: 14, top: '50%', transform: 'translateY(-50%)', color: '#9E8FCC', pointerEvents: 'none' }} />
+                </div>
+              </div>
+
+              {/* Split with */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: '#5A4AAA' }}>Split With *</label>
+                <div className="split-members">
+                  {members.map(m => (
+                    <label key={m.user_id} className="member-checkbox">
+                      <input type="checkbox" checked={expenseForm.selected_members.includes(m.user_id)} onChange={e => {
+                        if (e.target.checked) setExpenseForm({ ...expenseForm, selected_members: [...expenseForm.selected_members, m.user_id] });
+                        else setExpenseForm({ ...expenseForm, selected_members: expenseForm.selected_members.filter(uid => uid !== m.user_id) });
+                      }} /> {m.profiles?.full_name}
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* Split method */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: '#5A4AAA' }}>Split Method</label>
+                <div className="split-toggle">
+                  <button className={`split-btn ${expenseForm.split_type === 'equal' ? 'active' : ''}`} onClick={() => setExpenseForm({ ...expenseForm, split_type: 'equal' })}>Equal</button>
+                  <button className={`split-btn ${expenseForm.split_type === 'custom' ? 'active' : ''}`} onClick={() => setExpenseForm({ ...expenseForm, split_type: 'custom' })}>Custom</button>
+                </div>
+              </div>
+
+              {/* Custom splits */}
               {expenseForm.split_type === 'custom' && expenseForm.selected_members.map((uid, i) => {
                 const member = members.find(m => m.user_id === uid);
                 const totalAmt = Number(expenseForm.amount) || 0;
@@ -1210,19 +1324,18 @@ export default function GroupDetailScreen() {
                 const hasEntered = Number(expenseForm.custom_splits[uid]) > 0;
                 const afterThis = thisRemaining - (Number(expenseForm.custom_splits[uid]) || 0);
                 return (
-                  <div key={uid} style={{ marginBottom: 10 }}>
+                  <div key={uid} style={{ marginBottom: 8 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
                       <span style={{ fontSize: 12, fontWeight: 600, color: '#2D1A7A' }}>{member?.profiles?.full_name}</span>
                       {totalAmt > 0 && (
                         <span style={{ fontSize: 10, color: '#9E8FCC' }}>
-                          {hasEntered
-                            ? `₱${afterThis.toFixed(2)} left after this`
-                            : `₱${thisRemaining.toFixed(2)} still needs to be split`}
+                          {hasEntered ? `₱${afterThis.toFixed(2)} left` : `₱${thisRemaining.toFixed(2)} to split`}
                         </span>
                       )}
                     </div>
-                    <div className="custom-split-row">
-                      <div className="amount-input-wrap small"><span className="peso-sign">₱</span><input type="number" placeholder="0.00" value={expenseForm.custom_splits[uid] || ''} onChange={e => setExpenseForm({ ...expenseForm, custom_splits: { ...expenseForm.custom_splits, [uid]: e.target.value } })} /></div>
+                    <div className="amount-input-wrap small">
+                      <span className="peso-sign">₱</span>
+                      <input type="number" placeholder="0.00" value={expenseForm.custom_splits[uid] || ''} onChange={e => setExpenseForm({ ...expenseForm, custom_splits: { ...expenseForm.custom_splits, [uid]: e.target.value } })} />
                     </div>
                   </div>
                 );
@@ -1233,11 +1346,12 @@ export default function GroupDetailScreen() {
                 const rem = totalAmt - customTotal;
                 if (totalAmt <= 0) return null;
                 return (
-                  <div style={{ padding: '8px 12px', borderRadius: 10, marginBottom: 8, fontSize: 12, fontWeight: 700, background: Math.abs(rem) < 0.01 ? '#D1FAE5' : '#FEE2E2', color: Math.abs(rem) < 0.01 ? '#065F46' : '#e53e3e' }}>
+                  <div style={{ padding: '8px 12px', borderRadius: 10, fontSize: 12, fontWeight: 700, background: Math.abs(rem) < 0.01 ? '#D1FAE5' : '#FEE2E2', color: Math.abs(rem) < 0.01 ? '#065F46' : '#e53e3e' }}>
                     {Math.abs(rem) < 0.01 ? '✅ Split total matches!' : `₱${Math.abs(rem).toFixed(2)} ${rem > 0 ? 'still unassigned' : 'over budget'}`}
                   </div>
                 );
               })()}
+
               <button className="add-expense-btn" onClick={handleAddExpense} disabled={loadingAction}>{loadingAction ? 'Adding...' : 'Add Expense'}</button>
             </div>
           </div>

@@ -600,3 +600,39 @@
 .member-avatar-clickable:active {
   transform: scale(0.96);
 }
+/* ── Add Expense Modal: input-error ── */
+.detail-input.input-error {
+  border-color: #e53e3e;
+}
+
+/* ── Subscription Preset Picker ── */
+.detail-subscription-presets {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 190px;
+  overflow-y: auto;
+}
+
+.detail-preset-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  border-radius: 50px;
+  border: 1.5px solid #E0D9FF;
+  background: white;
+  cursor: pointer;
+  font-family: 'Poppins', sans-serif;
+  transition: all 0.15s;
+  width: 100%;
+}
+
+.detail-preset-btn.active {
+  border-color: #3B2AAB;
+  background: #F0EDFF;
+}
+
+.detail-preset-btn:hover {
+  background: #F8F6FF;
+}
