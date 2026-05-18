@@ -1,6 +1,7 @@
 import { supabase } from '../supabaseClient';
 
 export const UTILITY_CATEGORIES = ['Electricity', 'Water', 'Internet', 'Entertainment', 'Power', 'Gas', 'Subscription'];
+export const UTILITY_CATEGORIES = ['Electricity', 'Water', 'Internet', 'Entertainment', 'Power', 'Gas', 'Subscription'];
 
 export const isUtilityCategory = (category) => UTILITY_CATEGORIES.includes(category);
 
@@ -98,6 +99,7 @@ export async function checkDuplicate(householdId, category, amount, date) {
     .eq('amount', amount)
     .eq('expense_date', date);
 
+
   const { data: existingUtilities } = await supabase
     .from('utilities')
     .select('id, provider_name, amount, billing_date, utility_type')
@@ -105,6 +107,7 @@ export async function checkDuplicate(householdId, category, amount, date) {
     .eq('utility_type', category)
     .eq('amount', amount)
     .eq('billing_date', date);
+
 
   const dupes = [];
   if (existingExpenses?.length) dupes.push(...existingExpenses.map(e => ({ ...e, source: 'expenses' })));

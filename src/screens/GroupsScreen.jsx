@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import {
   Home, Users, Plus, Copy, Share2, X,
-  Search
+  DollarSign
 } from 'lucide-react';
 import TopBar from '../components/TopBar';
 import BottomNav from '../components/BottomNav';
@@ -452,14 +452,18 @@ export default function GroupsScreen() {
           </div>
         </div>
         <div className="group-stats">
-          <div className="stat"><span className="stat-label">Total spent (this month)</span><span className="stat-value">₱{(item.totalExpenses || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span></div>
-          <div className="stat"><span className="stat-label">Your share</span><span className="stat-value">₱{(item.yourShare || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span></div>
-          {isHousehold && (
-            <div className="stat"><span className="stat-label">Utilities</span><span className="stat-value">₱{(item.utilitiesTotal || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span></div>
-          )}
-          <div className="stat balance"><span className="stat-label">Balance</span><span className="stat-value" style={{ color: balanceInfo.color }}>{balanceInfo.arrow} {balanceInfo.text}</span></div>
-        </div>
-        {(item.pendingOwed || 0) > 0 && null}
+  <div className="stat"><span className="stat-label">Total spent (this month)</span><span className="stat-value">₱{(item.totalExpenses || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span></div>
+  <div className="stat"><span className="stat-label">Your share</span><span className="stat-value">₱{(item.yourShare || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span></div>
+  {isHousehold && (
+    <div className="stat"><span className="stat-label">Utilities</span><span className="stat-value">₱{(item.utilitiesTotal || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span></div>
+  )}
+  <div className="stat balance"><span className="stat-label">Balance</span><span className="stat-value" style={{ color: balanceInfo.color }}>{balanceInfo.arrow} {balanceInfo.text}</span></div>
+</div>
+        {(item.pendingOwed || 0) > 0 && (
+          <div className="pending-badge-group">
+            ₱{item.pendingOwed.toFixed(2)} pending from you
+          </div>
+        )}
       </div>
     );
   };

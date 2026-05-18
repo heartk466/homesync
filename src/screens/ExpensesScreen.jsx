@@ -14,17 +14,26 @@ import {
   mergeItems,
   isUtilityCategory,
   UTILITY_CATEGORIES,
+  SUBSCRIPTION_PRESETS,
 } from '../utils/expenseUtils';
+
+// All selectable categories — Other always last
+const ALL_CATEGORIES = [
+  'Rent', 'Electricity', 'Water', 'Internet',
+  'Food', 'Grocery', 'Transport', 'Entertainment', 'Subscription', 'Other',
+];
 
 const CATEGORY_ICONS = {
   Rent: '🏠', Electricity: '⚡', Water: '💧', Internet: '📶',
-  Food: '🍽️', Grocery: '🛒', Other: '📦', Transport: '🚗', Entertainment: '🎬'
+  Food: '🍽️', Grocery: '🛒', Other: '📦', Transport: '🚗',
+  Entertainment: '🎬', Subscription: '📱',
 };
 
 const CATEGORY_COLORS = {
   Rent: '#3B2AAB', Electricity: '#2B6CB0', Water: '#2C7A7B',
   Internet: '#6B46C1', Food: '#C05621', Grocery: '#276749',
-  Other: '#718096', Transport: '#DD6B20', Entertainment: '#D53F8C'
+  Other: '#718096', Transport: '#DD6B20', Entertainment: '#D53F8C',
+  Subscription: '#9B2C87',
 };
 
 export default function ExpensesScreen() {
@@ -104,6 +113,8 @@ export default function ExpensesScreen() {
   const [proofForm, setProofForm] = useState({ note: '', screenshot: null, screenshotPreview: null });
   const [rejectReason, setRejectReason] = useState('');
   const [rejectProofReason, setRejectProofReason] = useState('');
+  // "Other" category custom type label
+  const [otherType, setOtherType] = useState('');
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
@@ -356,13 +367,17 @@ export default function ExpensesScreen() {
       }
     }
 
+    const finalCategory = expenseForm.category === 'Other' && otherType.trim()
+      ? otherType.trim()
+      : expenseForm.category;
+
     const insertData = {
       household_id: selectedHousehold.id,
       created_by: currentUser.id,
       title: expenseForm.title.trim(),
       amount: totalAmount,
-      category: expenseForm.category,
-      expense_type: expenseForm.category,
+      category: finalCategory,
+      expense_type: finalCategory,
       expense_date: expenseForm.expense_date,
       location: expenseForm.location || selectedHousehold.name,
       paid_by: expenseForm.who_paid,
@@ -389,6 +404,7 @@ export default function ExpensesScreen() {
         selected_members: [],
         custom_splits: {},
       });
+      setOtherType('');
 
       if (!isAdmin && selectedHousehold?.created_by) {
         await supabase.from('notifications').insert({
@@ -899,7 +915,7 @@ export default function ExpensesScreen() {
           <div className="add-expense-modal">
             <div className="modal-header">
               <h2>New Expense · {selectedHousehold?.name}</h2>
-              <button className="modal-close" onClick={() => { setShowAddExpense(false); setExpenseForm({
+              <button className="modal-close" onClick={() => { setShowAddExpense(false); setOtherType(''); setExpenseForm({
                 title: '',
                 amount: '',
                 category: 'Rent',
@@ -932,12 +948,52 @@ export default function ExpensesScreen() {
               <div className="form-group">
                 <label>Category</label>
                 <div className="select-wrap">
-                  <select value={expenseForm.category} onChange={e => setExpenseForm({ ...expenseForm, category: e.target.value })}>
-                    {Object.keys(CATEGORY_ICONS).map(c => <option key={c}>{c}</option>)}
+                  <select
+                    value={expenseForm.category}
+                    onChange={e => {
+                      setExpenseForm({ ...expenseForm, category: e.target.value });
+                      if (e.target.value !== 'Other') setOtherType('');
+                    }}
+                  >
+                    {ALL_CATEGORIES.map(c => <option key={c}>{c}</option>)}
                   </select>
                   <ChevronDown size={14} className="select-arrow" />
                 </div>
+                {expenseForm.category === 'Other' && (
+                  <input
+                    type="text"
+                    placeholder="Specify type (e.g. Pet supplies, Haircut)"
+                    value={otherType}
+                    onChange={e => setOtherType(e.target.value)}
+                    style={{ marginTop: 8 }}
+                  />
+                )}
               </div>
+
+              {/* Subscription preset picker */}
+              {expenseForm.category === 'Subscription' && (
+                <div className="form-group">
+                  <label>Quick Select</label>
+                  <div className="subscription-presets-wrap">
+                    {SUBSCRIPTION_PRESETS.map(preset => (
+                      <button
+                        key={preset.name}
+                        type="button"
+                        className={`subscription-preset-btn ${expenseForm.title === preset.name ? 'active' : ''}`}
+                        onClick={() => setExpenseForm({
+                          ...expenseForm,
+                          title: preset.name,
+                          amount: String(preset.suggestedAmount),
+                        })}
+                      >
+                        <span className="preset-icon">{preset.icon}</span>
+                        <span className="preset-name">{preset.name}</span>
+                        <span className="preset-amount">₱{preset.suggestedAmount}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="form-group">
                 <label>Location (optional)</label>
                 <input type="text" placeholder="Location" value={expenseForm.location} onChange={e => setExpenseForm({ ...expenseForm, location: e.target.value })} />
