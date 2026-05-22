@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import { Bell, X, LogOut, Camera, Edit, MessageCircle } from 'lucide-react';
 import './TopBar.css';
-import './ChatDrawer.css';
 import logo from '../assets/Homesync.svg';
 
 export default function TopBar({

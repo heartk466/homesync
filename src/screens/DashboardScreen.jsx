@@ -10,7 +10,7 @@ import {
 import './DashboardScreen.css';
 import TopBar from '../components/TopBar';
 import BottomNav from '../components/BottomNav';
-import ChatPanel from '../components/ChatPanel';          // ← NEW
+import Chatdrawer from '../components/Chatdrawer';       
 import { fetchAllHouseholdExpenses, UTILITY_CATEGORIES } from '../utils/expenseUtils';
 import { useAppContext } from '../AppContext';
 
