@@ -1,8 +1,9 @@
 import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
-import { Bell, X, LogOut, Camera, Edit } from 'lucide-react';
+import { Bell, X, LogOut, Camera, Edit, MessageCircle } from 'lucide-react';
 import './TopBar.css';
+import './ChatDrawer.css';
 import logo from '../assets/Homesync.svg';
 
 export default function TopBar({
@@ -15,6 +16,8 @@ export default function TopBar({
   onMarkAllRead,
   title = 'HomeSync',
   showBell = true,
+  onChatOpen,
+  chatUnreadCount = 0,
 }) {
   const navigate = useNavigate();
   const fileInputRef = useRef(null);
@@ -161,7 +164,7 @@ export default function TopBar({
         .from('notifications')
         .update({ is_read: true })
         .eq('id', notification.id);
-      if (onMarkAllRead) onMarkAllRead(); // refresh parent counts
+      if (onMarkAllRead) onMarkAllRead();
     }
 
     // Close notification panel
@@ -205,7 +208,7 @@ export default function TopBar({
 
   return (
     <>
-      {/* Hidden file input */}
+      {/* Hidden file input for avatar upload */}
       <input
         type="file"
         ref={fileInputRef}
@@ -220,7 +223,9 @@ export default function TopBar({
           <img src={logo} alt="homesync" className="topbar-logo-icon" />
           <span>{title}</span>
         </div>
+
         <div className="topbar-actions">
+          {/* Bell / Notifications */}
           {showBell && (
             <button
               className="topbar-bell-btn"
@@ -235,6 +240,28 @@ export default function TopBar({
               )}
             </button>
           )}
+
+          {/* Chat button — only shown on Dashboard (when onChatOpen is passed) */}
+          {onChatOpen && (
+            <button
+              className="topbar-chat-btn"
+              onClick={() => {
+                onChatOpen();
+                setShowProfileCard(false);
+                setShowNotifications(false);
+              }}
+              title="Messages"
+            >
+              <MessageCircle size={22} />
+              {chatUnreadCount > 0 && (
+                <span className="topbar-chat-badge">
+                  {chatUnreadCount > 99 ? '99+' : chatUnreadCount}
+                </span>
+              )}
+            </button>
+          )}
+
+          {/* Avatar / Profile */}
           <button
             className="topbar-avatar-btn"
             onClick={() => setShowProfileCard(!showProfileCard)}

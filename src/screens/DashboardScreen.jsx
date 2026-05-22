@@ -10,6 +10,7 @@ import {
 import './DashboardScreen.css';
 import TopBar from '../components/TopBar';
 import BottomNav from '../components/BottomNav';
+import ChatPanel from '../components/ChatPanel';          // ← NEW
 import { fetchAllHouseholdExpenses, UTILITY_CATEGORIES } from '../utils/expenseUtils';
 import { useAppContext } from '../AppContext';
 
@@ -21,8 +22,8 @@ export default function DashboardScreen() {
   const [currentUser, setCurrentUser] = useState(null);
 
   // ── Multi-household state ──────────────────────────────────────────────────
-  const [allHouseholds, setAllHouseholds] = useState([]);   // all households user belongs to
-  const [household, setHousehold] = useState(null);          // currently-selected household
+  const [allHouseholds, setAllHouseholds] = useState([]);
+  const [household, setHousehold] = useState(null);
   // ──────────────────────────────────────────────────────────────────────────
 
   const [totalSpent, setTotalSpent] = useState(0);
@@ -36,6 +37,11 @@ export default function DashboardScreen() {
   const [showGroupModal, setShowGroupModal] = useState(false);
   const [showHouseholdCode, setShowHouseholdCode] = useState(false);
   const [copied, setCopied] = useState(false);
+
+  // ── Chat state ─────────────────────────────────────────────────────────────
+  const [showChat, setShowChat] = useState(false);
+  const [chatUnread, setChatUnread] = useState(0);
+  // ──────────────────────────────────────────────────────────────────────────
 
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -104,7 +110,6 @@ export default function DashboardScreen() {
         .single();
       setProfile(profileData);
 
-      // Fetch ALL households the user belongs to (removed .limit(1))
       const { data: memberRows } = await supabase
         .from('household_members')
         .select('household_id')
@@ -122,10 +127,8 @@ export default function DashboardScreen() {
       const households = hhData || [];
       setAllHouseholds(households);
 
-      // Default selection: first household (or preserve current selection)
       if (households.length > 0) {
         setHousehold(prev => {
-          // If we already have a selection that's still valid, keep it
           if (prev && households.find(h => h.id === prev.id)) return prev;
           return households[0];
         });
@@ -146,7 +149,6 @@ export default function DashboardScreen() {
       const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().split('T')[0];
       const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0).toISOString().split('T')[0];
 
-      // Fetch expenses for the selected household
       const allExpenses = await fetchAllHouseholdExpenses(selectedHousehold.id);
       const expenseIds = allExpenses.map(e => e.id);
       const splitsByExpense = await fetchExpenseSplits(expenseIds);
@@ -186,46 +188,44 @@ export default function DashboardScreen() {
       // Category breakdown
       const categories = {};
       for (const expense of allExpenses) {
-        if (!(expense.expense_date >= firstDay && expense.expense_date <= lastDay)) continue;
         const splits = splitsByExpense[expense.id] || [];
         const mySplit = splits.find(s => s.user_id === user.id);
         if (mySplit && mySplit.status === 'approved' && expense.approval_status === 'approved') {
-          const cat = expense.category;
-          categories[cat] = (categories[cat] || 0) + Number(mySplit.share_amount);
+          const expenseDate = expense.expense_date;
+          if (expenseDate >= firstDay && expenseDate <= lastDay) {
+            const cat = expense.category || 'Other';
+            categories[cat] = (categories[cat] || 0) + Number(mySplit.share_amount);
+          }
         }
       }
       setCategoryData(Object.entries(categories).map(([name, value]) => ({ name, value })));
 
-      // Monthly trend (6 months)
-      const months = [];
-      for (let i = 5; i >= 0; i--) {
-        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-        const first = new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0];
-        const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().split('T')[0];
-        let monthTotal = 0;
-        for (const expense of allExpenses) {
-          if (expense.expense_date >= first && expense.expense_date <= last && expense.approval_status === 'approved') {
-            const splits = splitsByExpense[expense.id] || [];
-            const mySplit = splits.find(s => s.user_id === user.id);
-            if (mySplit && mySplit.status === 'approved') {
-              monthTotal += Number(mySplit.share_amount);
-            }
-          }
+      // Monthly chart
+      const monthlyMap = {};
+      for (const expense of allExpenses) {
+        const splits = splitsByExpense[expense.id] || [];
+        const mySplit = splits.find(s => s.user_id === user.id);
+        if (mySplit && mySplit.status === 'approved' && expense.approval_status === 'approved') {
+          const d = new Date(expense.expense_date);
+          const key = d.toLocaleDateString('en-US', { month: 'short' });
+          monthlyMap[key] = (monthlyMap[key] || 0) + Number(mySplit.share_amount);
         }
-        months.push({ month: d.toLocaleString('default', { month: 'short' })[0], amount: monthTotal });
       }
-      setMonthlyData(months);
+      const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      setMonthlyData(months.map(m => ({ month: m, amount: monthlyMap[m] || 0 })).filter(m => m.amount > 0).slice(-6));
 
-      // Group spending (global — groups aren't tied to a household)
-      const { data: memberGroups } = await supabase
+      // Group spending
+      const { data: memberGroupRows } = await supabase
         .from('group_members')
         .select('group_id')
-        .eq('user_id', user.id)
-        .eq('status', 'active');
-      const groupIds = (memberGroups || []).map(mg => mg.group_id);
+        .eq('user_id', user.id);
       let groupsList = [];
-      if (groupIds.length) {
-        const { data: groupsData } = await supabase.from('groups').select('*').in('id', groupIds);
+      if (memberGroupRows && memberGroupRows.length > 0) {
+        const groupIds = memberGroupRows.map(r => r.group_id);
+        const { data: groupsData } = await supabase
+          .from('groups')
+          .select('*')
+          .in('id', groupIds);
         groupsList = groupsData || [];
       }
       const groupsWithPaidTotals = await Promise.all(
@@ -260,14 +260,12 @@ export default function DashboardScreen() {
   // ── Effects ───────────────────────────────────────────────────────────────
   useEffect(() => { fetchProfile(); }, []);
 
-  // Re-fetch data whenever the selected household changes
   useEffect(() => {
     if (currentUser && household) {
       fetchHouseholdData(household, currentUser);
     }
   }, [household?.id, currentUser?.id]);
 
-  // Realtime subscription scoped to the selected household
   useEffect(() => {
     if (!currentUser?.id || !household?.id) return;
     const channel = supabase
@@ -282,6 +280,36 @@ export default function DashboardScreen() {
 
   return (
     <div className="dashboard">
+      {/*
+        TopBar is kept as-is.
+        The ChatPanel trigger button is injected INSIDE .topbar-actions via
+        the `chatSlot` prop — or you can add it directly inside TopBar.jsx.
+        
+        Simplest approach (no TopBar.jsx changes needed):
+        Override the topbar-actions area by passing a custom `actionsSlot` prop.
+        If you don't want to modify TopBar.jsx, wrap TopBar in a relative container
+        and absolutely position the ChatPanel trigger, OR add the chatSlot prop
+        to TopBar.jsx as shown in the comment below.
+
+        ── OPTION A (recommended, minimal TopBar change) ─────────────────────
+        In TopBar.jsx, add `chatSlot` prop and render it inside .topbar-actions:
+          <div className="topbar-actions">
+            {chatSlot}           ← ADD THIS LINE
+            {showBell && (...)}
+            <button ...avatar />
+          </div>
+        Then pass: <TopBar ... chatSlot={<ChatTrigger />} />
+
+        ── OPTION B (zero TopBar changes) ────────────────────────────────────
+        The ChatPanel below still renders its trigger button. Position it with
+        CSS — add `.chat-trigger-btn { position: absolute; top: 56px; right: 64px; }`
+        to ChatPanel.css, and wrap .dashboard in `position: relative`.
+        ──────────────────────────────────────────────────────────────────────
+
+        For this file we use OPTION B (no TopBar.jsx changes required).
+        ChatPanel renders its own trigger button.  The .dashboard div already
+        has position:relative in DashboardScreen.css — if not, add it.
+      */}
       <TopBar
         profile={profile}
         setProfile={setProfile}
@@ -293,7 +321,23 @@ export default function DashboardScreen() {
         showBell={false}
       />
 
-      {/* ── Household Pill Switcher (only when user has 2+ households) ── */}
+      {/*
+        ── Chat Panel ────────────────────────────────────────────────────────
+        Rendered here (outside TopBar) so it can be absolute-positioned
+        relative to .dashboard. The trigger button floats beside the avatar.
+      */}
+      <ChatPanel
+        profile={profile}
+        currentUser={currentUser}
+        household={household}
+        allHouseholds={allHouseholds}
+        show={showChat}
+        onToggle={() => setShowChat(v => !v)}
+        onClose={() => setShowChat(false)}
+        onUnreadChange={setChatUnread}
+      />
+
+      {/* ── Household Pill Switcher ── */}
       {allHouseholds.length >= 2 && (
         <div className="household-pill-row">
           {allHouseholds.map(hh => (
@@ -394,7 +438,7 @@ export default function DashboardScreen() {
         </div>
       )}
 
-      {/* Floating Household Code — shows the selected household's code */}
+      {/* Floating Household Code */}
       <div className="floating-code-wrap">
         {showHouseholdCode && (
           <div className="household-code-card">
@@ -409,7 +453,6 @@ export default function DashboardScreen() {
         <button className="floating-code-btn" onClick={() => setShowHouseholdCode(!showHouseholdCode)}>🏠 Your Code</button>
       </div>
 
-      {/* ── Shared BottomNav (replaces the inline duplicate) ── */}
       <BottomNav active="dashboard" />
     </div>
   );
