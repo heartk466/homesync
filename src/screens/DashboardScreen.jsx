@@ -326,7 +326,7 @@ export default function DashboardScreen() {
         Rendered here (outside TopBar) so it can be absolute-positioned
         relative to .dashboard. The trigger button floats beside the avatar.
       */}
-      <ChatPanel
+      <ChatDrawer
         profile={profile}
         currentUser={currentUser}
         household={household}
