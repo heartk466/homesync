@@ -472,10 +472,8 @@ export default function DashboardScreen() {
       <ChatDrawer
         profile={profile}
         currentUser={currentUser}
-        household={household}
         allHouseholds={allHouseholds}
-        show={showChat}
-        onToggle={() => setShowChat(v => !v)}
+        isOpen={showChat}
         onClose={() => setShowChat(false)}
         onUnreadChange={setChatUnread}
       />
