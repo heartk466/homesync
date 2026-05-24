@@ -280,52 +280,21 @@ export default function DashboardScreen() {
 
   return (
     <div className="dashboard">
-      {/*
-        TopBar is kept as-is.
-        The ChatPanel trigger button is injected INSIDE .topbar-actions via
-        the `chatSlot` prop — or you can add it directly inside TopBar.jsx.
-        
-        Simplest approach (no TopBar.jsx changes needed):
-        Override the topbar-actions area by passing a custom `actionsSlot` prop.
-        If you don't want to modify TopBar.jsx, wrap TopBar in a relative container
-        and absolutely position the ChatPanel trigger, OR add the chatSlot prop
-        to TopBar.jsx as shown in the comment below.
-
-        ── OPTION A (recommended, minimal TopBar change) ─────────────────────
-        In TopBar.jsx, add `chatSlot` prop and render it inside .topbar-actions:
-          <div className="topbar-actions">
-            {chatSlot}           ← ADD THIS LINE
-            {showBell && (...)}
-            <button ...avatar />
-          </div>
-        Then pass: <TopBar ... chatSlot={<ChatTrigger />} />
-
-        ── OPTION B (zero TopBar changes) ────────────────────────────────────
-        The ChatPanel below still renders its trigger button. Position it with
-        CSS — add `.chat-trigger-btn { position: absolute; top: 56px; right: 64px; }`
-        to ChatPanel.css, and wrap .dashboard in `position: relative`.
-        ──────────────────────────────────────────────────────────────────────
-
-        For this file we use OPTION B (no TopBar.jsx changes required).
-        ChatPanel renders its own trigger button.  The .dashboard div already
-        has position:relative in DashboardScreen.css — if not, add it.
-      */}
+      
       <TopBar
-        profile={profile}
-        setProfile={setProfile}
-        household={household}
-        currentUser={currentUser}
-        notifications={[]}
-        unreadCount={0}
-        title="Dashboard"
-        showBell={false}
-      />
+  profile={profile}
+  setProfile={setProfile}
+  household={household}
+  currentUser={currentUser}
+  notifications={[]}
+  unreadCount={0}
+  title="Dashboard"
+  showBell={false}
+  onChatOpen={() => setShowChat(true)}
+  chatUnreadCount={chatUnread}
+/>
 
-      {/*
-        ── Chat Panel ────────────────────────────────────────────────────────
-        Rendered here (outside TopBar) so it can be absolute-positioned
-        relative to .dashboard. The trigger button floats beside the avatar.
-      */}
+      
       <ChatDrawer
         profile={profile}
         currentUser={currentUser}
