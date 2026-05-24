@@ -38,6 +38,11 @@ export default function DashboardScreen() {
   const [showHouseholdCode, setShowHouseholdCode] = useState(false);
   const [copied, setCopied] = useState(false);
 
+  // ── Electricity Forecast state ─────────────────────────────────────────────
+  const [elecHistory, setElecHistory] = useState([]);
+  const [showForecastDetail, setShowForecastDetail] = useState(false);
+  // ──────────────────────────────────────────────────────────────────────────
+
   // ── Chat state ─────────────────────────────────────────────────────────────
   const [showChat, setShowChat] = useState(false);
   const [chatUnread, setChatUnread] = useState(0);
@@ -214,6 +219,45 @@ export default function DashboardScreen() {
       const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
       setMonthlyData(months.map(m => ({ month: m, amount: monthlyMap[m] || 0 })).filter(m => m.amount > 0).slice(-6));
 
+      // ── Electricity forecast: collect last 2 months of Power/Electricity bills ──
+      const elecMonthlyMap = {};
+      for (const expense of allExpenses) {
+        const splits = splitsByExpense[expense.id] || [];
+        const mySplit = splits.find(s => s.user_id === user.id);
+        const isElec = ['Power', 'Electricity', 'Electric', 'Meralco'].some(k =>
+          (expense.category || '').toLowerCase().includes(k.toLowerCase()) ||
+          (expense.title || '').toLowerCase().includes(k.toLowerCase())
+        );
+        if (isElec && mySplit) {
+          const d = new Date(expense.expense_date);
+          const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+          elecMonthlyMap[key] = (elecMonthlyMap[key] || 0) + Number(mySplit.share_amount);
+        }
+      }
+      // Build last-2-months history + forecast for next month
+      const nowDate = new Date();
+      const buildElecHistory = () => {
+        const result = [];
+        for (let i = 2; i >= 1; i--) {
+          const d = new Date(nowDate.getFullYear(), nowDate.getMonth() - i, 1);
+          const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+          const label = d.toLocaleDateString('en-US', { month: 'long' });
+          result.push({ key, label, amount: elecMonthlyMap[key] || 0, isForecast: false });
+        }
+        // Current month
+        const curKey = `${nowDate.getFullYear()}-${String(nowDate.getMonth() + 1).padStart(2, '0')}`;
+        result.push({ key: curKey, label: nowDate.toLocaleDateString('en-US', { month: 'long' }), amount: elecMonthlyMap[curKey] || 0, isForecast: false });
+        // Next month forecast (weighted: 60% last month + 40% two months ago, with +5% trend)
+        const last = result[result.length - 1].amount || result[result.length - 2].amount || 0;
+        const prev = result[result.length - 2].amount || last;
+        const forecast = Math.round((last * 0.6 + prev * 0.4) * 1.05);
+        const nextDate = new Date(nowDate.getFullYear(), nowDate.getMonth() + 1, 1);
+        result.push({ key: 'forecast', label: nextDate.toLocaleDateString('en-US', { month: 'long' }), amount: forecast, isForecast: true });
+        return result;
+      };
+      setElecHistory(buildElecHistory());
+      // ────────────────────────────────────────────────────────────────────────
+
       // Group spending
       const { data: memberGroupRows } = await supabase
         .from('group_members')
@@ -280,30 +324,62 @@ export default function DashboardScreen() {
 
   return (
     <div className="dashboard">
-      
-      <TopBar
-  profile={profile}
-  setProfile={setProfile}
-  household={household}
-  currentUser={currentUser}
-  notifications={[]}
-  unreadCount={0}
-  title="Dashboard"
-  showBell={false}
-  onChatOpen={() => setShowChat(true)}
-  chatUnreadCount={chatUnread}
-/>
+      {/*
+        TopBar is kept as-is.
+        The ChatPanel trigger button is injected INSIDE .topbar-actions via
+        the `chatSlot` prop — or you can add it directly inside TopBar.jsx.
+        
+        Simplest approach (no TopBar.jsx changes needed):
+        Override the topbar-actions area by passing a custom `actionsSlot` prop.
+        If you don't want to modify TopBar.jsx, wrap TopBar in a relative container
+        and absolutely position the ChatPanel trigger, OR add the chatSlot prop
+        to TopBar.jsx as shown in the comment below.
 
-      
+        ── OPTION A (recommended, minimal TopBar change) ─────────────────────
+        In TopBar.jsx, add `chatSlot` prop and render it inside .topbar-actions:
+          <div className="topbar-actions">
+            {chatSlot}           ← ADD THIS LINE
+            {showBell && (...)}
+            <button ...avatar />
+          </div>
+        Then pass: <TopBar ... chatSlot={<ChatTrigger />} />
+
+        ── OPTION B (zero TopBar changes) ────────────────────────────────────
+        The ChatPanel below still renders its trigger button. Position it with
+        CSS — add `.chat-trigger-btn { position: absolute; top: 56px; right: 64px; }`
+        to ChatPanel.css, and wrap .dashboard in `position: relative`.
+        ──────────────────────────────────────────────────────────────────────
+
+        For this file we use OPTION B (no TopBar.jsx changes required).
+        ChatPanel renders its own trigger button.  The .dashboard div already
+        has position:relative in DashboardScreen.css — if not, add it.
+      */}
+      <TopBar
+        profile={profile}
+        setProfile={setProfile}
+        household={household}
+        currentUser={currentUser}
+        notifications={[]}
+        unreadCount={0}
+        title="Dashboard"
+        showBell={false}
+      />
+
+      {/*
+        ── Chat Panel ────────────────────────────────────────────────────────
+        Rendered here (outside TopBar) so it can be absolute-positioned
+        relative to .dashboard. The trigger button floats beside the avatar.
+      */}
       <ChatDrawer
-  profile={profile}
-  currentUser={currentUser}
-  household={household}
-  allHouseholds={allHouseholds}
-  isOpen={showChat}
-  onClose={() => setShowChat(false)}
-  onUnreadChange={setChatUnread}
-/>
+        profile={profile}
+        currentUser={currentUser}
+        household={household}
+        allHouseholds={allHouseholds}
+        show={showChat}
+        onToggle={() => setShowChat(v => !v)}
+        onClose={() => setShowChat(false)}
+        onUnreadChange={setChatUnread}
+      />
 
       {/* ── Household Pill Switcher ── */}
       {allHouseholds.length >= 2 && (
@@ -354,6 +430,100 @@ export default function DashboardScreen() {
           </div>
           <div className="card-chart"><Zap size={32} color="#3B2AAB" /></div>
         </div>
+
+        {/* ── Electricity Payment Forecast Card ── */}
+        {elecHistory.length > 0 && (() => {
+          const forecast = elecHistory.find(e => e.isForecast);
+          const history = elecHistory.filter(e => !e.isForecast);
+          const maxAmt = Math.max(...elecHistory.map(e => e.amount), 1);
+          const needsSaving = forecast && forecast.amount > 0;
+          return (
+            <div className="dash-card elec-forecast-card">
+              <div style={{ width: '100%' }}>
+                <div className="elec-forecast-header">
+                  <span className="elec-forecast-icon">⚡</span>
+                  <div>
+                    <p className="card-label" style={{ margin: 0 }}>Electricity Forecast</p>
+                    <p className="card-sub" style={{ margin: 0 }}>Based on previous payments</p>
+                  </div>
+                  {needsSaving && (
+                    <button
+                      className="elec-toggle-btn"
+                      onClick={() => setShowForecastDetail(v => !v)}
+                    >
+                      {showForecastDetail ? '▲' : '▼'}
+                    </button>
+                  )}
+                </div>
+
+                {/* Bar Chart Row */}
+                <div className="elec-bar-row">
+                  {elecHistory.map((item) => (
+                    <div key={item.key} className="elec-bar-col">
+                      <p className="elec-bar-amount">
+                        {item.amount > 0 ? `₱${item.amount.toLocaleString()}` : '—'}
+                      </p>
+                      <div className="elec-bar-track">
+                        <div
+                          className={`elec-bar-fill ${item.isForecast ? 'forecast' : 'actual'}`}
+                          style={{ height: `${Math.round((item.amount / maxAmt) * 100)}%` }}
+                        />
+                      </div>
+                      <p className={`elec-bar-label ${item.isForecast ? 'forecast' : ''}`}>
+                        {item.label.slice(0, 3)}{item.isForecast ? ' *' : ''}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Forecast callout */}
+                {forecast && forecast.amount > 0 && (
+                  <div className="elec-forecast-pill">
+                    <span className="elec-pill-label">Est. {forecast.label}</span>
+                    <span className="elec-pill-amount">₱{forecast.amount.toLocaleString()}</span>
+                  </div>
+                )}
+
+                {/* Savings indicator */}
+                {needsSaving && (
+                  <div className="elec-save-banner">
+                    <span className="elec-save-icon">💡</span>
+                    <p className="elec-save-text">
+                      You must save for a possible upcoming payment — estimated <strong>₱{forecast.amount.toLocaleString()}</strong> for {forecast.label} based on previous payments.
+                    </p>
+                  </div>
+                )}
+
+                {/* Expanded detail */}
+                {showForecastDetail && (
+                  <div className="elec-detail-rows">
+                    {history.filter(h => h.amount > 0).map((h, i, arr) => {
+                      const prev = arr[i - 1];
+                      const diff = prev ? h.amount - prev.amount : null;
+                      return (
+                        <div key={h.key} className="elec-detail-row">
+                          <span className="elec-detail-month">{h.label}</span>
+                          <span className="elec-detail-amount">₱{h.amount.toLocaleString()}</span>
+                          {diff !== null && (
+                            <span className={`elec-detail-diff ${diff > 0 ? 'up' : 'down'}`}>
+                              {diff > 0 ? '▲' : '▼'} ₱{Math.abs(diff).toLocaleString()}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                    <div className="elec-detail-row forecast-row">
+                      <span className="elec-detail-month">{forecast?.label} <span className="elec-est-tag">est.</span></span>
+                      <span className="elec-detail-amount">₱{forecast?.amount.toLocaleString()}</span>
+                      <span className="elec-detail-diff up">projected</span>
+                    </div>
+                    <p className="elec-detail-note">* Forecast = weighted avg of recent bills + 5% trend adjustment</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
 
         <div className="dash-card group-spending-card" onClick={() => setShowGroupModal(true)}>
           <div className="card-left">

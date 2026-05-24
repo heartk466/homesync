@@ -735,3 +735,246 @@
   background: #F0EDFF;
   border-color: #AE96FF;
 }
+/* ── Electricity Forecast Card ─────────────────────────────────────────────── */
+.elec-forecast-card {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 14px;
+  background: linear-gradient(135deg, #F5F3FF 0%, #EDE9FF 100%);
+  cursor: default;
+}
+
+.elec-forecast-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.elec-forecast-icon {
+  font-size: 22px;
+  flex-shrink: 0;
+  background: #ECC94B22;
+  border-radius: 50%;
+  width: 38px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.elec-toggle-btn {
+  margin-left: auto;
+  background: #EDE9FF;
+  border: none;
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  font-size: 10px;
+  color: #3B2AAB;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* Bar chart */
+.elec-bar-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  height: 90px;
+  margin-bottom: 10px;
+}
+
+.elec-bar-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  height: 100%;
+}
+
+.elec-bar-amount {
+  font-size: 9px;
+  font-weight: 700;
+  color: #3B2AAB;
+  margin: 0;
+  text-align: center;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.elec-bar-track {
+  flex: 1;
+  width: 100%;
+  background: #E0D9FF;
+  border-radius: 6px 6px 0 0;
+  display: flex;
+  align-items: flex-end;
+  overflow: hidden;
+  min-height: 8px;
+}
+
+.elec-bar-fill {
+  width: 100%;
+  border-radius: 6px 6px 0 0;
+  transition: height 0.4s ease;
+}
+
+.elec-bar-fill.actual {
+  background: #3B2AAB;
+}
+
+.elec-bar-fill.forecast {
+  background: repeating-linear-gradient(
+    135deg,
+    #AE96FF,
+    #AE96FF 4px,
+    #D4C5FF 4px,
+    #D4C5FF 8px
+  );
+  border: 2px dashed #7C6DC1;
+  border-bottom: none;
+  box-sizing: border-box;
+}
+
+.elec-bar-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: #7C6DC1;
+  margin: 0;
+  text-align: center;
+}
+
+.elec-bar-label.forecast {
+  color: #3B2AAB;
+  font-weight: 800;
+}
+
+/* Forecast pill */
+.elec-forecast-pill {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #3B2AAB;
+  border-radius: 50px;
+  padding: 8px 16px;
+  margin-bottom: 10px;
+}
+
+.elec-pill-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #C4B5FD;
+}
+
+.elec-pill-amount {
+  font-size: 16px;
+  font-weight: 800;
+  color: white;
+}
+
+/* Save banner */
+.elec-save-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: #FFF8E1;
+  border: 1.5px solid #ECC94B;
+  border-radius: 14px;
+  padding: 12px 14px;
+}
+
+.elec-save-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.elec-save-text {
+  font-size: 11px;
+  color: #7B5E00;
+  line-height: 1.55;
+  margin: 0;
+}
+
+.elec-save-text strong {
+  color: #5A4200;
+  font-weight: 700;
+}
+
+/* Detail rows */
+.elec-detail-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1.5px dashed #D4C5FF;
+  padding-top: 12px;
+  margin-top: 4px;
+}
+
+.elec-detail-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: white;
+  border-radius: 10px;
+}
+
+.elec-detail-row.forecast-row {
+  background: #EDE9FF;
+}
+
+.elec-detail-month {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 600;
+  color: #2D1A7A;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.elec-est-tag {
+  font-size: 10px;
+  font-weight: 500;
+  color: #7C6DC1;
+  background: #EDE9FF;
+  padding: 1px 6px;
+  border-radius: 50px;
+}
+
+.elec-detail-amount {
+  font-size: 13px;
+  font-weight: 800;
+  color: #3B2AAB;
+}
+
+.elec-detail-diff {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 50px;
+}
+
+.elec-detail-diff.up {
+  background: #FFF3CD;
+  color: #856404;
+}
+
+.elec-detail-diff.down {
+  background: #D1FAE5;
+  color: #065F46;
+}
+
+.elec-detail-note {
+  font-size: 9px;
+  color: #9E8FCC;
+  text-align: center;
+  margin: 4px 0 0;
+  line-height: 1.4;
+}
