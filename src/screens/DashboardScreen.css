@@ -745,7 +745,6 @@
   background: linear-gradient(135deg, #F5F3FF 0%, #EDE9FF 100%);
 }
 
-/* ── Header ── */
 .fc-header {
   display: flex;
   align-items: center;
@@ -757,6 +756,7 @@
   width: 38px;
   height: 38px;
   border-radius: 50%;
+  background: rgba(59, 42, 171, 0.1);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -780,7 +780,7 @@
   flex-shrink: 0;
 }
 
-/* ── Bar chart ── */
+/* Bar chart */
 .fc-bar-row {
   display: flex;
   align-items: flex-end;
@@ -854,7 +854,7 @@
   font-weight: 800;
 }
 
-/* ── Forecast pill ── */
+/* Forecast pill */
 .fc-pill {
   display: flex;
   align-items: center;
@@ -876,7 +876,7 @@
   color: #ffffff;
 }
 
-/* ── Savings banner ── */
+/* Savings banner */
 .fc-save-banner {
   display: flex;
   align-items: flex-start;
@@ -905,7 +905,7 @@
   font-weight: 700;
 }
 
-/* ── Expandable detail ── */
+/* Detail rows */
 .fc-detail-rows {
   display: flex;
   flex-direction: column;
