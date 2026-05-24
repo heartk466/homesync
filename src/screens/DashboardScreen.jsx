@@ -296,15 +296,13 @@ export default function DashboardScreen() {
 
       
       <ChatDrawer
-        profile={profile}
-        currentUser={currentUser}
-        household={household}
-        allHouseholds={allHouseholds}
-        show={showChat}
-        onToggle={() => setShowChat(v => !v)}
-        onClose={() => setShowChat(false)}
-        onUnreadChange={setChatUnread}
-      />
+  profile={profile}
+  currentUser={currentUser}
+  household={household}
+  allHouseholds={allHouseholds}
+  isOpen={showChat}
+  onClose={() => setShowChat(false)}
+/>
 
       {/* ── Household Pill Switcher ── */}
       {allHouseholds.length >= 2 && (
