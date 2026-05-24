@@ -302,6 +302,7 @@ export default function DashboardScreen() {
   allHouseholds={allHouseholds}
   isOpen={showChat}
   onClose={() => setShowChat(false)}
+  onUnreadChange={setChatUnread}
 />
 
       {/* ── Household Pill Switcher ── */}

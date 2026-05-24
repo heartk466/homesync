@@ -3,7 +3,7 @@ import React, {
 } from 'react';
 import { supabase } from '../supabaseClient';
 import {
-  X, Send, Search, Image, Paperclip, ChevronLeft, MessageCircle,
+  X, Send, Search, Image, Paperclip, ChevronLeft, MessageCircle, AtSign,
 } from 'lucide-react';
 import './ChatDrawer.css';
 
@@ -20,6 +20,23 @@ const fmt = (iso) => {
 
 const initials = (name = '') =>
   name.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase() || '?';
+
+/* ─── Render message text with @mention highlighting ─────────────────────── */
+function MentionText({ text }) {
+  // Split by @mention tokens
+  const parts = text.split(/(@\w[\w\s]*)/g);
+  return (
+    <>
+      {parts.map((part, i) =>
+        part.startsWith('@') ? (
+          <span key={i} className="chat-mention">{part}</span>
+        ) : (
+          <span key={i}>{part}</span>
+        )
+      )}
+    </>
+  );
+}
 
 /* ─── Avatar chip ────────────────────────────────────────────────────────── */
 function Avatar({ profile, size = 36 }) {
@@ -42,46 +59,67 @@ function Avatar({ profile, size = 36 }) {
 
 /* ═══════════════════════════════════════════════════════════════════════════
    ChatDrawer — main export
+   Props:
+     isOpen          bool
+     onClose         fn
+     currentUser     { id }
+     profile         profile object
+     allHouseholds   array
+     onUnreadChange  fn(totalUnread) — called whenever unread count changes
    ═══════════════════════════════════════════════════════════════════════════ */
 export default function ChatDrawer({
   isOpen,
   onClose,
   currentUser,
   profile,
-  allHouseholds = [],   // from DashboardScreen
+  allHouseholds = [],
+  onUnreadChange,
 }) {
-  /* ── Tab / search ────────────────────────────────────────────────────────── */
-  const [tab, setTab]         = useState('household'); // 'household' | 'group'
-  const [search, setSearch]   = useState('');
+  /* ── Tab / search ──────────────────────────────────────────────────────── */
+  const [tab, setTab]       = useState('household');
+  const [search, setSearch] = useState('');
 
-  /* ── Conversation list ───────────────────────────────────────────────────── */
-  const [rooms, setRooms]     = useState([]); // { id, name, type, emoji, lastMsg, unread }
+  /* ── Conversation list ─────────────────────────────────────────────────── */
+  const [rooms, setRooms]           = useState([]);
   const [loadingRooms, setLoadingRooms] = useState(false);
 
-  /* ── Active conversation ─────────────────────────────────────────────────── */
-  const [activeRoom, setActiveRoom] = useState(null); // full room object
+  /* ── Active conversation ───────────────────────────────────────────────── */
+  const [activeRoom, setActiveRoom] = useState(null);
   const [messages, setMessages]     = useState([]);
   const [loadingMsgs, setLoadingMsgs] = useState(false);
 
-  /* ── Send ────────────────────────────────────────────────────────────────── */
+  /* ── Send ──────────────────────────────────────────────────────────────── */
   const [text, setText]       = useState('');
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
 
-  /* ── Profiles cache ──────────────────────────────────────────────────────── */
-  const profilesCache = useRef({});
+  /* ── Mention state ─────────────────────────────────────────────────────── */
+  const [mentionQuery, setMentionQuery]   = useState('');   // text after @
+  const [mentionOpen, setMentionOpen]     = useState(false);
+  const [roomMembers, setRoomMembers]     = useState([]);   // { id, full_name, avatar_url }
 
+  /* ── Profiles cache ────────────────────────────────────────────────────── */
+  const profilesCache = useRef({});
   const fileInputRef  = useRef(null);
   const msgEndRef     = useRef(null);
   const realtimeRef   = useRef(null);
+  const textareaRef   = useRef(null);
 
-  /* ── Scroll to bottom ───────────────────────────────────────────────────── */
+  /* ── Scroll to bottom ──────────────────────────────────────────────────── */
   const scrollBottom = () =>
     msgEndRef.current?.scrollIntoView({ behavior: 'smooth' });
 
   useEffect(() => { if (messages.length) scrollBottom(); }, [messages]);
 
-  /* ── Fetch profile by id (with cache) ───────────────────────────────────── */
+  /* ── Notify parent of total unread ────────────────────────────────────── */
+  useEffect(() => {
+    if (onUnreadChange) {
+      const total = rooms.reduce((s, r) => s + (r.unread || 0), 0);
+      onUnreadChange(total);
+    }
+  }, [rooms, onUnreadChange]);
+
+  /* ── Fetch profile by id (with cache) ─────────────────────────────────── */
   const getProfile = useCallback(async (uid) => {
     if (profilesCache.current[uid]) return profilesCache.current[uid];
     const { data } = await supabase
@@ -90,34 +128,30 @@ export default function ChatDrawer({
     return data;
   }, []);
 
-  /* ── Ensure room exists (upsert) ─────────────────────────────────────────── */
+  /* ── Ensure room exists (upsert) ───────────────────────────────────────── */
   const ensureRoom = useCallback(async (type, refId) => {
-    // Try to find existing
     const { data: existing } = await supabase
       .from('chat_rooms').select('id')
       .eq('type', type).eq('ref_id', refId).maybeSingle();
     if (existing) return existing.id;
-
     const { data: created } = await supabase
       .from('chat_rooms').insert({ type, ref_id: refId }).select('id').single();
     return created?.id;
   }, []);
 
-  /* ── Load rooms for current tab ─────────────────────────────────────────── */
+  /* ── Load rooms and sort by most recent message ────────────────────────── */
   const loadRooms = useCallback(async () => {
     if (!currentUser?.id) return;
     setLoadingRooms(true);
-
     try {
+      let list = [];
+
       if (tab === 'household') {
-        // Build household rooms
-        const list = await Promise.all(allHouseholds.map(async (hh) => {
+        list = await Promise.all(allHouseholds.map(async (hh) => {
           const roomId = await ensureRoom('household', hh.id);
-          // Last message
           const { data: msgs } = await supabase
-            .from('chat_messages').select('content, file_type, created_at')
+            .from('chat_messages').select('content, file_type, created_at, sender_id')
             .eq('room_id', roomId).order('created_at', { ascending: false }).limit(1);
-          // Unread count
           const { data: readRow } = await supabase
             .from('chat_reads').select('last_read')
             .eq('user_id', currentUser.id).eq('room_id', roomId).maybeSingle();
@@ -128,15 +162,20 @@ export default function ChatDrawer({
               .eq('room_id', roomId).gt('created_at', readRow.last_read)
               .neq('sender_id', currentUser.id);
             unread = count || 0;
+          } else {
+            // No read record — count all messages from others as unread
+            const { count } = await supabase
+              .from('chat_messages').select('id', { count: 'exact', head: true })
+              .eq('room_id', roomId).neq('sender_id', currentUser.id);
+            unread = count || 0;
           }
           return {
             id: roomId, name: hh.name, emoji: '🏠', type: 'household',
             lastMsg: msgs?.[0] || null, unread,
+            lastAt: msgs?.[0]?.created_at || null,
           };
         }));
-        setRooms(list);
       } else {
-        // Groups: find groups user belongs to
         const { data: memberRows } = await supabase
           .from('group_members').select('group_id').eq('user_id', currentUser.id);
         const groupIds = (memberRows || []).map(r => r.group_id);
@@ -145,10 +184,10 @@ export default function ChatDrawer({
         const { data: groups } = await supabase
           .from('groups').select('id, name').in('id', groupIds);
 
-        const list = await Promise.all((groups || []).map(async (g) => {
+        list = await Promise.all((groups || []).map(async (g) => {
           const roomId = await ensureRoom('group', g.id);
           const { data: msgs } = await supabase
-            .from('chat_messages').select('content, file_type, created_at')
+            .from('chat_messages').select('content, file_type, created_at, sender_id')
             .eq('room_id', roomId).order('created_at', { ascending: false }).limit(1);
           const { data: readRow } = await supabase
             .from('chat_reads').select('last_read')
@@ -160,27 +199,74 @@ export default function ChatDrawer({
               .eq('room_id', roomId).gt('created_at', readRow.last_read)
               .neq('sender_id', currentUser.id);
             unread = count || 0;
+          } else {
+            const { count } = await supabase
+              .from('chat_messages').select('id', { count: 'exact', head: true })
+              .eq('room_id', roomId).neq('sender_id', currentUser.id);
+            unread = count || 0;
           }
           return {
             id: roomId, name: g.name, emoji: '👥', type: 'group',
             lastMsg: msgs?.[0] || null, unread,
+            lastAt: msgs?.[0]?.created_at || null,
           };
         }));
-        setRooms(list);
       }
+
+      // ── Sort: rooms with recent messages float to the top (Messenger style)
+      list.sort((a, b) => {
+        if (!a.lastAt && !b.lastAt) return 0;
+        if (!a.lastAt) return 1;
+        if (!b.lastAt) return -1;
+        return new Date(b.lastAt) - new Date(a.lastAt);
+      });
+
+      setRooms(list);
     } catch (e) { console.error(e); }
     setLoadingRooms(false);
   }, [tab, allHouseholds, currentUser?.id, ensureRoom]);
 
   useEffect(() => { if (isOpen) loadRooms(); }, [isOpen, tab, loadRooms]);
 
-  /* ── Open conversation ──────────────────────────────────────────────────── */
+  /* ── Load members of the active room (for @mention) ───────────────────── */
+  const loadRoomMembers = useCallback(async (room) => {
+    if (!room) return;
+    try {
+      let userIds = [];
+      if (room.type === 'household') {
+        // Find the household ref_id from the room
+        const { data: roomRow } = await supabase
+          .from('chat_rooms').select('ref_id').eq('id', room.id).single();
+        if (roomRow) {
+          const { data: members } = await supabase
+            .from('household_members').select('user_id')
+            .eq('household_id', roomRow.ref_id).eq('status', 'active');
+          userIds = (members || []).map(m => m.user_id);
+        }
+      } else {
+        const { data: roomRow } = await supabase
+          .from('chat_rooms').select('ref_id').eq('id', room.id).single();
+        if (roomRow) {
+          const { data: members } = await supabase
+            .from('group_members').select('user_id').eq('group_id', roomRow.ref_id);
+          userIds = (members || []).map(m => m.user_id);
+        }
+      }
+      // Fetch profiles, exclude self
+      const others = userIds.filter(id => id !== currentUser.id);
+      const profiles = await Promise.all(others.map(id => getProfile(id)));
+      setRoomMembers(profiles.filter(Boolean));
+    } catch (e) { console.error(e); }
+  }, [currentUser?.id, getProfile]);
+
+  /* ── Open conversation ─────────────────────────────────────────────────── */
   const openRoom = async (room) => {
     setActiveRoom(room);
     setMessages([]);
+    setText('');
+    setMentionOpen(false);
     setLoadingMsgs(true);
 
-    // Load last 100 messages
     const { data } = await supabase
       .from('chat_messages')
       .select('*')
@@ -188,7 +274,6 @@ export default function ChatDrawer({
       .order('created_at', { ascending: true })
       .limit(100);
 
-    // Hydrate sender profiles
     const msgs = await Promise.all((data || []).map(async (m) => ({
       ...m,
       senderProfile: await getProfile(m.sender_id),
@@ -201,6 +286,9 @@ export default function ChatDrawer({
       { user_id: currentUser.id, room_id: room.id, last_read: new Date().toISOString() },
       { onConflict: 'user_id,room_id' }
     );
+
+    // Load members for @mention
+    await loadRoomMembers(room);
 
     // Realtime subscription
     if (realtimeRef.current) supabase.removeChannel(realtimeRef.current);
@@ -215,7 +303,6 @@ export default function ChatDrawer({
           senderProfile: await getProfile(payload.new.sender_id),
         };
         setMessages(prev => [...prev, newMsg]);
-        // Mark read immediately if drawer is open
         await supabase.from('chat_reads').upsert(
           { user_id: currentUser.id, room_id: room.id, last_read: new Date().toISOString() },
           { onConflict: 'user_id,room_id' }
@@ -227,16 +314,64 @@ export default function ChatDrawer({
   const closeRoom = () => {
     setActiveRoom(null);
     setMessages([]);
+    setText('');
+    setMentionOpen(false);
+    setRoomMembers([]);
     if (realtimeRef.current) { supabase.removeChannel(realtimeRef.current); realtimeRef.current = null; }
-    loadRooms(); // refresh unread counts
+    loadRooms();
   };
 
-  /* ── Send text message ──────────────────────────────────────────────────── */
+  /* ── @mention: detect "@" in textarea ─────────────────────────────────── */
+  const handleTextChange = (e) => {
+    const val = e.target.value;
+    setText(val);
+
+    // Find the last "@" before cursor
+    const cursor = e.target.selectionStart;
+    const before = val.slice(0, cursor);
+    const atIdx  = before.lastIndexOf('@');
+
+    if (atIdx !== -1 && (atIdx === 0 || /\s/.test(before[atIdx - 1]))) {
+      const query = before.slice(atIdx + 1);
+      // Only open if no space in the query (still typing the name)
+      if (!query.includes(' ') || query.length < 20) {
+        setMentionQuery(query);
+        setMentionOpen(true);
+        return;
+      }
+    }
+    setMentionOpen(false);
+    setMentionQuery('');
+  };
+
+  const insertMention = (member) => {
+    const cursor = textareaRef.current?.selectionStart ?? text.length;
+    const before = text.slice(0, cursor);
+    const after  = text.slice(cursor);
+    const atIdx  = before.lastIndexOf('@');
+    const firstName = member.full_name.split(' ')[0];
+    const newBefore = before.slice(0, atIdx) + `@${firstName} `;
+    setText(newBefore + after);
+    setMentionOpen(false);
+    setMentionQuery('');
+    setTimeout(() => {
+      textareaRef.current?.focus();
+      const pos = newBefore.length;
+      textareaRef.current?.setSelectionRange(pos, pos);
+    }, 0);
+  };
+
+  const filteredMentions = roomMembers.filter(m =>
+    m.full_name.toLowerCase().includes(mentionQuery.toLowerCase())
+  );
+
+  /* ── Send text message ─────────────────────────────────────────────────── */
   const handleSend = async () => {
     const trimmed = text.trim();
     if (!trimmed || sending || !activeRoom) return;
     setSending(true);
     setText('');
+    setMentionOpen(false);
     await supabase.from('chat_messages').insert({
       room_id: activeRoom.id,
       sender_id: currentUser.id,
@@ -246,30 +381,31 @@ export default function ChatDrawer({
   };
 
   const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
+    if (mentionOpen && (e.key === 'Escape')) {
+      setMentionOpen(false);
+      return;
+    }
+    if (e.key === 'Enter' && !e.shiftKey && !mentionOpen) {
+      e.preventDefault();
+      handleSend();
+    }
   };
 
-  /* ── File / image upload ────────────────────────────────────────────────── */
+  /* ── File / image upload ───────────────────────────────────────────────── */
   const handleFileChange = async (e) => {
     const file = e.target.files[0];
     if (!file || !activeRoom) return;
     e.target.value = '';
-
-    const MAX = 10 * 1024 * 1024; // 10 MB
+    const MAX = 10 * 1024 * 1024;
     if (file.size > MAX) { alert('File must be under 10 MB.'); return; }
-
     setUploading(true);
     const ext  = file.name.split('.').pop();
     const path = `${activeRoom.id}/${currentUser.id}-${Date.now()}.${ext}`;
-
     const { error: upErr } = await supabase.storage
       .from('chat-files').upload(path, file, { upsert: false });
-
     if (upErr) { alert('Upload failed. Try again.'); setUploading(false); return; }
-
     const { data: urlData } = supabase.storage.from('chat-files').getPublicUrl(path);
     const isImage = file.type.startsWith('image/');
-
     await supabase.from('chat_messages').insert({
       room_id:   activeRoom.id,
       sender_id: currentUser.id,
@@ -281,13 +417,10 @@ export default function ChatDrawer({
     setUploading(false);
   };
 
-  /* ── Filtered room list ─────────────────────────────────────────────────── */
+  /* ── Filtered room list ────────────────────────────────────────────────── */
   const filteredRooms = rooms.filter(r =>
     r.name.toLowerCase().includes(search.toLowerCase())
   );
-
-  /* ── Total unread across all rooms (for notification badge) ─────────────── */
-  const totalUnread = rooms.reduce((s, r) => s + r.unread, 0);
 
   /* ─────────────────────────────────────────────────────────────────────────
      RENDER
@@ -344,7 +477,7 @@ export default function ChatDrawer({
               />
             </div>
 
-            {/* Room list */}
+            {/* Room list — sorted most recent first */}
             <div className="chat-room-list">
               {loadingRooms && <p className="chat-empty">Loading…</p>}
               {!loadingRooms && filteredRooms.length === 0 && (
@@ -353,11 +486,17 @@ export default function ChatDrawer({
                 </p>
               )}
               {filteredRooms.map(room => (
-                <button key={room.id} className="chat-room-row" onClick={() => openRoom(room)}>
+                <button
+                  key={room.id}
+                  className={`chat-room-row ${room.unread > 0 ? 'has-unread' : ''}`}
+                  onClick={() => openRoom(room)}
+                >
                   <div className="chat-room-avatar">{room.emoji}</div>
                   <div className="chat-room-info">
-                    <span className="chat-room-name">{room.name}</span>
-                    <span className="chat-room-last">
+                    <span className={`chat-room-name ${room.unread > 0 ? 'unread-name' : ''}`}>
+                      {room.name}
+                    </span>
+                    <span className={`chat-room-last ${room.unread > 0 ? 'unread-last' : ''}`}>
                       {room.lastMsg
                         ? room.lastMsg.file_type === 'image'
                           ? '📷 Photo'
@@ -369,10 +508,12 @@ export default function ChatDrawer({
                   </div>
                   <div className="chat-room-meta">
                     {room.lastMsg && (
-                      <span className="chat-room-time">{fmt(room.lastMsg.created_at)}</span>
+                      <span className={`chat-room-time ${room.unread > 0 ? 'unread-time' : ''}`}>
+                        {fmt(room.lastMsg.created_at)}
+                      </span>
                     )}
                     {room.unread > 0 && (
-                      <span className="chat-unread-badge">{room.unread}</span>
+                      <span className="chat-unread-badge">{room.unread > 99 ? '99+' : room.unread}</span>
                     )}
                   </div>
                 </button>
@@ -394,7 +535,6 @@ export default function ChatDrawer({
                 const showAvatar = !isMine && (i === 0 || messages[i - 1].sender_id !== msg.sender_id);
                 return (
                   <div key={msg.id} className={`chat-msg-row ${isMine ? 'mine' : 'theirs'}`}>
-                    {/* Avatar for other users */}
                     {!isMine && (
                       <div className="chat-msg-avatar-slot">
                         {showAvatar && <Avatar profile={msg.senderProfile} size={28} />}
@@ -407,11 +547,7 @@ export default function ChatDrawer({
                       <div className={`chat-bubble ${isMine ? 'bubble-mine' : 'bubble-theirs'}`}>
                         {msg.file_type === 'image' && msg.file_url && (
                           <a href={msg.file_url} target="_blank" rel="noreferrer">
-                            <img
-                              src={msg.file_url}
-                              alt="shared"
-                              className="chat-img-preview"
-                            />
+                            <img src={msg.file_url} alt="shared" className="chat-img-preview" />
                           </a>
                         )}
                         {msg.file_type === 'file' && msg.file_url && (
@@ -419,7 +555,11 @@ export default function ChatDrawer({
                             📎 {msg.file_name || 'Download file'}
                           </a>
                         )}
-                        {msg.content && <span className="chat-bubble-text">{msg.content}</span>}
+                        {msg.content && (
+                          <span className="chat-bubble-text">
+                            <MentionText text={msg.content} />
+                          </span>
+                        )}
                         <span className="chat-bubble-time">{fmt(msg.created_at)}</span>
                       </div>
                     </div>
@@ -428,6 +568,23 @@ export default function ChatDrawer({
               })}
               <div ref={msgEndRef} />
             </div>
+
+            {/* @mention popup */}
+            {mentionOpen && filteredMentions.length > 0 && (
+              <div className="chat-mention-popup">
+                <p className="chat-mention-label">Mention a member</p>
+                {filteredMentions.map(m => (
+                  <button
+                    key={m.id}
+                    className="chat-mention-item"
+                    onMouseDown={(e) => { e.preventDefault(); insertMention(m); }}
+                  >
+                    <Avatar profile={m} size={28} />
+                    <span className="chat-mention-name">{m.full_name}</span>
+                  </button>
+                ))}
+              </div>
+            )}
 
             {/* Input bar */}
             <div className="chat-input-bar">
@@ -442,26 +599,34 @@ export default function ChatDrawer({
                 className="chat-attach-btn"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={uploading}
-                title="Attach file or image"
+                title="Attach file"
               >
                 {uploading ? '⏳' : <Paperclip size={18} />}
               </button>
               <button
                 className="chat-attach-btn"
-                onClick={() => { if (fileInputRef.current) { fileInputRef.current.accept = 'image/*'; fileInputRef.current.click(); } }}
+                onClick={() => {
+                  if (fileInputRef.current) {
+                    fileInputRef.current.accept = 'image/*';
+                    fileInputRef.current.click();
+                  }
+                }}
                 disabled={uploading}
                 title="Share image"
               >
                 <Image size={18} />
               </button>
-              <textarea
-                className="chat-text-input"
-                placeholder="Type a message…"
-                value={text}
-                onChange={e => setText(e.target.value)}
-                onKeyDown={handleKeyDown}
-                rows={1}
-              />
+              <div className="chat-input-wrap">
+                <textarea
+                  ref={textareaRef}
+                  className="chat-text-input"
+                  placeholder="Type a message… use @ to mention"
+                  value={text}
+                  onChange={handleTextChange}
+                  onKeyDown={handleKeyDown}
+                  rows={1}
+                />
+              </div>
               <button
                 className={`chat-send-btn ${text.trim() ? 'active' : ''}`}
                 onClick={handleSend}
@@ -477,11 +642,7 @@ export default function ChatDrawer({
   );
 }
 
-/* ─── ChatTriggerButton ──────────────────────────────────────────────────────
- * Place this beside the avatar in TopBar's actions div.
- * Usage:
- *   <ChatTriggerButton unreadCount={totalChatUnread} onClick={() => setShowChat(true)} />
- * ─────────────────────────────────────────────────────────────────────────── */
+/* ─── ChatTriggerButton ──────────────────────────────────────────────────── */
 export function ChatTriggerButton({ unreadCount = 0, onClick }) {
   return (
     <button className="topbar-chat-btn" onClick={onClick} title="Messages">
