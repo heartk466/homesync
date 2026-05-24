@@ -14,105 +14,6 @@ import ChatDrawer from '../components/ChatDrawer';
 import { fetchAllHouseholdExpenses, UTILITY_CATEGORIES } from '../utils/expenseUtils';
 import { useAppContext } from '../AppContext';
 
-// ── Reusable Forecast Card component ─────────────────────────────────────────
-function ForecastCard({ icon, title, accentColor, barColor, history, showDetail, onToggleDetail, currencySymbol }) {
-  if (!history || history.length === 0) return null;
-  const forecast = history.find(e => e.isForecast);
-  const past = history.filter(e => !e.isForecast);
-  const maxAmt = Math.max(...history.map(e => e.amount), 1);
-  if (!forecast || forecast.amount === 0) return null;
-
-  return (
-    <div className="dash-card forecast-card" style={{ '--fc-accent': accentColor }}>
-      <div style={{ width: '100%' }}>
-
-        {/* Header */}
-        <div className="fc-header">
-          <div className="fc-icon-wrap" style={{ background: `${accentColor}22` }}>
-            <span>{icon}</span>
-          </div>
-          <div>
-            <p className="card-label" style={{ margin: 0 }}>{title} Forecast</p>
-            <p className="card-sub" style={{ margin: 0 }}>Based on previous payments</p>
-          </div>
-          <button className="fc-toggle-btn" onClick={() => onToggleDetail(!showDetail)}>
-            {showDetail ? '▲' : '▼'}
-          </button>
-        </div>
-
-        {/* Bar chart */}
-        <div className="fc-bar-row">
-          {history.map((item) => (
-            <div key={item.key} className="fc-bar-col">
-              <p className="fc-bar-amount" style={{ color: item.isForecast ? '#7C6DC1' : '#3B2AAB' }}>
-                {item.amount > 0 ? `₱${item.amount.toLocaleString()}` : '—'}
-              </p>
-              <div className="fc-bar-track">
-                <div
-                  className={`fc-bar-fill ${item.isForecast ? 'fc-forecast' : 'fc-actual'}`}
-                  style={{
-                    height: `${Math.max(Math.round((item.amount / maxAmt) * 100), item.amount > 0 ? 8 : 0)}%`,
-                    '--bar-color': barColor,
-                  }}
-                />
-              </div>
-              <p className={`fc-bar-label ${item.isForecast ? 'fc-label-forecast' : ''}`}>
-                {item.label.slice(0, 3)}{item.isForecast ? ' *' : ''}
-              </p>
-            </div>
-          ))}
-        </div>
-
-        {/* Forecast pill */}
-        <div className="fc-pill" style={{ background: barColor }}>
-          <span className="fc-pill-label">Est. {forecast.label} payment</span>
-          <span className="fc-pill-amt">{currencySymbol} {forecast.amount.toLocaleString()}</span>
-        </div>
-
-        {/* Savings banner */}
-        <div className="fc-save-banner">
-          <span className="fc-save-icon">💡</span>
-          <p className="fc-save-text">
-            You must save for a possible upcoming payment — estimated{' '}
-            <strong>{currencySymbol}{forecast.amount.toLocaleString()}</strong> for {forecast.label} based on previous payments.
-          </p>
-        </div>
-
-        {/* Expandable detail rows */}
-        {showDetail && (
-          <div className="fc-detail-rows">
-            {past.filter(h => h.amount > 0).map((h, i, arr) => {
-              const prev = arr[i - 1];
-              const diff = prev ? h.amount - prev.amount : null;
-              return (
-                <div key={h.key} className="fc-detail-row">
-                  <span className="fc-d-month">{h.label}</span>
-                  <span className="fc-d-amt">{currencySymbol}{h.amount.toLocaleString()}</span>
-                  {diff !== null && (
-                    <span className={`fc-d-diff ${diff > 0 ? 'diff-up' : 'diff-down'}`}>
-                      {diff > 0 ? '▲' : '▼'} {currencySymbol}{Math.abs(diff).toLocaleString()}
-                    </span>
-                  )}
-                </div>
-              );
-            })}
-            <div className="fc-detail-row fc-detail-forecast">
-              <span className="fc-d-month">
-                {forecast.label} <span className="fc-est-tag">est.</span>
-              </span>
-              <span className="fc-d-amt">{currencySymbol}{forecast.amount.toLocaleString()}</span>
-              <span className="fc-d-diff diff-up">projected</span>
-            </div>
-            <p className="fc-detail-note">* Weighted avg of recent bills + 5% trend adjustment</p>
-          </div>
-        )}
-
-      </div>
-    </div>
-  );
-}
-// ─────────────────────────────────────────────────────────────────────────────
-
 export default function DashboardScreen() {
   const navigate = useNavigate();
   const { currencySymbol } = useAppContext();
@@ -140,13 +41,6 @@ export default function DashboardScreen() {
   // ── Chat state ─────────────────────────────────────────────────────────────
   const [showChat, setShowChat] = useState(false);
   const [chatUnread, setChatUnread] = useState(0);
-  // ──────────────────────────────────────────────────────────────────────────
-
-  // ── Utility Forecast state ─────────────────────────────────────────────────
-  const [elecHistory, setElecHistory] = useState([]);
-  const [waterHistory, setWaterHistory] = useState([]);
-  const [showElecDetail, setShowElecDetail] = useState(false);
-  const [showWaterDetail, setShowWaterDetail] = useState(false);
   // ──────────────────────────────────────────────────────────────────────────
 
   const getGreeting = () => {
@@ -320,45 +214,6 @@ export default function DashboardScreen() {
       const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
       setMonthlyData(months.map(m => ({ month: m, amount: monthlyMap[m] || 0 })).filter(m => m.amount > 0).slice(-6));
 
-      // ── Utility Forecast helper ─────────────────────────────────────────────
-      // Builds a 3-slot history (2 past months + current) + 1 forecast slot.
-      // Weighted forecast: 60% last month + 40% two months ago, +5% trend.
-      const buildForecast = (keywords) => {
-        const monthlyBillMap = {};
-        for (const expense of allExpenses) {
-          const splits = splitsByExpense[expense.id] || [];
-          const mySplit = splits.find(s => s.user_id === user.id);
-          const matches = keywords.some(k =>
-            (expense.category || '').toLowerCase().includes(k.toLowerCase()) ||
-            (expense.title || '').toLowerCase().includes(k.toLowerCase())
-          );
-          if (matches && mySplit) {
-            const d = new Date(expense.expense_date);
-            const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-            monthlyBillMap[key] = (monthlyBillMap[key] || 0) + Number(mySplit.share_amount);
-          }
-        }
-        const nowDate = new Date();
-        const result = [];
-        for (let i = 2; i >= 1; i--) {
-          const d = new Date(nowDate.getFullYear(), nowDate.getMonth() - i, 1);
-          const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-          result.push({ key, label: d.toLocaleDateString('en-US', { month: 'long' }), amount: monthlyBillMap[key] || 0, isForecast: false });
-        }
-        const curKey = `${nowDate.getFullYear()}-${String(nowDate.getMonth() + 1).padStart(2, '0')}`;
-        result.push({ key: curKey, label: nowDate.toLocaleDateString('en-US', { month: 'long' }), amount: monthlyBillMap[curKey] || 0, isForecast: false });
-        const last = result[result.length - 1].amount || result[result.length - 2].amount || 0;
-        const prev = result[result.length - 2].amount || last;
-        const forecast = Math.round((last * 0.6 + prev * 0.4) * 1.05);
-        const nextDate = new Date(nowDate.getFullYear(), nowDate.getMonth() + 1, 1);
-        result.push({ key: 'forecast', label: nextDate.toLocaleDateString('en-US', { month: 'long' }), amount: forecast, isForecast: true });
-        return result;
-      };
-
-      setElecHistory(buildForecast(['power', 'electricity', 'electric', 'meralco']));
-      setWaterHistory(buildForecast(['water', 'maynilad', 'manila water', 'mwd']));
-      // ───────────────────────────────────────────────────────────────────────
-
       // Group spending
       const { data: memberGroupRows } = await supabase
         .from('group_members')
@@ -464,6 +319,8 @@ export default function DashboardScreen() {
         unreadCount={0}
         title="Dashboard"
         showBell={false}
+        onChatOpen={() => setShowChat(v => !v)}
+        chatUnreadCount={chatUnread}
       />
 
       {/*
@@ -531,30 +388,6 @@ export default function DashboardScreen() {
           </div>
           <div className="card-chart"><Zap size={32} color="#3B2AAB" /></div>
         </div>
-
-        {/* ── Electricity Payment Forecast ── */}
-        <ForecastCard
-          icon="⚡"
-          title="Electricity"
-          accentColor="#ECC94B"
-          barColor="#3B2AAB"
-          history={elecHistory}
-          showDetail={showElecDetail}
-          onToggleDetail={setShowElecDetail}
-          currencySymbol={currencySymbol}
-        />
-
-        {/* ── Water Payment Forecast ── */}
-        <ForecastCard
-          icon="💧"
-          title="Water"
-          accentColor="#4299E1"
-          barColor="#2B6CB0"
-          history={waterHistory}
-          showDetail={showWaterDetail}
-          onToggleDetail={setShowWaterDetail}
-          currencySymbol={currencySymbol}
-        />
 
         <div className="dash-card group-spending-card" onClick={() => setShowGroupModal(true)}>
           <div className="card-left">
