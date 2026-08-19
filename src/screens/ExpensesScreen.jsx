@@ -8,6 +8,7 @@ import {
 import './ExpensesScreen.css';
 import TopBar from '../components/TopBar';
 import BottomNav from '../components/BottomNav';
+import PayOnlineModal from '../components/PayOnlineModal';
 import {
   fetchAllHouseholdExpenses,
   checkDuplicate,
@@ -111,6 +112,7 @@ export default function ExpensesScreen() {
 
   // Payment proof form
   const [proofForm, setProofForm] = useState({ note: '', screenshot: null, screenshotPreview: null });
+  const [showPayOnlineModal, setShowPayOnlineModal] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
   const [rejectProofReason, setRejectProofReason] = useState('');
   // "Other" category custom type label
@@ -1132,12 +1134,22 @@ export default function ExpensesScreen() {
             <h2>Submit Payment Proof</h2>
             {proofForm.screenshotPreview && <img src={proofForm.screenshotPreview} className="proof-preview" alt="proof" />}
             <button className="upload-proof-btn" onClick={() => proofInputRef.current.click()}><Camera size={16} /> Upload Screenshot</button>
+            <button className="pom-trigger-btn" onClick={() => { setShowPaymentProofModal(false); setShowPayOnlineModal(true); }}>💳 Pay Online</button>
             <textarea placeholder="Optional note" value={proofForm.note} onChange={e => setProofForm({ ...proofForm, note: e.target.value })} className="reject-textarea" />
             <button className="add-expense-btn" onClick={handleSubmitProof} disabled={loading}>{loading ? 'Submitting…' : 'Submit'}</button>
             <button className="edit-cancel-btn" onClick={() => { setShowPaymentProofModal(false); setProofForm({ note: '', screenshot: null, screenshotPreview: null }); }}>Cancel</button>
           </div>
         </div>
       )}
+
+      <PayOnlineModal
+        show={showPayOnlineModal}
+        onClose={() => { setShowPayOnlineModal(false); setShowPaymentProofModal(true); }}
+        receiverId={selectedHousehold?.created_by}
+        itemTitle={selectedExpense?.title}
+        amount={selectedExpense?.amount}
+        onProceed={() => { setShowPayOnlineModal(false); setShowPaymentProofModal(true); }}
+      />
 
       {/* View Proof Modal */}
       {showViewProofModal && selectedProof && (

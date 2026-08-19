@@ -69,7 +69,7 @@ export default function SettingsScreen() {
 
   // Payment Details modal
   const [showPaymentModal, setShowPaymentModal] = useState(false);
-  const [paymentForm, setPaymentForm] = useState({ gcash_number: '', bank_name: '', bank_account_number: '', bank_account_name: '' });
+  const [paymentForm, setPaymentForm] = useState({ gcash_number: '', gcash_account_name: '', paymaya_number: '', paymaya_account_name: '', bank_name: '', bank_account_number: '', bank_account_name: '' });
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [paymentSuccess, setPaymentSuccess] = useState(false);
 
@@ -504,6 +504,9 @@ export default function SettingsScreen() {
   const handleOpenPaymentModal = () => {
     setPaymentForm({
       gcash_number: profile?.gcash_number || '',
+      gcash_account_name: profile?.gcash_account_name || '',
+      paymaya_number: profile?.paymaya_number || '',
+      paymaya_account_name: profile?.paymaya_account_name || '',
       bank_name: profile?.bank_name || '',
       bank_account_number: profile?.bank_account_number || '',
       bank_account_name: profile?.bank_account_name || '',
@@ -518,6 +521,9 @@ export default function SettingsScreen() {
       .from('profiles')
       .update({
         gcash_number: paymentForm.gcash_number,
+        gcash_account_name: paymentForm.gcash_account_name,
+        paymaya_number: paymentForm.paymaya_number,
+        paymaya_account_name: paymentForm.paymaya_account_name,
         bank_name: paymentForm.bank_name,
         bank_account_number: paymentForm.bank_account_number,
         bank_account_name: paymentForm.bank_account_name,
@@ -530,6 +536,9 @@ export default function SettingsScreen() {
       setProfile(prev => ({
         ...prev,
         gcash_number: paymentForm.gcash_number,
+        gcash_account_name: paymentForm.gcash_account_name,
+        paymaya_number: paymentForm.paymaya_number,
+        paymaya_account_name: paymentForm.paymaya_account_name,
         bank_name: paymentForm.bank_name,
         bank_account_number: paymentForm.bank_account_number,
         bank_account_name: paymentForm.bank_account_name,
@@ -636,8 +645,20 @@ export default function SettingsScreen() {
           {expandedSection === 'payment' && (
             <div className="settings-expanded">
               <div className="payment-detail-row">
-                <span className="payment-label">GCash</span>
+                <span className="payment-label">GCash Name</span>
+                <span className="payment-value">{profile?.gcash_account_name || 'Not set'}</span>
+              </div>
+              <div className="payment-detail-row">
+                <span className="payment-label">GCash Number</span>
                 <span className="payment-value">{profile?.gcash_number || 'Not set'}</span>
+              </div>
+              <div className="payment-detail-row">
+                <span className="payment-label">PayMaya Name</span>
+                <span className="payment-value">{profile?.paymaya_account_name || 'Not set'}</span>
+              </div>
+              <div className="payment-detail-row">
+                <span className="payment-label">PayMaya Number</span>
+                <span className="payment-value">{profile?.paymaya_number || 'Not set'}</span>
               </div>
               <div className="payment-detail-row">
                 <span className="payment-label">Bank</span>
@@ -953,6 +974,19 @@ export default function SettingsScreen() {
               </div>
             ) : (
               <>
+                <p style={{ fontSize: 10, color: '#9E8FCC', fontStyle: 'italic', margin: '0 0 4px', paddingLeft: 4, fontFamily: 'Poppins, sans-serif' }}>
+                  These GCash/PayMaya details are shown to members when they use "Pay Online" for household bills you created.
+                </p>
+                <div className="topbar-input-group" style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: '#5A4AAA', paddingLeft: 4, fontFamily: 'Poppins, sans-serif' }}>GCash Account Name</label>
+                  <input
+                    type="text"
+                    className="settings-modal-input"
+                    value={paymentForm.gcash_account_name}
+                    onChange={e => setPaymentForm({ ...paymentForm, gcash_account_name: e.target.value })}
+                    placeholder="e.g. Juan D."
+                  />
+                </div>
                 <div className="topbar-input-group" style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 4 }}>
                   <label style={{ fontSize: 12, fontWeight: 600, color: '#5A4AAA', paddingLeft: 4, fontFamily: 'Poppins, sans-serif' }}>GCash Number</label>
                   <input
@@ -960,6 +994,26 @@ export default function SettingsScreen() {
                     className="settings-modal-input"
                     value={paymentForm.gcash_number}
                     onChange={e => setPaymentForm({ ...paymentForm, gcash_number: e.target.value })}
+                    placeholder="e.g. 09XX XXX XXXX"
+                  />
+                </div>
+                <div className="topbar-input-group" style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: '#5A4AAA', paddingLeft: 4, fontFamily: 'Poppins, sans-serif' }}>PayMaya Account Name</label>
+                  <input
+                    type="text"
+                    className="settings-modal-input"
+                    value={paymentForm.paymaya_account_name}
+                    onChange={e => setPaymentForm({ ...paymentForm, paymaya_account_name: e.target.value })}
+                    placeholder="e.g. Juan D."
+                  />
+                </div>
+                <div className="topbar-input-group" style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: '#5A4AAA', paddingLeft: 4, fontFamily: 'Poppins, sans-serif' }}>PayMaya Number</label>
+                  <input
+                    type="text"
+                    className="settings-modal-input"
+                    value={paymentForm.paymaya_number}
+                    onChange={e => setPaymentForm({ ...paymentForm, paymaya_number: e.target.value })}
                     placeholder="e.g. 09XX XXX XXXX"
                   />
                 </div>

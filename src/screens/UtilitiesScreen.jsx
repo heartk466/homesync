@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import TopBar from '../components/TopBar';
 import BottomNav from '../components/BottomNav';
+import PayOnlineModal from '../components/PayOnlineModal';
 import './UtilitiesScreen.css';
 import {
   fetchAllUtilityItems,
@@ -92,6 +93,7 @@ export default function UtilitiesScreen() {
   const [showPaymentProofModal, setShowPaymentProofModal] = useState(false);
   const [showViewProofModal, setShowViewProofModal] = useState(false);
   const [selectedProof, setSelectedProof] = useState(null);
+  const [showPayOnlineModal, setShowPayOnlineModal] = useState(false);
   const [proofForm, setProofForm] = useState({
     note: '',
     screenshot: null,
@@ -561,6 +563,7 @@ export default function UtilitiesScreen() {
             <button className="save-config-btn" style={{ background: '#F0EDFF', color: '#3B2AAB', marginTop: 0 }} onClick={() => proofInputRef.current.click()}>
               📷 {proofForm.screenshot ? 'Change Screenshot' : 'Upload Screenshot'}
             </button>
+            <button className="pom-trigger-btn" onClick={() => { setShowPaymentProofModal(false); setShowPayOnlineModal(true); }}>💳 Pay Online</button>
             <textarea placeholder="Optional note" value={proofForm.note} onChange={e => setProofForm(prev => ({ ...prev, note: e.target.value }))} className="reject-textarea" />
             <button className="save-config-btn" onClick={async () => {
               if (!proofForm.screenshot) { showToast('Please upload a screenshot.', 'error'); return; }
@@ -582,6 +585,15 @@ export default function UtilitiesScreen() {
           </div>
         </div>
       )}
+
+      <PayOnlineModal
+        show={showPayOnlineModal}
+        onClose={() => { setShowPayOnlineModal(false); setShowPaymentProofModal(true); }}
+        receiverId={activeHousehold?.created_by}
+        itemTitle={selectedUtility?.provider_name}
+        amount={selectedUtility?.amount}
+        onProceed={() => { setShowPayOnlineModal(false); setShowPaymentProofModal(true); }}
+      />
 
       <input type="file" ref={proofInputRef} style={{ display: 'none' }} accept="image/*" onChange={e => { const file = e.target.files[0]; if (file) setProofForm(prev => ({ ...prev, screenshot: file, screenshotPreview: URL.createObjectURL(file) })); }} />
 

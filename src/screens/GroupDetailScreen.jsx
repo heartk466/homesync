@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import './GroupDetailScreen.css';
 import { SUBSCRIPTION_PRESETS } from '../utils/expenseUtils';
+import PayOnlineModal from '../components/PayOnlineModal';
 
 const ALL_EXPENSE_CATEGORIES = [
   'Rent', 'Electricity', 'Water', 'Internet',
@@ -77,6 +78,21 @@ export default function GroupDetailScreen() {
   const [loadingAction, setLoadingAction] = useState(false);
   const [showPaymentCard, setShowPaymentCard] = useState(false);
   const [paymentCardMember, setPaymentCardMember] = useState(null);
+  const [showPayOnlineModal, setShowPayOnlineModal] = useState(false);
+  const [payOnlineOrigin, setPayOnlineOrigin] = useState(null); // 'proof' | 'resubmit'
+
+  const openPayOnline = (origin) => {
+    setPayOnlineOrigin(origin);
+    if (origin === 'proof') setShowPaymentProofModal(false);
+    if (origin === 'resubmit') setShowResubmitModal(false);
+    setShowPayOnlineModal(true);
+  };
+
+  const handlePayOnlineProceed = () => {
+    setShowPayOnlineModal(false);
+    if (payOnlineOrigin === 'proof') setShowPaymentProofModal(true);
+    if (payOnlineOrigin === 'resubmit') setShowResubmitModal(true);
+  };
 
   // Edit Amount state
   const [showEditAmountModal, setShowEditAmountModal] = useState(false);
@@ -1369,6 +1385,7 @@ export default function GroupDetailScreen() {
             <div className="modal-body-scroll">
               {proofForm.screenshotPreview ? <img src={proofForm.screenshotPreview} className="proof-preview" alt="proof" /> : <div style={{ textAlign: 'center', padding: '20px 0', color: '#9E8FCC', fontSize: 13 }}>No screenshot selected yet</div>}
               <button className="upload-proof-btn" onClick={() => proofInputRef.current.click()}><Camera size={16} /> {proofForm.screenshotPreview ? 'Change Screenshot' : 'Upload Screenshot'}</button>
+              <button className="pom-trigger-btn" onClick={() => openPayOnline('proof')}>💳 Pay Online</button>
               <textarea placeholder="Optional note (e.g. GCash ref #)" value={proofForm.note} onChange={e => setProofForm({ ...proofForm, note: e.target.value })} className="detail-textarea" rows={3} />
               <button className="add-expense-btn" onClick={() => handleSubmitProof(false)} disabled={loadingAction}>{loadingAction ? 'Submitting...' : 'Submit Proof'}</button>
               <button className="cancel-btn" onClick={() => { setShowPaymentProofModal(false); resetProofForm(); }}>Cancel</button>
@@ -1389,6 +1406,7 @@ export default function GroupDetailScreen() {
               <div style={{ background: '#FFF3CD', borderRadius: 12, padding: '12px 14px', marginBottom: 12, fontSize: 12, color: '#856404', textAlign: 'center' }}>⚠️ Your previous proof was rejected. Please upload a new, clear screenshot.</div>
               {proofForm.screenshotPreview ? <img src={proofForm.screenshotPreview} className="proof-preview" alt="proof" /> : <div style={{ textAlign: 'center', padding: '20px 0', color: '#9E8FCC', fontSize: 13 }}>Upload a new screenshot</div>}
               <button className="upload-proof-btn" onClick={() => proofInputRef.current.click()}><Camera size={16} /> {proofForm.screenshotPreview ? 'Change Screenshot' : 'Upload New Screenshot'}</button>
+              <button className="pom-trigger-btn" onClick={() => openPayOnline('resubmit')}>💳 Pay Online</button>
               <textarea placeholder="Optional note (e.g. GCash ref #)" value={proofForm.note} onChange={e => setProofForm({ ...proofForm, note: e.target.value })} className="detail-textarea" rows={3} />
               <button className="add-expense-btn" onClick={() => handleSubmitProof(true)} disabled={loadingAction}>{loadingAction ? 'Submitting...' : 'Resubmit Proof'}</button>
               <button className="cancel-btn" onClick={() => { setShowResubmitModal(false); resetProofForm(); }}>Cancel</button>
@@ -1624,6 +1642,19 @@ export default function GroupDetailScreen() {
 
       {/* Hidden file input */}
       <input type="file" ref={proofInputRef} style={{ display: 'none' }} accept="image/*" onChange={e => { const file = e.target.files[0]; if (file) setProofForm({ ...proofForm, screenshot: file, screenshotPreview: URL.createObjectURL(file) }); }} />
+
+      <PayOnlineModal
+        show={showPayOnlineModal}
+        onClose={() => {
+          setShowPayOnlineModal(false);
+          if (payOnlineOrigin === 'proof') setShowPaymentProofModal(true);
+          if (payOnlineOrigin === 'resubmit') setShowResubmitModal(true);
+        }}
+        receiverId={group?.created_by}
+        itemTitle={selectedExpense?.title}
+        amount={selectedExpense?.members_split?.[currentUser?.id]}
+        onProceed={handlePayOnlineProceed}
+      />
 
       {toast && <div className={`toast-detail toast-${toast.type}`}>{toast.msg}</div>}
 
