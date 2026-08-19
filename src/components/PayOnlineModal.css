@@ -296,3 +296,17 @@
 .pom-trigger-btn:active {
   transform: scale(0.98);
 }
+
+.pom-quick-pay-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.pom-owner-hint {
+  font-size: 10px;
+  color: #9E8FCC;
+  text-align: center;
+  margin: 0;
+  line-height: 1.4;
+}

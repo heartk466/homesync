@@ -8,6 +8,7 @@ import {
 import './GroupDetailScreen.css';
 import { SUBSCRIPTION_PRESETS } from '../utils/expenseUtils';
 import PayOnlineModal from '../components/PayOnlineModal';
+import { openPaymentApp } from '../utils/paymentUtils';
 
 const ALL_EXPENSE_CATEGORIES = [
   'Rent', 'Electricity', 'Water', 'Internet',
@@ -1426,6 +1427,11 @@ export default function GroupDetailScreen() {
             <div className="modal-body-scroll">
               {proofForm.screenshotPreview ? <img src={proofForm.screenshotPreview} className="proof-preview" alt="proof" /> : <div style={{ textAlign: 'center', padding: '20px 0', color: '#9E8FCC', fontSize: 13 }}>No screenshot selected yet</div>}
               <button className="upload-proof-btn" onClick={() => proofInputRef.current.click()}><Camera size={16} /> {proofForm.screenshotPreview ? 'Change Screenshot' : 'Upload Screenshot'}</button>
+              <div className="pom-quick-pay-row">
+                <button className="pom-trigger-btn" style={{ flex: 1, margin: 0 }} onClick={() => openPaymentApp('gcash')}>💙 GCash</button>
+                <button className="pom-trigger-btn" style={{ flex: 1, margin: 0 }} onClick={() => openPaymentApp('paymaya')}>💚 PayMaya</button>
+              </div>
+              <p className="pom-owner-hint">Pay your biller directly, then upload the screenshot above.</p>
               <textarea placeholder="Optional note" value={proofForm.note} onChange={e => setProofForm({ ...proofForm, note: e.target.value })} className="detail-textarea" rows={3} />
               <div style={{ background: '#F0EDFF', borderRadius: 12, padding: '10px 14px', fontSize: 12, color: '#3B2AAB', textAlign: 'center' }}>📢 This will automatically mark the expense as paid for all members.</div>
               <button className="add-expense-btn" onClick={handleOwnerSubmitProof} disabled={loadingAction}>{loadingAction ? 'Confirming...' : 'Confirm Payment'}</button>
