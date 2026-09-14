@@ -26,11 +26,28 @@ export async function fetchReceiverPaymentDetails(receiverId) {
   if (!receiverId) return null;
   const { data, error } = await supabase
     .from('profiles')
-    .select('full_name, gcash_number, gcash_account_name, paymaya_number, paymaya_account_name')
+    .select('full_name, gcash_number, gcash_account_name, gcash_qr_url, paymaya_number, paymaya_account_name, paymaya_qr_url')
     .eq('id', receiverId)
     .single();
   if (error) return null;
   return data;
+}
+
+// ── Upload a QR code image for a payment method to the 'payment-qr' bucket ──
+// Returns the public URL on success, or null on failure. Mirrors the same
+// upload pattern already used for payment-proof screenshots elsewhere.
+export async function uploadPaymentQr(userId, methodKey, file) {
+  if (!userId || !file) return null;
+  const ext = file.name?.split('.').pop() || 'png';
+  const fileName = `${userId}/${methodKey}-${Date.now()}.${ext}`;
+
+  const { error: uploadError } = await supabase.storage
+    .from('payment-qr')
+    .upload(fileName, file, { upsert: true });
+  if (uploadError) return null;
+
+  const { data: urlData } = supabase.storage.from('payment-qr').getPublicUrl(fileName);
+  return urlData?.publicUrl || null;
 }
 
 // ── Attempt to open the native app via URL scheme, falling back to the

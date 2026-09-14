@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, ChevronLeft, Copy, Check as CheckIcon, ExternalLink } from 'lucide-react';
+import { X, ChevronLeft, Copy, Check as CheckIcon, ExternalLink, Download } from 'lucide-react';
 import { PAYMENT_METHODS, fetchReceiverPaymentDetails, openPaymentApp } from '../utils/paymentUtils';
 import './PayOnlineModal.css';
 
@@ -45,7 +45,9 @@ export default function PayOnlineModal({ show, onClose, receiverId, itemTitle, a
   const config = method ? PAYMENT_METHODS[method] : null;
   const getNumber = () => (method === 'gcash' ? receiverDetails?.gcash_number : receiverDetails?.paymaya_number);
   const getName = () => (method === 'gcash' ? receiverDetails?.gcash_account_name : receiverDetails?.paymaya_account_name);
+  const getQrUrl = () => (method === 'gcash' ? receiverDetails?.gcash_qr_url : receiverDetails?.paymaya_qr_url);
   const hasDetails = !loading && !!getNumber();
+  const hasQr = !loading && !!getQrUrl();
 
   const selectMethod = (key) => {
     setMethod(key);
@@ -61,6 +63,26 @@ export default function PayOnlineModal({ show, onClose, receiverId, itemTitle, a
 
   const handleContinue = () => {
     openPaymentApp(method);
+  };
+
+  const handleDownloadQr = async () => {
+    const qrUrl = getQrUrl();
+    if (!qrUrl) return;
+    try {
+      const res = await fetch(qrUrl);
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objectUrl;
+      a.download = `${config?.label || 'payment'}-qr.png`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(objectUrl);
+    } catch {
+      // Fallback: open the QR image in a new tab if the download fetch fails
+      window.open(qrUrl, '_blank', 'noopener,noreferrer');
+    }
   };
 
   const handleDone = () => {
@@ -124,6 +146,14 @@ export default function PayOnlineModal({ show, onClose, receiverId, itemTitle, a
               </div>
             ) : (
               <>
+                {hasQr && (
+                  <div className="pom-qr-card">
+                    <img src={getQrUrl()} alt={`${config.label} QR code`} className="pom-qr-img" />
+                    <button className="pom-qr-download-btn" onClick={handleDownloadQr}>
+                      <Download size={13} /> Download QR
+                    </button>
+                  </div>
+                )}
                 <div className="pom-account-card">
                   <span className="pom-account-method">{config.icon} {config.label}</span>
                   <span className="pom-account-name">{getName() || 'Household Admin'}</span>
@@ -135,8 +165,9 @@ export default function PayOnlineModal({ show, onClose, receiverId, itemTitle, a
                   </div>
                 </div>
                 <p className="pom-hint">
-                  Send the exact amount to this number in the {config.label} app, then come back
-                  and upload your screenshot.
+                  {hasQr
+                    ? `Scan the QR code or send the exact amount to this number in the ${config.label} app, then come back and upload your screenshot.`
+                    : `Send the exact amount to this number in the ${config.label} app, then come back and upload your screenshot.`}
                 </p>
                 <button className="pom-continue-btn" onClick={handleContinue}>
                   <ExternalLink size={16} /> Continue to {config.label}

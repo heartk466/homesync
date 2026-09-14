@@ -5,13 +5,14 @@ import {
   User, Home, Bell, Palette, Shield,
   Database, Info, LogOut, ChevronRight,
   Copy, Share2, UserMinus, Crown, Trash2,
-  Download, X, Check, AlertCircle
+  Download, X, Check, AlertCircle, QrCode, ImagePlus
 } from 'lucide-react';
 import TopBar from '../components/TopBar';
 import BottomNav from '../components/BottomNav';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { usePushNotifications } from '../hooks/usePushNotifications';
+import { uploadPaymentQr } from '../utils/paymentUtils';
 import './SettingsScreen.css';
 import { useAppContext } from '../AppContext';
 
@@ -69,9 +70,14 @@ export default function SettingsScreen() {
 
   // Payment Details modal
   const [showPaymentModal, setShowPaymentModal] = useState(false);
-  const [paymentForm, setPaymentForm] = useState({ gcash_number: '', gcash_account_name: '', paymaya_number: '', paymaya_account_name: '', bank_name: '', bank_account_number: '', bank_account_name: '' });
+  const [paymentForm, setPaymentForm] = useState({ gcash_number: '', gcash_account_name: '', gcash_qr_url: '', paymaya_number: '', paymaya_account_name: '', paymaya_qr_url: '', bank_name: '', bank_account_number: '', bank_account_name: '' });
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [paymentSuccess, setPaymentSuccess] = useState(false);
+
+  // QR code uploads (GCash / PayMaya) inside the Payment Details modal
+  const [qrUploading, setQrUploading] = useState({ gcash: false, paymaya: false });
+  const gcashQrInputRef = React.useRef(null);
+  const paymayaQrInputRef = React.useRef(null);
 
   // Push notification status display
   const [pushStatus, setPushStatus] = useState('unknown'); // 'granted' | 'denied' | 'default' | 'unsupported'
@@ -505,14 +511,41 @@ export default function SettingsScreen() {
     setPaymentForm({
       gcash_number: profile?.gcash_number || '',
       gcash_account_name: profile?.gcash_account_name || '',
+      gcash_qr_url: profile?.gcash_qr_url || '',
       paymaya_number: profile?.paymaya_number || '',
       paymaya_account_name: profile?.paymaya_account_name || '',
+      paymaya_qr_url: profile?.paymaya_qr_url || '',
       bank_name: profile?.bank_name || '',
       bank_account_number: profile?.bank_account_number || '',
       bank_account_name: profile?.bank_account_name || '',
     });
     setPaymentSuccess(false);
     setShowPaymentModal(true);
+  };
+
+  // ── Upload / replace a QR code for GCash or PayMaya ─────────────────────────
+  // Uploads to the 'payment-qr' storage bucket and stores the resulting public
+  // URL directly on the form (saved to the profile when "Save" is pressed, same
+  // as the other fields).
+  const handleQrFileSelect = async (methodKey, file) => {
+    if (!file || !currentUser?.id) return;
+    if (!file.type?.startsWith('image/')) {
+      showToast('Please select an image file (JPG or PNG).', 'error');
+      return;
+    }
+    setQrUploading(prev => ({ ...prev, [methodKey]: true }));
+    const publicUrl = await uploadPaymentQr(currentUser.id, methodKey, file);
+    setQrUploading(prev => ({ ...prev, [methodKey]: false }));
+
+    if (!publicUrl) {
+      showToast('Failed to upload QR code.', 'error');
+      return;
+    }
+    setPaymentForm(prev => ({ ...prev, [`${methodKey}_qr_url`]: publicUrl }));
+  };
+
+  const handleRemoveQr = (methodKey) => {
+    setPaymentForm(prev => ({ ...prev, [`${methodKey}_qr_url`]: '' }));
   };
 
   const handleSavePaymentDetails = async () => {
@@ -522,8 +555,10 @@ export default function SettingsScreen() {
       .update({
         gcash_number: paymentForm.gcash_number,
         gcash_account_name: paymentForm.gcash_account_name,
+        gcash_qr_url: paymentForm.gcash_qr_url,
         paymaya_number: paymentForm.paymaya_number,
         paymaya_account_name: paymentForm.paymaya_account_name,
+        paymaya_qr_url: paymentForm.paymaya_qr_url,
         bank_name: paymentForm.bank_name,
         bank_account_number: paymentForm.bank_account_number,
         bank_account_name: paymentForm.bank_account_name,
@@ -537,8 +572,10 @@ export default function SettingsScreen() {
         ...prev,
         gcash_number: paymentForm.gcash_number,
         gcash_account_name: paymentForm.gcash_account_name,
+        gcash_qr_url: paymentForm.gcash_qr_url,
         paymaya_number: paymentForm.paymaya_number,
         paymaya_account_name: paymentForm.paymaya_account_name,
+        paymaya_qr_url: paymentForm.paymaya_qr_url,
         bank_name: paymentForm.bank_name,
         bank_account_number: paymentForm.bank_account_number,
         bank_account_name: paymentForm.bank_account_name,
@@ -653,12 +690,24 @@ export default function SettingsScreen() {
                 <span className="payment-value">{profile?.gcash_number || 'Not set'}</span>
               </div>
               <div className="payment-detail-row">
+                <span className="payment-label">GCash QR</span>
+                <span className={`payment-qr-status ${profile?.gcash_qr_url ? 'set' : ''}`}>
+                  {profile?.gcash_qr_url ? '✓ Uploaded' : 'Not set'}
+                </span>
+              </div>
+              <div className="payment-detail-row">
                 <span className="payment-label">PayMaya Name</span>
                 <span className="payment-value">{profile?.paymaya_account_name || 'Not set'}</span>
               </div>
               <div className="payment-detail-row">
                 <span className="payment-label">PayMaya Number</span>
                 <span className="payment-value">{profile?.paymaya_number || 'Not set'}</span>
+              </div>
+              <div className="payment-detail-row">
+                <span className="payment-label">PayMaya QR</span>
+                <span className={`payment-qr-status ${profile?.paymaya_qr_url ? 'set' : ''}`}>
+                  {profile?.paymaya_qr_url ? '✓ Uploaded' : 'Not set'}
+                </span>
               </div>
               <div className="payment-detail-row">
                 <span className="payment-label">Bank</span>
@@ -997,6 +1046,36 @@ export default function SettingsScreen() {
                     placeholder="e.g. 09XX XXX XXXX"
                   />
                 </div>
+
+                {/* GCash QR upload */}
+                <div className="qr-upload-group">
+                  <label className="qr-upload-label"><QrCode size={13} /> GCash QR Code</label>
+                  <input
+                    ref={gcashQrInputRef}
+                    type="file"
+                    accept="image/*"
+                    style={{ display: 'none' }}
+                    onChange={e => handleQrFileSelect('gcash', e.target.files?.[0])}
+                  />
+                  {paymentForm.gcash_qr_url ? (
+                    <div className="qr-preview-card">
+                      <img src={paymentForm.gcash_qr_url} alt="GCash QR" className="qr-preview-img" />
+                      <div className="qr-preview-actions">
+                        <button type="button" className="qr-replace-btn" onClick={() => gcashQrInputRef.current?.click()} disabled={qrUploading.gcash}>
+                          {qrUploading.gcash ? 'Uploading…' : 'Replace'}
+                        </button>
+                        <button type="button" className="qr-remove-btn" onClick={() => handleRemoveQr('gcash')}>
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button type="button" className="qr-upload-btn" onClick={() => gcashQrInputRef.current?.click()} disabled={qrUploading.gcash}>
+                      <ImagePlus size={15} /> {qrUploading.gcash ? 'Uploading…' : 'Upload GCash QR'}
+                    </button>
+                  )}
+                </div>
+
                 <div className="topbar-input-group" style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 4 }}>
                   <label style={{ fontSize: 12, fontWeight: 600, color: '#5A4AAA', paddingLeft: 4, fontFamily: 'Poppins, sans-serif' }}>PayMaya Account Name</label>
                   <input
@@ -1017,6 +1096,36 @@ export default function SettingsScreen() {
                     placeholder="e.g. 09XX XXX XXXX"
                   />
                 </div>
+
+                {/* PayMaya QR upload */}
+                <div className="qr-upload-group">
+                  <label className="qr-upload-label"><QrCode size={13} /> PayMaya QR Code</label>
+                  <input
+                    ref={paymayaQrInputRef}
+                    type="file"
+                    accept="image/*"
+                    style={{ display: 'none' }}
+                    onChange={e => handleQrFileSelect('paymaya', e.target.files?.[0])}
+                  />
+                  {paymentForm.paymaya_qr_url ? (
+                    <div className="qr-preview-card">
+                      <img src={paymentForm.paymaya_qr_url} alt="PayMaya QR" className="qr-preview-img" />
+                      <div className="qr-preview-actions">
+                        <button type="button" className="qr-replace-btn" onClick={() => paymayaQrInputRef.current?.click()} disabled={qrUploading.paymaya}>
+                          {qrUploading.paymaya ? 'Uploading…' : 'Replace'}
+                        </button>
+                        <button type="button" className="qr-remove-btn" onClick={() => handleRemoveQr('paymaya')}>
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button type="button" className="qr-upload-btn" onClick={() => paymayaQrInputRef.current?.click()} disabled={qrUploading.paymaya}>
+                      <ImagePlus size={15} /> {qrUploading.paymaya ? 'Uploading…' : 'Upload PayMaya QR'}
+                    </button>
+                  )}
+                </div>
+
                 <div className="topbar-input-group" style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 4 }}>
                   <label style={{ fontSize: 12, fontWeight: 600, color: '#5A4AAA', paddingLeft: 4, fontFamily: 'Poppins, sans-serif' }}>Bank Name</label>
                   <input
