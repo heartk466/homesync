@@ -5,8 +5,12 @@ import {
   User, Home, Bell, Palette, Shield,
   Database, Info, LogOut, ChevronRight,
   Copy, Share2, UserMinus, Crown, Trash2,
-  Download, X, Check, AlertCircle, QrCode, ImagePlus
+  Download, X, Check, AlertCircle, QrCode, ImagePlus,
+  LifeBuoy, Bug, MessageSquare
 } from 'lucide-react';
+
+// ─── Support inbox — bug reports & feedback land here ─────────────────────────
+const SUPPORT_EMAIL = 'homesync466@gmail.com';
 import TopBar from '../components/TopBar';
 import BottomNav from '../components/BottomNav';
 import jsPDF from 'jspdf';
@@ -58,6 +62,15 @@ export default function SettingsScreen() {
   const [showLeaveModal, setShowLeaveModal] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
   const [toast, setToast] = useState(null);
+
+  // Bug report / feedback modal
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
+  const [feedbackType, setFeedbackType] = useState('bug'); // 'bug' | 'feedback'
+  const [feedbackSubject, setFeedbackSubject] = useState('');
+  const [feedbackMessage, setFeedbackMessage] = useState('');
+  const [feedbackError, setFeedbackError] = useState('');
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
+
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
   const [transferTarget, setTransferTarget] = useState('');
@@ -496,6 +509,59 @@ export default function SettingsScreen() {
     } catch {
       showToast('Export failed.', 'error');
     }
+  };
+
+  const openFeedbackModal = (type) => {
+    setFeedbackType(type);
+    setFeedbackSubject('');
+    setFeedbackMessage('');
+    setFeedbackError('');
+    setShowFeedbackModal(true);
+  };
+
+  // Submits a bug report / feedback message. Best-effort logs it to Supabase
+  // (in case a `feedback_reports` table exists for an admin dashboard later),
+  // then always opens the user's email app pre-addressed to support so the
+  // message reaches us even if that table doesn't exist yet.
+  const handleSubmitFeedback = async () => {
+    if (!feedbackMessage.trim()) {
+      setFeedbackError('Please write your message before sending.');
+      return;
+    }
+    setFeedbackError('');
+    setFeedbackLoading(true);
+
+    const typeLabel = feedbackType === 'bug' ? 'Bug Report' : 'Feedback';
+    const subjectLine = feedbackSubject.trim()
+      ? `[HomeSync ${typeLabel}] ${feedbackSubject.trim()}`
+      : `[HomeSync ${typeLabel}] from ${profile?.full_name || 'a user'}`;
+
+    try {
+      await supabase.from('feedback_reports').insert({
+        user_id: currentUser?.id,
+        household_id: household?.id,
+        type: feedbackType,
+        subject: feedbackSubject.trim() || null,
+        message: feedbackMessage.trim(),
+      });
+    } catch (_) { /* table may not exist yet — don't block the email */ }
+
+    const bodyLines = [
+      feedbackMessage.trim(),
+      '',
+      '── Sent from HomeSync app ──',
+      `From: ${profile?.full_name || 'Unknown'} (${currentUser?.email || 'no email on file'})`,
+      `Household: ${household?.name || 'N/A'}`,
+      `Type: ${typeLabel}`,
+    ];
+    const mailtoUrl = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(subjectLine)}&body=${encodeURIComponent(bodyLines.join('\n'))}`;
+    window.location.href = mailtoUrl;
+
+    setFeedbackLoading(false);
+    setShowFeedbackModal(false);
+    setFeedbackSubject('');
+    setFeedbackMessage('');
+    showToast('Opening your email app…');
   };
 
   const handleSignOut = async () => {
@@ -964,6 +1030,29 @@ export default function SettingsScreen() {
           </button>
         </div>
 
+        {/* Support & Feedback */}
+        <div className="settings-section">
+          <p className="settings-section-title">
+            <LifeBuoy size={16}/> Support & Feedback
+          </p>
+
+          <button className="settings-row" onClick={() => openFeedbackModal('bug')}>
+            <div className="settings-row-left">
+              <div className="settings-icon-wrap purple"><Bug size={16}/></div>
+              <span>Report a Bug</span>
+            </div>
+            <ChevronRight size={16}/>
+          </button>
+
+          <button className="settings-row no-border" onClick={() => openFeedbackModal('feedback')}>
+            <div className="settings-row-left">
+              <div className="settings-icon-wrap purple"><MessageSquare size={16}/></div>
+              <span>Send Feedback</span>
+            </div>
+            <ChevronRight size={16}/>
+          </button>
+        </div>
+
         {/* About */}
         <div className="settings-section">
           <p className="settings-section-title">
@@ -1339,6 +1428,64 @@ export default function SettingsScreen() {
               {loading ? 'Transferring...' : 'Confirm Transfer'}
             </button>
             <button className="modal-ghost-btn" onClick={() => setShowTransferModal(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* Report a Bug / Send Feedback Modal */}
+      {showFeedbackModal && (
+        <div className="settings-modal-overlay">
+          <div className="settings-modal wide">
+            <div className="modal-top-row">
+              <h2>{feedbackType === 'bug' ? '🐞 Report a Bug' : '💬 Send Feedback'}</h2>
+              <button className="modal-x-btn" onClick={() => setShowFeedbackModal(false)}><X size={18}/></button>
+            </div>
+
+            <div className="feedback-type-toggle">
+              <button
+                className={`feedback-type-btn ${feedbackType === 'bug' ? 'active' : ''}`}
+                onClick={() => setFeedbackType('bug')}
+              >
+                <Bug size={14}/> Bug
+              </button>
+              <button
+                className={`feedback-type-btn ${feedbackType === 'feedback' ? 'active' : ''}`}
+                onClick={() => setFeedbackType('feedback')}
+              >
+                <MessageSquare size={14}/> Feedback
+              </button>
+            </div>
+
+            <input
+              type="text"
+              className="settings-modal-input"
+              placeholder="Subject (optional)"
+              value={feedbackSubject}
+              onChange={e => setFeedbackSubject(e.target.value)}
+            />
+
+            <textarea
+              className="settings-modal-input feedback-textarea"
+              placeholder={
+                feedbackType === 'bug'
+                  ? "What happened? What did you expect instead? Steps to reproduce help a lot."
+                  : "Tell us what you think, or what you'd like to see in HomeSync…"
+              }
+              value={feedbackMessage}
+              onChange={e => setFeedbackMessage(e.target.value)}
+              rows={5}
+            />
+
+            {feedbackError && (
+              <p className="modal-sub" style={{ color: '#e53e3e' }}>{feedbackError}</p>
+            )}
+
+            <p className="modal-sub">We'll open your email app addressed to {SUPPORT_EMAIL} — just hit send.</p>
+
+            <button className="modal-primary-btn" onClick={handleSubmitFeedback} disabled={feedbackLoading}>
+              {feedbackLoading ? 'Preparing…' : 'Send Report'}
+            </button>
+            <button className="modal-ghost-btn" onClick={() => setShowFeedbackModal(false)}>Cancel</button>
           </div>
         </div>
       )}

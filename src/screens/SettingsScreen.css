@@ -612,6 +612,44 @@
   border-color: #3B2AAB;
 }
 
+/* Bug Report / Feedback Modal */
+.feedback-type-toggle {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+.feedback-type-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 0;
+  border-radius: 50px;
+  border: 1.5px solid #E0D9FF;
+  background: white;
+  font-family: 'Poppins', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  color: #9E8FCC;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.feedback-type-btn.active {
+  background: #3B2AAB;
+  color: white;
+  border-color: #3B2AAB;
+}
+
+.feedback-textarea {
+  border-radius: 20px;
+  resize: vertical;
+  min-height: 90px;
+  line-height: 1.5;
+}
+
 /* Toast */
 .toast {
   position: absolute;
