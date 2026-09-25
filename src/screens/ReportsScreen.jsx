@@ -164,10 +164,22 @@ export default function ReportsScreen() {
       return 0;
     };
 
-    // Paid = expense.status === 'paid'  (ExpensesScreen sets this when all splits approved)
+    // Paid = THIS user's own expense_splits row is 'approved' — not whether the
+    // whole expense is fully settled by every member. The owner's own share is
+    // auto-approved the moment they submit proof (no one needs to confirm it),
+    // and a regular member's share is approved once the owner confirms their
+    // proof — either way, "paid" here is per-person, matching Reports being an
+    // individual view.
     const getPaidAmountForUser = (expense) => {
-      if (expense.status !== 'paid') return 0;
-      return getUserShareAmount(expense);
+      const userSplit = (splitsMap[expense.id] || []).find(s => s.user_id === targetUserId);
+      if (userSplit) {
+        return userSplit.status === 'approved' ? (Number(userSplit.share_amount) || 0) : 0;
+      }
+      // No split row exists yet (e.g. no split_details were ever created for this
+      // expense) — fall back to the old whole-expense signal, since there's no
+      // per-user status to check.
+      if (expense.status === 'paid') return getUserShareAmount(expense);
+      return 0;
     };
 
     // Pending = expense is approved, this user has an unpaid split
