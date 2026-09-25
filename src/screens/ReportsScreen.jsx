@@ -104,7 +104,10 @@ export default function ReportsScreen() {
     return grouped;
   };
 
-  // Aggregate report data across ALL households the user belongs to
+  // Report data is always scoped to ONE household — the one selected in the
+  // household switcher (houseData.id). We never pull in expenses from other
+  // households the target member happens to belong to, and Groups (a separate
+  // feature from Households) are never mixed into this screen.
   const fetchReportData = async (houseData, memberId = null, resolvedUserId = null) => {
     if (!houseData) return;
 
@@ -118,45 +121,16 @@ export default function ReportsScreen() {
     const lastYearStart = new Date(now.getFullYear() - 1, 0, 1).toISOString().split('T')[0];
     const lastYearEnd   = new Date(now.getFullYear() - 1, 11, 31).toISOString().split('T')[0];
 
-    // ── Step 1: Get ALL household IDs and group IDs this user belongs to ──
-    const { data: memberRows } = await supabase
-      .from('household_members')
-      .select('household_id')
-      .eq('user_id', targetUserId);
-    const householdIds = (memberRows?.map(r => r.household_id) || [houseData.id]).filter(Boolean);
+    // ── Step 1: Fetch expenses for THIS household only ──
+    // (Regardless of how many other households targetUserId belongs to.)
+    const { data: householdExpenses } = await supabase
+      .from('expenses')
+      .select('*')
+      .eq('household_id', houseData.id)
+      .order('expense_date', { ascending: false });
+    const allExpenses = householdExpenses || [];
 
-    const { data: groupMemberRows } = await supabase
-      .from('group_members')
-      .select('group_id')
-      .eq('user_id', targetUserId);
-    const groupIds = (groupMemberRows || []).map(r => r.group_id).filter(Boolean);
-
-    // ── Step 2: Fetch ALL expenses from households AND groups ──
-    const householdExpenseResults = await Promise.all(
-      householdIds.map(async (hid) => {
-        const { data } = await supabase
-          .from('expenses')
-          .select('*')
-          .eq('household_id', hid)
-          .order('expense_date', { ascending: false });
-        return data || [];
-      })
-    );
-    const groupExpenseResults = groupIds.length > 0
-      ? await Promise.all(
-          groupIds.map(async (gid) => {
-            const { data } = await supabase
-              .from('expenses')
-              .select('*')
-              .eq('group_id', gid)
-              .order('expense_date', { ascending: false });
-            return data || [];
-          })
-        )
-      : [];
-    const allExpenses = [...householdExpenseResults.flat(), ...groupExpenseResults.flat()];
-
-    // ── Step 3: Fetch expense_splits for enrichment (best-effort) ──
+    // ── Step 2: Fetch expense_splits for enrichment (best-effort) ──
     const allExpenseIds = allExpenses.map(e => e.id);
     const splitsMap = allExpenseIds.length > 0 ? await fetchExpenseSplits(allExpenseIds) : {};
 
@@ -225,7 +199,7 @@ export default function ReportsScreen() {
       return 0;
     };
 
-    // ── Step 4: Filter by year ──
+    // ── Step 3: Filter by year ──
     const thisYearExpenses = allExpenses.filter(
       e => e.expense_date >= yearStart && e.expense_date <= yearEnd
     );
@@ -233,7 +207,8 @@ export default function ReportsScreen() {
       e => e.expense_date >= lastYearStart && e.expense_date <= lastYearEnd
     );
 
-    // ── Card 1: Total Household Spent = sum of user's paid (approved) splits this year ──
+    // ── Card 1: Total Household Spent = sum of the selected member's paid (approved)
+    //    splits this year, WITHIN THIS HOUSEHOLD ONLY ──
     const total = thisYearExpenses.reduce((sum, e) => sum + getPaidAmountForUser(e), 0);
     setYearlyTotal(total);
 
@@ -249,7 +224,7 @@ export default function ReportsScreen() {
     });
     setMonthlyData(monthly);
 
-    // ── Card 2: Category breakdown (paid splits, all households) ──
+    // ── Card 2: Category breakdown (paid splits, this household only) ──
     const categories = {};
     thisYearExpenses.forEach(e => {
       const paid = getPaidAmountForUser(e);
@@ -263,7 +238,7 @@ export default function ReportsScreen() {
         .sort((a, b) => b.value - a.value)
     );
 
-    // ── Card 3: Pending balances (user's unpaid splits, all households) ──
+    // ── Card 3: Pending balances (user's unpaid splits, this household only) ──
     const pending = thisYearExpenses.reduce((sum, e) => sum + getPendingAmountForUser(e), 0);
     setPendingBalances(pending);
 
@@ -280,10 +255,9 @@ export default function ReportsScreen() {
     });
     setPendingByCategory(Object.entries(pendingCats).map(([name, value]) => ({ name, value })));
 
-    // ── Statement history: group by month (primary household only) ──
-    const primaryExpenses = thisYearExpenses.filter(e => e.household_id === houseData.id);
+    // ── Statement history: group by month (already scoped to this household) ──
     const monthlyStatements = {};
-    primaryExpenses.forEach(e => {
+    thisYearExpenses.forEach(e => {
       const userAmount = getPaidAmountForUser(e);
       const d = new Date(e.expense_date);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
