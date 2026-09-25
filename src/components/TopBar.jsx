@@ -174,8 +174,14 @@ export default function TopBar({
       return;
     }
 
-    // Build destination URL with optional query string
-    const query = notification.link_query ? `?${notification.link_query}` : '';
+    // Build destination URL with optional query string. link_path already
+    // contains its own "?type=..." query string (set by GroupDetailScreen),
+    // so joining another param list with "?" would produce a malformed
+    // double-"?" URL and silently swallow openProof/proofId/expenseId into
+    // the "type" value instead of parsing as their own params. Use "&" when
+    // link_path already has a query string.
+    const separator = notification.link_path.includes('?') ? '&' : '?';
+    const query = notification.link_query ? `${separator}${notification.link_query}` : '';
     const destination = `${notification.link_path}${query}`;
 
     // Parse link_state back to object for react-router state

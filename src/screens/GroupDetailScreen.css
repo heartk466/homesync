@@ -636,3 +636,18 @@
 .detail-preset-btn:hover {
   background: #F8F6FF;
 }
+
+/* ── Notification deep-link highlight ──
+   Briefly pulses the specific expense card the user tapped a notification
+   for, so "tap to view" actually lands them on the right item, not just the
+   right screen. */
+.notif-highlight {
+  animation: notif-pulse 1.5s ease-out 2;
+  border-radius: 20px;
+}
+
+@keyframes notif-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(59, 42, 171, 0.45); background-color: #F0EDFF; }
+  70%  { box-shadow: 0 0 0 10px rgba(59, 42, 171, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(59, 42, 171, 0); }
+}

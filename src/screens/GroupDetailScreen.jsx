@@ -37,6 +37,7 @@ export default function GroupDetailScreen() {
   const searchParams = new URLSearchParams(location.search);
   const openProofExpenseId = searchParams.get('openProof');
   const openProofId = searchParams.get('proofId');
+  const highlightExpenseId = searchParams.get('expenseId');
 
   const proofInputRef = useRef(null);
 
@@ -68,6 +69,7 @@ export default function GroupDetailScreen() {
   const [allPaymentProofs, setAllPaymentProofs] = useState([]);
   const [selectedProof, setSelectedProof] = useState(null);
   const [rejectReason, setRejectReason] = useState('');
+  const [highlightedExpenseId, setHighlightedExpenseId] = useState(null);
   const [rejectProofReason, setRejectProofReason] = useState('');
   const [toast, setToast] = useState(null);
   const [pendingExpenseApprovals, setPendingExpenseApprovals] = useState([]);
@@ -285,6 +287,47 @@ export default function GroupDetailScreen() {
     loadSplitsAndProofs();
   }, [expenses, fetchExpenseSplits]);
 
+  // ── Auto-open the "View Proof" modal when arriving from a payment-proof
+  // notification (Payment Proof Submitted/Resubmitted/Confirmed/Rejected).
+  // Retries as allPaymentProofs/expenseSplits load in, then strips the query
+  // params so a refresh or closing the modal doesn't reopen it.
+  useEffect(() => {
+    if (!openProofId || loading) return;
+    const proof = allPaymentProofs.find(p => p.id === openProofId);
+    if (!proof) return; // proofs may not have loaded yet — effect retries below
+
+    const splits = expenseSplits[proof.expense_id] || [];
+    const split = splits.find(s => s.proof_id === proof.id)
+      || splits.find(s => s.user_id === proof.submitted_by);
+
+    openProofModal(proof, split);
+    navigate(`${location.pathname}?type=${contextType}`, { replace: true, state: location.state });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openProofId, loading, allPaymentProofs, expenseSplits]);
+
+  // ── Scroll to + briefly highlight the specific expense when arriving from
+  // a "New Expense Pending Approval" / "Expense Approved" / "Expense Amount
+  // Updated" notification. Retries as pendingExpenseApprovals/expenses load.
+  useEffect(() => {
+    if (!highlightExpenseId || loading) return;
+    const el = document.getElementById(`expense-${highlightExpenseId}`);
+    if (!el) return; // not rendered yet (data still loading, or wrong tab) — retries below
+
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setHighlightedExpenseId(highlightExpenseId);
+    navigate(`${location.pathname}?type=${contextType}`, { replace: true, state: location.state });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [highlightExpenseId, loading, pendingExpenseApprovals, expenses]);
+
+  // Clears the highlight a few seconds after it's set. Kept as its own effect
+  // (depending only on highlightedExpenseId, not the URL) so the query-string
+  // cleanup above doesn't cancel this timer before it fires.
+  useEffect(() => {
+    if (!highlightedExpenseId) return;
+    const t = setTimeout(() => setHighlightedExpenseId(null), 3000);
+    return () => clearTimeout(t);
+  }, [highlightedExpenseId]);
+
   useEffect(() => {
     fetchGroupAndData();
   }, [fetchGroupAndData]);
@@ -449,6 +492,7 @@ export default function GroupDetailScreen() {
         type: 'approval_request',
         link_path: `/groups/${id}?type=${contextType}`,
         link_state: JSON.stringify({ type: contextType }),
+        link_query: `expenseId=${insertedExpense.id}`,
       });
 
       setShowAddExpense(false);
@@ -491,6 +535,7 @@ export default function GroupDetailScreen() {
       type: 'expense_approved',
       link_path: `/groups/${id}?type=${contextType}`,
       link_state: JSON.stringify({ type: contextType }),
+      link_query: `expenseId=${expense.id}`,
     });
 
     showToast('Expense approved!');
@@ -931,6 +976,7 @@ export default function GroupDetailScreen() {
         type: 'expense_updated',
         link_path: `/groups/${id}?type=${contextType}`,
         link_state: JSON.stringify({ type: contextType }),
+        link_query: `expenseId=${editAmountExpense.id}`,
       });
     }
 
@@ -1023,7 +1069,11 @@ export default function GroupDetailScreen() {
         <div className="detail-pending-section">
           <h3 className="section-title">📋 Pending Expense Approvals ({pendingExpenseApprovals.length})</h3>
           {pendingExpenseApprovals.map(expense => (
-            <div key={expense.id} className="pending-item">
+            <div
+              key={expense.id}
+              id={`expense-${expense.id}`}
+              className={`pending-item ${highlightedExpenseId === expense.id ? 'notif-highlight' : ''}`}
+            >
               <div>
                 <strong style={{ fontSize: 13, color: '#2D1A7A' }}>{expense.title}</strong>
                 <div style={{ fontSize: 11, color: '#9E8FCC' }}>
@@ -1086,7 +1136,11 @@ export default function GroupDetailScreen() {
             const myRejectedProof = allPaymentProofs.find(p => p.expense_id === expense.id && p.submitted_by === currentUser?.id && p.status === 'rejected');
 
             return (
-              <div key={expense.id} className="expense-item-detail">
+              <div
+                key={expense.id}
+                id={`expense-${expense.id}`}
+                className={`expense-item-detail ${highlightedExpenseId === expense.id ? 'notif-highlight' : ''}`}
+              >
                 <div className="expense-icon" style={{ background: CATEGORY_COLORS[expense.category] || '#3B2AAB' }}>
                   <span>{CATEGORY_ICONS[expense.category] || '📦'}</span>
                 </div>
