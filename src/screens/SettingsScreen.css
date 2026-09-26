@@ -525,6 +525,140 @@
 
 .settings-modal-input:focus { border-color: #3B2AAB; }
 
+/* ── QR Code Upload (Payment Details modal) ── */
+.qr-upload-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.qr-upload-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary, #5A4AAA);
+  padding-left: 4px;
+  font-family: 'Poppins', sans-serif;
+}
+
+/* Empty state: dashed upload button */
+.qr-upload-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 18px 0;
+  border-radius: 16px;
+  border: 1.5px dashed var(--input-border, #E0D9FF);
+  background: var(--icon-bg, #F8F6FF);
+  color: #3B2AAB;
+  font-family: 'Poppins', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.qr-upload-btn:hover:not(:disabled) {
+  background: #F0EDFF;
+  border-color: #3B2AAB;
+}
+
+.qr-upload-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Filled state: QR preview card */
+.qr-preview-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px;
+  border-radius: 16px;
+  border: 1.5px solid var(--input-border, #E0D9FF);
+  background: var(--icon-bg, #F8F6FF);
+  box-sizing: border-box;
+}
+
+/* Fixed, self-contained frame — any uploaded image (big or small,
+   square or not) is scaled down to fit perfectly, never overflows. */
+.qr-preview-img {
+  width: 64px;
+  height: 64px;
+  flex-shrink: 0;
+  object-fit: contain;
+  object-position: center;
+  background: white;
+  border-radius: 10px;
+  border: 1px solid var(--input-border, #E0D9FF);
+  padding: 4px;
+  box-sizing: border-box;
+}
+
+.qr-preview-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  justify-content: flex-end;
+}
+
+.qr-replace-btn {
+  background: white;
+  color: #3B2AAB;
+  border: 1.5px solid #3B2AAB;
+  border-radius: 50px;
+  padding: 8px 16px;
+  font-family: 'Poppins', sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+  white-space: nowrap;
+}
+
+.qr-replace-btn:hover:not(:disabled) {
+  background: #F0EDFF;
+}
+
+.qr-replace-btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.qr-replace-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.qr-remove-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  background: #ffe5e5;
+  color: #e53e3e;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+}
+
+.qr-remove-btn:hover {
+  background: #ffd0d0;
+}
+
+.qr-remove-btn:active {
+  transform: scale(0.94);
+}
+
 /* Members Modal */
 .member-manage-row {
   display: flex;
