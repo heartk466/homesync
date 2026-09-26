@@ -460,6 +460,28 @@ export default function ExpensesScreen() {
     setLoading(false);
   };
 
+  // Recomputes the whole-expense status from the current state of ALL its
+  // splits, instead of any single action force-setting it. Call this after
+  // every split status change (submit proof, approve, reject) so the badge
+  // never goes stale or gets stuck on an old value.
+  const recalculateExpenseStatus = async (expenseId) => {
+    const { data: allSplits } = await supabase
+      .from('expense_splits')
+      .select('status')
+      .eq('expense_id', expenseId);
+    if (!allSplits || allSplits.length === 0) return;
+
+    let newStatus;
+    if (allSplits.every(s => s.status === 'approved')) {
+      newStatus = 'paid';
+    } else if (allSplits.some(s => s.status === 'pending_verification')) {
+      newStatus = 'verifying';
+    } else {
+      newStatus = 'pending';
+    }
+    await supabase.from('expenses').update({ status: newStatus }).eq('id', expenseId);
+  };
+
   const handleApproveSplit = async (split) => {
     setLoading(true);
     const { error } = await supabase
@@ -467,14 +489,7 @@ export default function ExpensesScreen() {
       .update({ status: 'approved', updated_at: new Date().toISOString() })
       .eq('id', split.id);
     if (!error) {
-      const { data: allSplits } = await supabase
-        .from('expense_splits')
-        .select('status')
-        .eq('expense_id', split.expense_id);
-      const allApproved = allSplits.every(s => s.status === 'approved');
-      if (allApproved) {
-        await supabase.from('expenses').update({ status: 'paid' }).eq('id', split.expense_id);
-      }
+      await recalculateExpenseStatus(split.expense_id);
       showToast('Payment approved!');
       await handleHouseholdSelect(selectedHousehold, currentUser, profile);
     } else {
@@ -497,6 +512,7 @@ export default function ExpensesScreen() {
           .update({ status: 'rejected', rejection_reason: rejectReason })
           .eq('id', selectedSplit.proof_id);
       }
+      await recalculateExpenseStatus(selectedSplit.expense_id);
       showToast('Payment rejected.');
       setShowRejectModal(false);
       setRejectReason('');
@@ -547,7 +563,7 @@ export default function ExpensesScreen() {
       .eq('expense_id', selectedExpense.id)
       .eq('user_id', currentUser.id);
 
-    await supabase.from('expenses').update({ status: 'verifying' }).eq('id', selectedExpense.id);
+    await recalculateExpenseStatus(selectedExpense.id);
 
     if (selectedHousehold?.created_by) {
       await supabase.from('notifications').insert({
@@ -582,14 +598,7 @@ export default function ExpensesScreen() {
         .eq('id', split.expense_id);
     }
 
-    const { data: allSplits } = await supabase
-      .from('expense_splits')
-      .select('status')
-      .eq('expense_id', split.expense_id);
-    const allApproved = allSplits.every(s => s.status === 'approved');
-    if (allApproved) {
-      await supabase.from('expenses').update({ status: 'paid' }).eq('id', split.expense_id);
-    }
+    await recalculateExpenseStatus(split.expense_id);
 
     await supabase.from('notifications').insert({
       user_id: proof.submitted_by,
@@ -609,7 +618,7 @@ export default function ExpensesScreen() {
     setLoading(true);
     await supabase.from('payment_proofs').update({ status: 'rejected', rejection_reason: rejectProofReason }).eq('id', selectedProof.id);
     await supabase.from('expense_splits').update({ status: 'unpaid', proof_id: null, rejection_reason: rejectProofReason, updated_at: new Date().toISOString() }).eq('id', selectedSplit.id);
-    await supabase.from('expenses').update({ status: 'pending' }).eq('id', selectedProof.expense_id);
+    await recalculateExpenseStatus(selectedProof.expense_id);
     await supabase.from('notifications').insert({
       user_id: selectedProof.submitted_by,
       title: 'Payment Proof Rejected ❌',
@@ -890,11 +899,6 @@ export default function ExpensesScreen() {
                 {mySplit?.status === 'pending_verification' && (
                   <div className="reimburse-row">
                     <span className="owe-text">⏳ Proof submitted, awaiting approval</span>
-                  </div>
-                )}
-                {mySplit?.status === 'approved' && (
-                  <div className="reimburse-row">
-                    <span className="owe-text">✅ Paid</span>
                   </div>
                 )}
               </div>
