@@ -116,17 +116,83 @@ export async function mergeItems(duplicateId, newId) {
   return true;
 }
 
-export async function markItemAsPaid(item, screenshotUrl, note, userId) {
-  if (item.source === 'expenses') {
-    await supabase.from('expenses').update({ status: 'paid' }).eq('id', item.id);
+// Recomputes expense.status from all its expense_splits rows. Shared by
+// every screen that can change a split's status (submit proof, approve,
+// reject) so the whole-expense badge is always derived fresh instead of
+// being force-set by whichever action ran last and going stale.
+export async function recalculateExpenseStatus(expenseId) {
+  const { data: allSplits } = await supabase
+    .from('expense_splits')
+    .select('status')
+    .eq('expense_id', expenseId);
+  if (!allSplits || allSplits.length === 0) return;
+
+  let newStatus;
+  if (allSplits.every(s => s.status === 'approved')) {
+    newStatus = 'paid';
+  } else if (allSplits.some(s => s.status === 'pending_verification')) {
+    newStatus = 'verifying';
   } else {
-    await supabase.from('utilities').update({ status: 'paid' }).eq('id', item.id);
+    newStatus = 'pending';
   }
-  await supabase.from('payment_proofs').insert({
+  await supabase.from('expenses').update({ status: newStatus }).eq('id', expenseId);
+}
+
+// Submits payment proof for a utility/expense item and puts it through the
+// same verify-then-approve flow used on ExpensesScreen and GroupDetailScreen:
+// proof goes in as 'pending_verification', the member's split is marked
+// 'pending_verification', and the expense-level status is recalculated from
+// all splits — it is NOT force-marked 'paid' here. The household owner still
+// has to review and confirm the proof (from the Expenses screen's Pending
+// Approvals list) before it flips to 'approved'/'paid'.
+// Returns true on success, false if something failed.
+export async function markItemAsPaid(item, screenshotUrl, note, userId) {
+  const { data: insertedProof, error: proofError } = await supabase.from('payment_proofs').insert({
     expense_id: item.id,
     submitted_by: userId,
     screenshot_url: screenshotUrl,
     note,
-    status: 'verified',
-  });
+    status: 'pending_verification',
+  }).select().single();
+  if (proofError) return false;
+
+  const { data: existingSplit } = await supabase
+    .from('expense_splits')
+    .select('id')
+    .eq('expense_id', item.id)
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  let splitError = null;
+  if (existingSplit) {
+    const { error } = await supabase
+      .from('expense_splits')
+      .update({ status: 'pending_verification', proof_id: insertedProof.id, updated_at: new Date().toISOString() })
+      .eq('id', existingSplit.id);
+    splitError = error;
+  } else {
+    const myShare = item.members_split?.[userId];
+    const { error } = await supabase.from('expense_splits').insert({
+      expense_id: item.id,
+      user_id: userId,
+      share_amount: Number(myShare) || 0,
+      status: 'pending_verification',
+      proof_id: insertedProof.id,
+      updated_at: new Date().toISOString(),
+    });
+    splitError = error;
+  }
+  if (splitError) return false;
+
+  if (item.source === 'expenses') {
+    await recalculateExpenseStatus(item.id);
+  } else {
+    // Legacy 'utilities'-table items have no expense_splits of their own to
+    // derive a status from, so they fall back to a direct 'verifying' flag.
+    // (UtilitiesScreen's current data flow reads everything from
+    // 'expenses', so this branch is a safety net rather than the live path.)
+    await supabase.from('utilities').update({ status: 'verifying' }).eq('id', item.id);
+  }
+
+  return true;
 }

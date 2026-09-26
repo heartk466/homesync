@@ -847,3 +847,9 @@
   font-weight: 600;
   cursor: pointer;
 }
+
+.owe-text {
+  font-size: 10px;
+  color: #5A4AAA;
+  flex: 1;
+}

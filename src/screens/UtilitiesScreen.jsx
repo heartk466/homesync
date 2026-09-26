@@ -455,6 +455,7 @@ export default function UtilitiesScreen() {
             const myShare = utility.myShareAmount;
             // "Paid" = expense status is 'paid' OR current user's own split is approved
             const isPaid = utility.status === 'paid' || utility.myStatus === 'approved';
+            const isVerifying = !isPaid && (utility.status === 'verifying' || utility.myStatus === 'pending_verification');
             return (
               <div key={utility.id} className="utility-item">
                 <div className="utility-icon-wrap" style={{ background: config.bg, color: config.color }}>{config.icon}</div>
@@ -462,9 +463,14 @@ export default function UtilitiesScreen() {
                   <p className="utility-name">{utility.category} – {utility.title}: ₱{Number(utility.amount).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
                   <p className="utility-meta">{utility.split_method} | {utility.expense_date} | {utility.location}</p>
                   {myShare > 0 && <p className="utility-my-share">Your share: ₱{myShare.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>}
-                  {!isAdmin && !isPaid && (
+                  {!isAdmin && !isPaid && !isVerifying && (
                     <div className="confirmation-row">
                       <button className="pay-btn" onClick={() => { setSelectedUtility(utility); setShowPaymentProofModal(true); }}>Pay</button>
+                    </div>
+                  )}
+                  {!isAdmin && isVerifying && (
+                    <div className="confirmation-row">
+                      <span className="owe-text">⏳ Proof submitted, awaiting owner approval</span>
                     </div>
                   )}
                 </div>
@@ -472,20 +478,26 @@ export default function UtilitiesScreen() {
                   <span className="status-badge" style={{
                     background: isPaid
                       ? '#D1FAE5'
-                      : utility.approval_status === 'pending_approval'
-                        ? '#EDE9FE'
-                        : '#FFF3CD',
+                      : isVerifying
+                        ? '#fffaf0'
+                        : utility.approval_status === 'pending_approval'
+                          ? '#EDE9FE'
+                          : '#FFF3CD',
                     color: isPaid
                       ? '#065F46'
-                      : utility.approval_status === 'pending_approval'
-                        ? '#6D28D9'
-                        : '#856404'
+                      : isVerifying
+                        ? '#c05621'
+                        : utility.approval_status === 'pending_approval'
+                          ? '#6D28D9'
+                          : '#856404'
                   }}>
                     {isPaid
                       ? '✓ Paid'
-                      : utility.approval_status === 'pending_approval'
-                        ? '🕐 Needs Approval'
-                        : '⏳ Pending'}
+                      : isVerifying
+                        ? '🔍 Verifying'
+                        : utility.approval_status === 'pending_approval'
+                          ? '🕐 Needs Approval'
+                          : '⏳ Pending'}
                   </span>
                   {utility.source === 'expenses' && <span className="source-label">📋 From Expenses</span>}
                   {isAdmin && (
@@ -573,7 +585,16 @@ export default function UtilitiesScreen() {
               const { error: uploadError } = await supabase.storage.from('payment-proofs').upload(fileName, proofForm.screenshot, { upsert: true });
               if (uploadError) { showToast('Upload failed.', 'error'); setLoading(false); return; }
               const { data: urlData } = supabase.storage.from('payment-proofs').getPublicUrl(fileName);
-              await markItemAsPaid(selectedUtility, urlData.publicUrl, proofForm.note, currentUser.id);
+              const ok = await markItemAsPaid(selectedUtility, urlData.publicUrl, proofForm.note, currentUser.id);
+              if (!ok) { showToast('Failed to submit proof. Please try again.', 'error'); setLoading(false); return; }
+              if (activeHousehold?.created_by) {
+                await supabase.from('notifications').insert({
+                  user_id: activeHousehold.created_by,
+                  title: 'Payment Proof Submitted 📸',
+                  message: `${profile?.full_name || 'A member'} submitted payment proof for "${selectedUtility.title}". Review it from the Expenses screen.`,
+                  type: 'payment_proof',
+                });
+              }
               setShowPaymentProofModal(false);
               setProofForm({ note: '', screenshot: null, screenshotPreview: null });
               setSelectedUtility(null);
