@@ -570,6 +570,19 @@ export default function GroupDetailScreen() {
   };
 
   const handleApproveSplit = async (split) => {
+    // If the member submitted a payment proof, approving MUST go through the exact
+    // same flow as the "Confirm Payment" button in the proof modal. Before, this
+    // function only flipped the split to 'approved' and left the proof stuck on
+    // 'pending_verification' (and never notified the member), so the proof modal
+    // still showed "Pending Verification" + Confirm/Reject buttons.
+    const proof = allPaymentProofs.find(p => p.id === split.proof_id)
+      || allPaymentProofs.find(p => p.expense_id === split.expense_id && p.submitted_by === split.user_id && p.status === 'pending_verification');
+    if (proof) {
+      await handleConfirmPayment(proof, split);
+      return;
+    }
+
+    // No proof attached (manual "✓" mark-as-paid) — keep the original behavior.
     setLoadingAction(true);
     const { error } = await supabase
       .from('expense_splits')
@@ -1133,7 +1146,7 @@ export default function GroupDetailScreen() {
                         <Eye size={14} /> View Proof
                       </button>
                     )}
-                    <button className="pa-btn pa-btn-approve" onClick={() => handleApproveSplit(split)}>
+                    <button className="pa-btn pa-btn-approve" disabled={loadingAction} onClick={() => handleApproveSplit(split)}>
                       <Check size={14} /> Approve
                     </button>
                     <button

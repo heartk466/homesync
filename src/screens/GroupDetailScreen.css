@@ -772,3 +772,4 @@
   color: #3B2AAB;
   border: 1.5px solid #E0D9FF;
 }
+.pa-btn:disabled { opacity: 0.6; cursor: not-allowed; }
