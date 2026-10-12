@@ -651,3 +651,124 @@
   70%  { box-shadow: 0 0 0 10px rgba(59, 42, 171, 0); }
   100% { box-shadow: 0 0 0 0 rgba(59, 42, 171, 0); }
 }
+
+/* ── Pending Approvals (unified: new expenses + payment proofs) ── */
+.pa-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pa-card {
+  background: #F8F6FF;
+  border-radius: 16px;
+  padding: 12px;
+  border: 1.5px solid #E0D9FF;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pa-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.pa-icon {
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+}
+
+.pa-icon-expense { background: #F0EDFF; }
+.pa-icon-payment { background: #FFF3CD; }
+
+.pa-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pa-title-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pa-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #2D1A7A;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pa-amount {
+  font-size: 14px;
+  font-weight: 700;
+  color: #3B2AAB;
+  flex-shrink: 0;
+}
+
+.pa-meta {
+  font-size: 11px;
+  color: #9E8FCC;
+}
+
+.pa-tag {
+  align-self: flex-start;
+  margin-top: 4px;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 50px;
+}
+
+.pa-tag-expense { background: #F0EDFF; color: #3B2AAB; }
+.pa-tag-payment { background: #FFF3CD; color: #856404; }
+
+.pa-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.pa-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 0;
+  border: none;
+  border-radius: 50px;
+  font-family: 'Poppins', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: transform 0.1s ease, filter 0.15s ease;
+}
+
+.pa-btn:active { transform: scale(0.96); }
+.pa-btn:hover  { filter: brightness(0.97); }
+
+.pa-btn-approve { background: #f0fff4; color: #38a169; border: 1.5px solid #c6f6d5; }
+.pa-btn-reject  { background: #ffe5e5; color: #e53e3e; border: 1.5px solid #fed7d7; }
+
+/* View Proof spans the full width above Approve / Reject */
+.pa-btn-proof {
+  grid-column: 1 / -1;
+  background: white;
+  color: #3B2AAB;
+  border: 1.5px solid #E0D9FF;
+}

@@ -1064,60 +1064,89 @@ export default function GroupDetailScreen() {
         )}
       </div>
 
-      {/* Pending Expense Approvals */}
-      {isAdmin && pendingExpenseApprovals.length > 0 && (
+      {/* Pending Approvals — ONE section for both kinds of admin approvals:
+          1) a member's newly created expense  (Approve / Reject)
+          2) a member's payment proof          (Approve / Reject / View Proof) */}
+      {isAdmin && (pendingExpenseApprovals.length + pendingApprovals.length) > 0 && (
         <div className="detail-pending-section">
-          <h3 className="section-title">📋 Pending Expense Approvals ({pendingExpenseApprovals.length})</h3>
-          {pendingExpenseApprovals.map(expense => (
-            <div
-              key={expense.id}
-              id={`expense-${expense.id}`}
-              className={`pending-item ${highlightedExpenseId === expense.id ? 'notif-highlight' : ''}`}
-            >
-              <div>
-                <strong style={{ fontSize: 13, color: '#2D1A7A' }}>{expense.title}</strong>
-                <div style={{ fontSize: 11, color: '#9E8FCC' }}>
-                  by {expense.profiles?.full_name} · ₱{Number(expense.amount).toFixed(2)} · {expense.expense_date}
-                </div>
-              </div>
-              <div className="pending-actions">
-                <button className="approve-btn" onClick={() => handleApproveExpense(expense)}>
-                  <Check size={14} /> Approve
-                </button>
-                <button className="reject-btn" onClick={() => {
-                  setSelectedPendingExpense(expense);
-                  setShowRejectExpenseModal(true);
-                }}>
-                  <X size={14} /> Reject
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+          <h3 className="section-title">
+            ⏳ Pending Approvals ({pendingExpenseApprovals.length + pendingApprovals.length})
+          </h3>
 
-      {/* Pending Approvals (splits) */}
-      {isAdmin && pendingApprovals.length > 0 && (
-        <div className="detail-pending-section">
-          <h3 className="section-title">⏳ Pending Payment Approvals ({pendingApprovals.length})</h3>
-          {pendingApprovals.map(split => {
-            const expense = expenses.find(e => e.id === split.expense_id);
-            const proof = allPaymentProofs.find(p => p.id === split.proof_id) 
-              || allPaymentProofs.find(p => p.expense_id === split.expense_id && p.submitted_by === split.user_id && p.status === 'pending_verification');
-            return (
-              <div key={split.id} className="pending-item">
-                <div>
-                  <strong>{expense?.title}</strong><br />
-                  <span>{split.profiles?.full_name} – ₱{Number(split.share_amount).toFixed(2)}</span>
+          <div className="pa-list">
+            {/* New expenses waiting for approval */}
+            {pendingExpenseApprovals.map(expense => (
+              <div
+                key={`exp-${expense.id}`}
+                id={`expense-${expense.id}`}
+                className={`pa-card ${highlightedExpenseId === expense.id ? 'notif-highlight' : ''}`}
+              >
+                <div className="pa-top">
+                  <div className="pa-icon pa-icon-expense">🧾</div>
+                  <div className="pa-info">
+                    <div className="pa-title-row">
+                      <span className="pa-title">{expense.title}</span>
+                      <span className="pa-amount">₱{Number(expense.amount).toFixed(2)}</span>
+                    </div>
+                    <div className="pa-meta">by {expense.profiles?.full_name} · {expense.expense_date}</div>
+                    <span className="pa-tag pa-tag-expense">New expense</span>
+                  </div>
                 </div>
-                <div className="pending-actions">
-                  <button className="approve-btn" onClick={() => handleApproveSplit(split)}><Check size={14} /> Approve</button>
-                  <button className="reject-btn" onClick={() => { setSelectedSplit(split); setShowRejectModal(true); }}><X size={14} /> Reject</button>
-                  {proof && <button className="view-proof-btn" onClick={() => openProofModal(proof, split)}><Eye size={14} /> View Proof</button>}
+                <div className="pa-actions">
+                  <button className="pa-btn pa-btn-approve" onClick={() => handleApproveExpense(expense)}>
+                    <Check size={14} /> Approve
+                  </button>
+                  <button
+                    className="pa-btn pa-btn-reject"
+                    onClick={() => {
+                      setSelectedPendingExpense(expense);
+                      setShowRejectExpenseModal(true);
+                    }}
+                  >
+                    <X size={14} /> Reject
+                  </button>
                 </div>
               </div>
-            );
-          })}
+            ))}
+
+            {/* Payment proofs waiting for approval */}
+            {pendingApprovals.map(split => {
+              const expense = expenses.find(e => e.id === split.expense_id);
+              const proof = allPaymentProofs.find(p => p.id === split.proof_id)
+                || allPaymentProofs.find(p => p.expense_id === split.expense_id && p.submitted_by === split.user_id && p.status === 'pending_verification');
+              return (
+                <div key={`pay-${split.id}`} className="pa-card">
+                  <div className="pa-top">
+                    <div className="pa-icon pa-icon-payment">📸</div>
+                    <div className="pa-info">
+                      <div className="pa-title-row">
+                        <span className="pa-title">{expense?.title}</span>
+                        <span className="pa-amount">₱{Number(split.share_amount).toFixed(2)}</span>
+                      </div>
+                      <div className="pa-meta">{split.profiles?.full_name}'s share</div>
+                      <span className="pa-tag pa-tag-payment">Payment proof</span>
+                    </div>
+                  </div>
+                  <div className="pa-actions">
+                    {proof && (
+                      <button className="pa-btn pa-btn-proof" onClick={() => openProofModal(proof, split)}>
+                        <Eye size={14} /> View Proof
+                      </button>
+                    )}
+                    <button className="pa-btn pa-btn-approve" onClick={() => handleApproveSplit(split)}>
+                      <Check size={14} /> Approve
+                    </button>
+                    <button
+                      className="pa-btn pa-btn-reject"
+                      onClick={() => { setSelectedSplit(split); setShowRejectModal(true); }}
+                    >
+                      <X size={14} /> Reject
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 
