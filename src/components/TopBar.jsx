@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import { Bell, X, LogOut, Camera, Edit, MessageCircle } from 'lucide-react';
 import './TopBar.css';
@@ -19,6 +19,7 @@ export default function TopBar({
   chatUnreadCount = 0,
 }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const fileInputRef = useRef(null);
 
   const [showProfileCard, setShowProfileCard] = useState(false);
@@ -152,11 +153,15 @@ export default function TopBar({
 
   /**
    * Handle notification tap — works like Facebook notifications.
-   * Navigates to the linked screen and opens the proof modal.
+   *
+   * Flow:  current screen  →  /groups (GroupsScreen)  →  /group-detail/:id (GroupDetailScreen)
+   *
+   * Why this was broken: notifications are saved with link_path "/groups/<id>?type=...",
+   * but GroupDetailScreen actually lives at "/group-detail/<id>" (see GroupsScreen).
+   * "/groups/<id>" matches no route, so React Router rendered nothing → blank gray page.
+   * We now rewrite the path here, so it also fixes OLD notifications already in the DB.
    */
   const handleNotificationClick = async (notification) => {
-    console.log("🔔 Notification clicked:", notification);
-    
     // Mark this notification as read
     if (!notification.is_read) {
       await supabase
@@ -169,33 +174,51 @@ export default function TopBar({
     // Close notification panel
     setShowNotifications(false);
 
-    if (!notification.link_path) {
-      console.log("No link_path in notification");
-      return;
+    if (!notification.link_path) return;
+
+    // 1) Split link_path into "path" + its own query string, then merge link_query
+    //    (expenseId / openProof / proofId) in as proper separate params.
+    const [rawPath, rawQuery = ''] = notification.link_path.split('?');
+    const params = new URLSearchParams(rawQuery);
+    if (notification.link_query) {
+      new URLSearchParams(notification.link_query).forEach((value, key) => params.set(key, value));
     }
 
-    // Build destination URL with optional query string. link_path already
-    // contains its own "?type=..." query string (set by GroupDetailScreen),
-    // so joining another param list with "?" would produce a malformed
-    // double-"?" URL and silently swallow openProof/proofId/expenseId into
-    // the "type" value instead of parsing as their own params. Use "&" when
-    // link_path already has a query string.
-    const separator = notification.link_path.includes('?') ? '&' : '?';
-    const query = notification.link_query ? `${separator}${notification.link_query}` : '';
-    const destination = `${notification.link_path}${query}`;
-
-    // Parse link_state back to object for react-router state
+    // 2) Restore router state (e.g. { type: 'household' | 'group' })
     let state = {};
     try {
       if (notification.link_state) state = JSON.parse(notification.link_state);
     } catch (_) {}
 
-    console.log("📍 Navigating to:", destination, state);
-    
-    // Small delay to ensure panel closes before navigation
+    // 3) Pull the group/household id out of the path. Accepts both the old
+    //    "/groups/<id>" and the correct "/group-detail/<id>" formats.
+    const match = rawPath.match(/^\/(?:groups|group-detail)\/([^/]+)/);
+
+    // Not a group link (future notification types) → navigate as-is
+    if (!match) {
+      const qs = params.toString();
+      setTimeout(() => navigate(qs ? `${rawPath}?${qs}` : rawPath, { state }), 100);
+      return;
+    }
+
+    const groupId = match[1];
+    const type = params.get('type') || state.type || 'group';
+    params.set('type', type);
+    state = { ...state, type };
+
+    const detailUrl = `/group-detail/${groupId}?${params.toString()}`;
+    const onGroupsScreen = location.pathname === '/groups';
+    const onSameDetail = location.pathname === `/group-detail/${groupId}`;
+
+    // 4) Step one: land on GroupsScreen so the back button returns there
+    if (!onGroupsScreen && !onSameDetail) {
+      navigate('/groups');
+    }
+
+    // 5) Step two: open the exact GroupDetailScreen (it handles the highlight / proof modal)
     setTimeout(() => {
-      navigate(destination, { state });
-    }, 100);
+      navigate(detailUrl, { state, replace: onSameDetail });
+    }, onGroupsScreen || onSameDetail ? 100 : 150);
   };
 
   const getNotificationIcon = (type) => {
