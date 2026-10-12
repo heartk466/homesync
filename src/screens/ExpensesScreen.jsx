@@ -37,6 +37,15 @@ const CATEGORY_COLORS = {
   Subscription: '#9B2C87',
 };
 
+// Local (device) date as YYYY-MM-DD. toISOString() uses UTC, which returns
+// "yesterday" before 8 AM in the Philippines (UTC+8).
+const getTodayStr = () => {
+  const d = new Date();
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().split('T')[0];
+};
+const fmtDate = (str) =>
+  str ? new Date(`${str}T00:00:00`).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+
 export default function ExpensesScreen() {
   const navigate = useNavigate();
   const fileInputRef = useRef(null);
@@ -101,8 +110,8 @@ export default function ExpensesScreen() {
     title: '',
     amount: '',
     category: 'Rent',
-    expense_date: new Date().toISOString().split('T')[0],
-    location: '',
+    expense_date: getTodayStr(),
+    due_date: '',
     who_paid: '',
     split_type: 'equal',
     selected_members: [],
@@ -268,8 +277,8 @@ export default function ExpensesScreen() {
       title: '',
       amount: '',
       category: 'Rent',
-      expense_date: new Date().toISOString().split('T')[0],
-      location: household?.name || '',
+      expense_date: getTodayStr(),
+    due_date: '',
       who_paid: adminStatus && activeUser ? activeUser.id : '',
       split_type: 'equal',
       selected_members: [],
@@ -380,8 +389,9 @@ export default function ExpensesScreen() {
       amount: totalAmount,
       category: finalCategory,
       expense_type: finalCategory,
-      expense_date: expenseForm.expense_date,
-      location: expenseForm.location || selectedHousehold.name,
+      expense_date: getTodayStr(),              // auto: the day it was created (not editable)
+      due_date: expenseForm.due_date || null,   // optional
+      location: selectedHousehold.name,         // always the household whose tab is selected
       paid_by: expenseForm.who_paid,
       split_type: expenseForm.split_type,
       members_split: splits,
@@ -389,42 +399,84 @@ export default function ExpensesScreen() {
       approval_status: isAdmin ? 'approved' : 'pending_approval',
     };
 
-    const { error } = await supabase.from('expenses').insert(insertData);
+    const { data: insertedExpense, error } = await supabase
+      .from('expenses')
+      .insert(insertData)
+      .select()
+      .single();
+
     if (error) {
       showToast('Failed to add expense: ' + error.message, 'error');
-    } else {
-      showToast(isAdmin ? 'Expense added! ✅' : 'Expense submitted for approval! ⏳');
-      setShowAddExpense(false);
-      setExpenseForm({
-        title: '',
-        amount: '',
-        category: 'Rent',
-        expense_date: new Date().toISOString().split('T')[0],
-        location: selectedHousehold.name,
-        who_paid: isAdmin ? currentUser.id : '',
-        split_type: 'equal',
-        selected_members: [],
-        custom_splits: {},
-      });
-      setOtherType('');
-
-      if (!isAdmin && selectedHousehold?.created_by) {
-        await supabase.from('notifications').insert({
-          user_id: selectedHousehold.created_by,
-          title: 'New Expense Pending Approval',
-          message: `${profile?.full_name} submitted "${expenseForm.title}" for ₱${expenseForm.amount}`,
-          type: 'approval_request',
-        });
-      }
-      await handleHouseholdSelect(selectedHousehold, currentUser, profile);
+      return;
     }
+
+    // Deep-link: TopBar sends the user  current screen → /groups → /group-detail/<id>
+    // and GroupDetailScreen highlights the expense (same as notifications made there).
+    const notifLink = (linkQuery) => ({
+      link_path: `/groups/${selectedHousehold.id}?type=household`,
+      link_state: JSON.stringify({ type: 'household' }),
+      link_query: linkQuery,
+    });
+
+    if (isAdmin) {
+      // Owner-created expenses are approved right away, so create the split rows now
+      // (same as GroupDetailScreen) and tell every member who owes a share.
+      const splitRows = expenseForm.selected_members.map(uid => ({
+        expense_id: insertedExpense.id,
+        user_id: uid,
+        share_amount: Number(splits[uid]),
+        status: uid === expenseForm.who_paid ? 'approved' : 'unpaid',
+        updated_at: new Date().toISOString(),
+      }));
+      const { error: splitError } = await supabase.from('expense_splits').insert(splitRows);
+      if (splitError) console.error('Failed to create splits:', splitError);
+
+      const dueText = expenseForm.due_date ? ` Due ${fmtDate(expenseForm.due_date)}.` : '';
+      const notifRows = expenseForm.selected_members
+        .filter(uid => uid !== currentUser.id)
+        .map(uid => ({
+          user_id: uid,
+          title: 'New Expense Added',
+          message: `${profile?.full_name} added "${insertedExpense.title}" for ₱${totalAmount.toFixed(2)}. Your share: ₱${Number(splits[uid]).toFixed(2)}.${dueText}`,
+          type: 'expense_added',
+          ...notifLink(`expenseId=${insertedExpense.id}`),
+        }));
+      if (notifRows.length) {
+        const { error: notifError } = await supabase.from('notifications').insert(notifRows);
+        if (notifError) console.error('Failed to notify members:', notifError);
+      }
+    } else if (selectedHousehold?.created_by) {
+      await supabase.from('notifications').insert({
+        user_id: selectedHousehold.created_by,
+        title: 'New Expense Pending Approval',
+        message: `${profile?.full_name} submitted "${insertedExpense.title}" for ₱${totalAmount.toFixed(2)}. Tap to review.`,
+        type: 'approval_request',
+        ...notifLink(`expenseId=${insertedExpense.id}`),
+      });
+    }
+
+    showToast(isAdmin ? 'Expense added! ✅' : 'Expense submitted for approval! ⏳');
+    setShowAddExpense(false);
+    setExpenseForm({
+      title: '',
+      amount: '',
+      category: 'Rent',
+      expense_date: getTodayStr(),
+      due_date: '',
+      who_paid: isAdmin ? currentUser.id : '',
+      split_type: 'equal',
+      selected_members: [],
+      custom_splits: {},
+    });
+    setOtherType('');
+    await handleHouseholdSelect(selectedHousehold, currentUser, profile);
   };
 
   const handleAddExpense = async () => {
     const errors = {};
     if (!expenseForm.title.trim()) errors.title = 'Title is required';
     if (!expenseForm.amount || isNaN(expenseForm.amount)) errors.amount = 'Valid amount is required';
-    if (!expenseForm.expense_date) errors.expense_date = 'Date is required';
+    if (expenseForm.due_date && expenseForm.due_date < getTodayStr()) errors.due_date = 'Due date cannot be in the past';
     if (!expenseForm.who_paid) errors.who_paid = 'Please select who paid';
     if (expenseForm.selected_members.length === 0) errors.members = 'Select at least one member to split with';
 
@@ -443,10 +495,10 @@ export default function ExpensesScreen() {
 
     if (isUtilityCategory(expenseForm.category)) {
       const dupes = await checkDuplicate(
-        profile.household_id,
+        selectedHousehold.id,
         expenseForm.category,
         Number(expenseForm.amount),
-        expenseForm.expense_date
+        getTodayStr()
       );
       if (dupes.length > 0) {
         setDuplicateItem(dupes[0]);
@@ -571,6 +623,9 @@ export default function ExpensesScreen() {
         title: 'Payment Proof Submitted 📸',
         message: `${profile?.full_name} submitted payment proof for "${selectedExpense.title}"`,
         type: 'payment_proof',
+        link_path: `/groups/${selectedHousehold.id}?type=household`,
+        link_state: JSON.stringify({ type: 'household' }),
+        link_query: `openProof=${selectedExpense.id}&proofId=${insertedProof.id}`,
       });
     }
     setShowPaymentProofModal(false);
@@ -605,6 +660,9 @@ export default function ExpensesScreen() {
       title: 'Payment Confirmed! ✅',
       message: `Your payment has been verified!`,
       type: 'payment_confirmed',
+      link_path: `/groups/${selectedHousehold.id}?type=household`,
+      link_state: JSON.stringify({ type: 'household' }),
+      link_query: `openProof=${split.expense_id}&proofId=${proof.id}`,
     });
 
     setShowViewProofModal(false);
@@ -624,6 +682,9 @@ export default function ExpensesScreen() {
       title: 'Payment Proof Rejected ❌',
       message: `Your payment proof was rejected. Reason: ${rejectProofReason}`,
       type: 'payment_rejected',
+      link_path: `/groups/${selectedHousehold.id}?type=household`,
+      link_state: JSON.stringify({ type: 'household' }),
+      link_query: `openProof=${selectedProof.expense_id}&proofId=${selectedProof.id}`,
     });
     setShowRejectProofModal(false);
     setRejectProofReason('');
@@ -705,6 +766,9 @@ export default function ExpensesScreen() {
         title: '✏️ Expense Amount Updated',
         message: `The owner updated "${editAmountExpense.title}" from ₱${Number(editAmountExpense.amount).toFixed(2)} to ₱${newAmount.toFixed(2)}.`,
         type: 'expense_updated',
+        link_path: `/groups/${selectedHousehold.id}?type=household`,
+        link_state: JSON.stringify({ type: 'household' }),
+        link_query: `expenseId=${editAmountExpense.id}`,
       });
     }
 
@@ -879,7 +943,7 @@ export default function ExpensesScreen() {
                   <p className="expense-name">{expense.title}</p>
                   <p className="expense-amount">₱{Number(expense.amount).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
                 </div>
-                <p className="expense-meta">{expense.expense_date} · {selectedHousehold?.name || expense.location || ''}</p>
+                <p className="expense-meta">{expense.expense_date} · {selectedHousehold?.name || expense.location || ''}{expense.due_date ? ` · Due ${fmtDate(expense.due_date)}` : ''}</p>
                 <div className="expense-footer-row">
                   <div className="expense-members">
                     {expenseMembers.slice(0, 3).map((m, i) => (
@@ -920,13 +984,13 @@ export default function ExpensesScreen() {
         <div className="modal-overlay">
           <div className="add-expense-modal">
             <div className="modal-header">
-              <h2>New Expense · {selectedHousehold?.name}</h2>
+              <h2>Add Expense · {selectedHousehold?.name}</h2>
               <button className="modal-close" onClick={() => { setShowAddExpense(false); setOtherType(''); setExpenseForm({
                 title: '',
                 amount: '',
                 category: 'Rent',
-                expense_date: new Date().toISOString().split('T')[0],
-                location: selectedHousehold?.name || '',
+                expense_date: getTodayStr(),
+    due_date: '',
                 who_paid: isAdmin ? currentUser?.id : '',
                 split_type: 'equal',
                 selected_members: [],
@@ -935,7 +999,12 @@ export default function ExpensesScreen() {
             </div>
             <div className="modal-scroll">
               <div className="form-group">
-                <label>Amount</label>
+                <label>Description *</label>
+                <input type="text" placeholder="e.g. Electricity bill" value={expenseForm.title} onChange={e => setExpenseForm({ ...expenseForm, title: e.target.value })} className={expenseErrors.title ? 'input-error' : ''} />
+                {expenseErrors.title && <span className="form-error">{expenseErrors.title}</span>}
+              </div>
+              <div className="form-group">
+                <label>Amount *</label>
                 <div className="amount-input-wrap">
                   <span className="peso-sign">₱</span>
                   <input type="number" placeholder="0.00" value={expenseForm.amount} onChange={e => setExpenseForm({ ...expenseForm, amount: e.target.value })} />
@@ -943,13 +1012,14 @@ export default function ExpensesScreen() {
                 {expenseErrors.amount && <span className="form-error">{expenseErrors.amount}</span>}
               </div>
               <div className="form-group">
-                <label>Description</label>
-                <input type="text" placeholder="e.g. Electricity bill" value={expenseForm.title} onChange={e => setExpenseForm({ ...expenseForm, title: e.target.value })} className={expenseErrors.title ? 'input-error' : ''} />
-                {expenseErrors.title && <span className="form-error">{expenseErrors.title}</span>}
+                <label>Date</label>
+                <input type="date" value={getTodayStr()} readOnly disabled className="input-readonly" />
+                <span className="form-hint">Set automatically to today</span>
               </div>
               <div className="form-group">
-                <label>Date</label>
-                <input type="date" value={expenseForm.expense_date} onChange={e => setExpenseForm({ ...expenseForm, expense_date: e.target.value })} />
+                <label>Due Date (optional)</label>
+                <input type="date" value={expenseForm.due_date} min={getTodayStr()} onChange={e => setExpenseForm({ ...expenseForm, due_date: e.target.value })} className={expenseErrors.due_date ? 'input-error' : ''} />
+                {expenseErrors.due_date && <span className="form-error">{expenseErrors.due_date}</span>}
               </div>
               <div className="form-group">
                 <label>Category</label>
@@ -1001,11 +1071,7 @@ export default function ExpensesScreen() {
                 </div>
               )}
               <div className="form-group">
-                <label>Location (optional)</label>
-                <input type="text" placeholder="Location" value={expenseForm.location} onChange={e => setExpenseForm({ ...expenseForm, location: e.target.value })} />
-              </div>
-              <div className="form-group">
-                <label>Who Paid</label>
+                <label>Who Paid *</label>
                 <div className="select-wrap">
                   <select value={expenseForm.who_paid} onChange={e => setExpenseForm({ ...expenseForm, who_paid: e.target.value })} className={expenseErrors.who_paid ? 'input-error' : ''}>
                     <option value="">Select member</option>
@@ -1016,7 +1082,7 @@ export default function ExpensesScreen() {
                 {expenseErrors.who_paid && <span className="form-error">{expenseErrors.who_paid}</span>}
               </div>
               <div className="form-group">
-                <label>Split With</label>
+                <label>Split With *</label>
                 <div className="members-select">
                   {householdMembers.map(m => (
                     <label key={m.user_id} className="member-checkbox">
@@ -1030,10 +1096,10 @@ export default function ExpensesScreen() {
                 {expenseErrors.members && <span className="form-error">{expenseErrors.members}</span>}
               </div>
               <div className="form-group">
-                <label>Splitting Method</label>
+                <label>Split Method</label>
                 <div className="split-toggle">
-                  <button type="button" className={`split-btn ${expenseForm.split_type === 'equal' ? 'active' : ''}`} onClick={() => setExpenseForm({ ...expenseForm, split_type: 'equal' })}>Equal Split</button>
-                  <button type="button" className={`split-btn ${expenseForm.split_type === 'custom' ? 'active' : ''}`} onClick={() => setExpenseForm({ ...expenseForm, split_type: 'custom' })}>Custom Split</button>
+                  <button type="button" className={`split-btn ${expenseForm.split_type === 'equal' ? 'active' : ''}`} onClick={() => setExpenseForm({ ...expenseForm, split_type: 'equal' })}>Equal</button>
+                  <button type="button" className={`split-btn ${expenseForm.split_type === 'custom' ? 'active' : ''}`} onClick={() => setExpenseForm({ ...expenseForm, split_type: 'custom' })}>Custom</button>
                 </div>
               </div>
               {expenseForm.split_type === 'custom' && (

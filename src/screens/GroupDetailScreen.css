@@ -773,3 +773,16 @@
   border: 1.5px solid #E0D9FF;
 }
 .pa-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* Auto-set (read-only) creation date + helper text in Add Expense modal */
+.detail-input.detail-input-readonly {
+  background: #F5F3FF;
+  color: #9E8FCC;
+  cursor: not-allowed;
+}
+
+.detail-hint {
+  font-size: 10px;
+  color: #9E8FCC;
+  padding-left: 8px;
+}

@@ -1230,3 +1230,16 @@
   font-weight: 700;
   color: #9B2C87;
 }
+
+/* Auto-set (read-only) creation date + helper text in Add Expense modal */
+.form-group input.input-readonly {
+  background: #F5F3FF;
+  color: #9E8FCC;
+  cursor: not-allowed;
+}
+
+.form-hint {
+  font-size: 10px;
+  color: #9E8FCC;
+  padding-left: 8px;
+}

@@ -28,6 +28,15 @@ const CATEGORY_COLORS = {
   Subscription: '#9B2C87',
 };
 
+// Local (device) date as YYYY-MM-DD. toISOString() uses UTC, which returns
+// "yesterday" before 8 AM in the Philippines (UTC+8).
+const getTodayStr = () => {
+  const d = new Date();
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().split('T')[0];
+};
+const fmtDate = (str) =>
+  str ? new Date(`${str}T00:00:00`).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+
 export default function GroupDetailScreen() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -104,7 +113,8 @@ export default function GroupDetailScreen() {
 
   const [expenseForm, setExpenseForm] = useState({
     title: '', amount: '', category: 'Food',
-    expense_date: new Date().toISOString().split('T')[0],
+    expense_date: getTodayStr(),
+    due_date: '',
     location: '', who_paid: '', split_type: 'equal',
     selected_members: [], custom_splits: {}
   });
@@ -356,7 +366,8 @@ export default function GroupDetailScreen() {
   const resetExpenseForm = () => {
     setExpenseForm({
       title: '', amount: '', category: 'Food',
-      expense_date: new Date().toISOString().split('T')[0],
+      expense_date: getTodayStr(),
+    due_date: '',
       location: group?.name || '', who_paid: currentUser?.id || '',
       split_type: 'equal', selected_members: [], custom_splits: {}
     });
@@ -407,6 +418,7 @@ export default function GroupDetailScreen() {
   const handleAddExpense = async () => {
     const errors = {};
     if (!expenseForm.title.trim()) errors.title = 'Title required';
+    if (expenseForm.due_date && expenseForm.due_date < getTodayStr()) errors.due_date = 'Due date cannot be in the past';
     if (!expenseForm.amount || isNaN(expenseForm.amount)) errors.amount = 'Valid amount required';
     if (!expenseForm.who_paid) errors.who_paid = 'Select who paid';
     if (expenseForm.selected_members.length === 0) errors.members = 'Select at least one member';
@@ -445,7 +457,8 @@ export default function GroupDetailScreen() {
       amount: Number(expenseForm.amount),
       category: finalCategory,
       expense_type: contextType === 'household' ? 'household' : 'group',
-      expense_date: expenseForm.expense_date,
+      expense_date: getTodayStr(),             // auto: the day it was created
+      due_date: expenseForm.due_date || null,  // optional
       location: expenseForm.location || group?.name,
       paid_by: expenseForm.who_paid,
       split_type: expenseForm.split_type,
@@ -478,6 +491,25 @@ export default function GroupDetailScreen() {
         updated_at: new Date().toISOString(),
       }));
       await supabase.from('expense_splits').insert(splitRows);
+
+      // Owner-created expenses skip approval, so tell every member who owes a share.
+      const dueText = expenseForm.due_date ? ` Due ${fmtDate(expenseForm.due_date)}.` : '';
+      const notifRows = expenseForm.selected_members
+        .filter(uid => uid !== currentUser.id)
+        .map(uid => ({
+          user_id: uid,
+          title: 'New Expense Added',
+          message: `${profile?.full_name} added "${insertedExpense.title}" for ₱${Number(expenseForm.amount).toFixed(2)}. Your share: ₱${Number(splits[uid]).toFixed(2)}.${dueText}`,
+          type: 'expense_added',
+          link_path: `/groups/${id}?type=${contextType}`,
+          link_state: JSON.stringify({ type: contextType }),
+          link_query: `expenseId=${insertedExpense.id}`,
+        }));
+      if (notifRows.length) {
+        const { error: notifError } = await supabase.from('notifications').insert(notifRows);
+        if (notifError) console.error('Failed to notify members:', notifError);
+      }
+
       showToast('Expense added!');
       setShowAddExpense(false);
       resetExpenseForm();
@@ -1132,7 +1164,7 @@ export default function GroupDetailScreen() {
                       <span className="pa-title">{expense.title}</span>
                       <span className="pa-amount">₱{Number(expense.amount).toFixed(2)}</span>
                     </div>
-                    <div className="pa-meta">by {expense.profiles?.full_name} · {expense.expense_date}</div>
+                    <div className="pa-meta">by {expense.profiles?.full_name} · {expense.expense_date}{expense.due_date ? ` · Due ${fmtDate(expense.due_date)}` : ''}</div>
                     <span className="pa-tag pa-tag-expense">New expense</span>
                   </div>
                 </div>
@@ -1223,7 +1255,7 @@ export default function GroupDetailScreen() {
                   <div className="expense-title">{expense.title}</div>
                   <div className="expense-amount">₱{Number(expense.amount).toFixed(2)}</div>
                   <div className="expense-meta">
-                    {expense.expense_date}{expense.location ? ` • ${expense.location}` : ''}
+                    {expense.expense_date}{expense.location ? ` • ${expense.location}` : ''}{expense.due_date ? ` • Due ${fmtDate(expense.due_date)}` : ''}
                   </div>
 
                   <div className="member-splits-list" style={{ marginTop: 8 }}>
@@ -1358,10 +1390,23 @@ export default function GroupDetailScreen() {
                 </div>
               </div>
 
-              {/* Date */}
+              {/* Date — set automatically, not editable */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                 <label style={{ fontSize: 12, fontWeight: 600, color: '#5A4AAA' }}>Date</label>
-                <input type="date" value={expenseForm.expense_date} onChange={e => setExpenseForm({ ...expenseForm, expense_date: e.target.value })} className="detail-input" />
+                <input type="date" value={getTodayStr()} readOnly disabled className="detail-input detail-input-readonly" />
+                <span className="detail-hint">Set automatically to today</span>
+              </div>
+
+              {/* Due date — optional, no past dates */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: '#5A4AAA' }}>Due Date (optional)</label>
+                <input
+                  type="date"
+                  value={expenseForm.due_date}
+                  min={getTodayStr()}
+                  onChange={e => setExpenseForm({ ...expenseForm, due_date: e.target.value })}
+                  className={`detail-input${expenseErrors.due_date ? ' input-error' : ''}`}
+                />
               </div>
 
               {/* Category */}
