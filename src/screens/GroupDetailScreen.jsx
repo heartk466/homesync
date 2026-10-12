@@ -54,7 +54,6 @@ export default function GroupDetailScreen() {
   const [showAddExpense, setShowAddExpense] = useState(false);
   const [showPaymentProofModal, setShowPaymentProofModal] = useState(false);
   const [showViewProofModal, setShowViewProofModal] = useState(false);
-  const [showRejectModal, setShowRejectModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showRejectProofModal, setShowRejectProofModal] = useState(false);
   const [showDeleteGroupModal, setShowDeleteGroupModal] = useState(false);
@@ -68,7 +67,6 @@ export default function GroupDetailScreen() {
   const [pendingPaymentProofs, setPendingPaymentProofs] = useState([]);
   const [allPaymentProofs, setAllPaymentProofs] = useState([]);
   const [selectedProof, setSelectedProof] = useState(null);
-  const [rejectReason, setRejectReason] = useState('');
   const [highlightedExpenseId, setHighlightedExpenseId] = useState(null);
   const [rejectProofReason, setRejectProofReason] = useState('');
   const [toast, setToast] = useState(null);
@@ -544,24 +542,44 @@ export default function GroupDetailScreen() {
   };
 
   const handleRejectExpense = async () => {
-    if (!rejectExpenseReason.trim()) {
+    const reason = rejectExpenseReason.trim();
+    if (!reason) {
       showToast('Please provide a rejection reason', 'error');
       return;
     }
+    if (!selectedPendingExpense) return;
+
     setLoadingAction(true);
+    const expense = selectedPendingExpense;
+    const ownerName = profile?.full_name || 'The owner';
 
-    await supabase.from('notifications').insert({
-      user_id: selectedPendingExpense.created_by,
-      title: '❌ Expense Rejected',
-      message: `Your expense "${selectedPendingExpense.title}" was rejected. Reason: ${rejectExpenseReason}`,
-      type: 'expense_rejected',
-      link_path: `/groups/${id}?type=${contextType}`,
-      link_state: JSON.stringify({ type: contextType }),
-    });
+    // 1) Remove the proposed expense first — if this fails we stop, so the member
+    //    is never told "rejected" about an expense that still exists.
+    const { error: deleteError } = await supabase
+      .from('expenses')
+      .delete()
+      .eq('id', expense.id);
 
-    await supabase.from('expenses').delete().eq('id', selectedPendingExpense.id);
+    if (deleteError) {
+      showToast('Could not reject the expense. Please try again.', 'error');
+      setLoadingAction(false);
+      return;
+    }
 
-    showToast('Expense rejected and deleted');
+    // 2) Tell the member who proposed it (skip if the owner proposed it themselves)
+    if (expense.created_by && expense.created_by !== profile?.id) {
+      const { error: notifError } = await supabase.from('notifications').insert({
+        user_id: expense.created_by,
+        title: '❌ Expense Rejected',
+        message: `${ownerName} (owner) rejected your proposed expense "${expense.title}" for ₱${Number(expense.amount).toFixed(2)}. Reason: ${reason}`,
+        type: 'expense_rejected',
+        link_path: `/groups/${id}?type=${contextType}`,
+        link_state: JSON.stringify({ type: contextType }),
+      });
+      if (notifError) console.error('Failed to notify member of rejected expense:', notifError);
+    }
+
+    showToast('Expense rejected — member notified');
     setShowRejectExpenseModal(false);
     setRejectExpenseReason('');
     setSelectedPendingExpense(null);
@@ -614,32 +632,6 @@ export default function GroupDetailScreen() {
       fetchGroupAndData();
     } else {
       showToast('Error approving payment', 'error');
-    }
-    setLoadingAction(false);
-  };
-
-  const handleRejectSplit = async () => {
-    if (!rejectReason.trim()) { showToast('Please provide a reason', 'error'); return; }
-    setLoadingAction(true);
-    const { error } = await supabase
-      .from('expense_splits')
-      .update({ status: 'unpaid', rejection_reason: rejectReason, proof_id: null, updated_at: new Date().toISOString() })
-      .eq('id', selectedSplit.id);
-    if (!error) {
-      if (selectedSplit.proof_id) {
-        await supabase
-          .from('payment_proofs')
-          .update({ status: 'rejected', rejection_reason: rejectReason })
-          .eq('id', selectedSplit.proof_id);
-      }
-      showToast('Payment rejected');
-      setShowRejectModal(false);
-      setRejectReason('');
-      const newSplitsMap = await fetchExpenseSplits(expenses.map(e => e.id));
-      setExpenseSplits(newSplitsMap);
-      fetchGroupAndData();
-    } else {
-      showToast('Error rejecting payment', 'error');
     }
     setLoadingAction(false);
   };
@@ -904,36 +896,75 @@ export default function GroupDetailScreen() {
     fetchGroupAndData();
   };
 
+  // Single handler for rejecting a payment — used by BOTH the "Reject" button on the
+  // Pending Approvals card and the "Reject Proof" button inside the proof modal.
   const handleRejectProof = async () => {
-    if (!rejectProofReason.trim()) { showToast('Please provide a reason', 'error'); return; }
+    const reason = rejectProofReason.trim();
+    if (!reason) { showToast('Please provide a reason', 'error'); return; }
+
+    const proof = selectedProof || null;
+    // The split can be missing when the modal was opened from a notification — look it up.
+    const split = selectedSplit
+      || (proof ? (expenseSplits[proof.expense_id] || []).find(sp => sp.proof_id === proof.id || sp.user_id === proof.submitted_by) : null);
+    if (!split) { showToast('Could not find this payment. Please refresh.', 'error'); return; }
+
     setLoadingAction(true);
-    await supabase.from('payment_proofs').update({
-      status: 'rejected',
-      rejection_reason: rejectProofReason
-    }).eq('id', selectedProof.id);
-    await supabase.from('expense_splits').update({
+    const expenseId = proof?.expense_id || split.expense_id;
+    const expense = expenses.find(e => e.id === expenseId);
+    const memberId = proof?.submitted_by || split.user_id;
+    const ownerName = profile?.full_name || 'The owner';
+
+    // 1) Send the member's share back to "unpaid" with the reason
+    const { error: splitError } = await supabase.from('expense_splits').update({
       status: 'unpaid',
-      rejection_reason: rejectProofReason,
+      rejection_reason: reason,
       proof_id: null,
-      updated_at: new Date().toISOString()
-    }).eq('id', selectedSplit.id);
-    await supabase.from('expenses').update({ status: 'pending' }).eq('id', selectedProof.expense_id);
-    await supabase.from('notifications').insert({
-      user_id: selectedProof.submitted_by,
+      updated_at: new Date().toISOString(),
+    }).eq('id', split.id);
+
+    if (splitError) {
+      showToast('Error rejecting payment', 'error');
+      setLoadingAction(false);
+      return;
+    }
+
+    // 2) Mark the proof itself as rejected (if the member attached one)
+    const proofId = proof?.id || split.proof_id;
+    if (proofId) {
+      await supabase.from('payment_proofs').update({
+        status: 'rejected',
+        rejection_reason: reason,
+      }).eq('id', proofId);
+    }
+
+    // 3) Expense goes back to pending since a share is unpaid again
+    await supabase.from('expenses').update({ status: 'pending' }).eq('id', expenseId);
+
+    // 4) Notify the member: tap → opens their rejected proof so they can resubmit
+    const { error: notifError } = await supabase.from('notifications').insert({
+      user_id: memberId,
       title: '❌ Payment Proof Rejected',
-      message: `Your payment proof was rejected. Reason: ${rejectProofReason}`,
+      message: `${ownerName} (owner) rejected your payment proof for "${expense?.title || 'an expense'}" (₱${Number(split.share_amount).toFixed(2)}). Reason: ${reason}. Please submit a new proof.`,
       type: 'payment_rejected',
       link_path: `/groups/${id}?type=${contextType}`,
       link_state: JSON.stringify({ type: contextType }),
-      link_query: `openProof=${selectedProof.expense_id}&proofId=${selectedProof.id}`,
+      link_query: proofId ? `openProof=${expenseId}&proofId=${proofId}` : `expenseId=${expenseId}`,
     });
+    if (notifError) console.error('Failed to notify member of rejected proof:', notifError);
+
+    closeRejectProofModal();
+    showToast('Payment rejected — member notified');
+    setLoadingAction(false);
+    const newSplitsMap = await fetchExpenseSplits(expenses.map(e => e.id));
+    setExpenseSplits(newSplitsMap);
+    fetchGroupAndData();
+  };
+
+  const closeRejectProofModal = () => {
     setShowRejectProofModal(false);
     setRejectProofReason('');
     setSelectedProof(null);
     setSelectedSplit(null);
-    showToast('Payment proof rejected');
-    setLoadingAction(false);
-    fetchGroupAndData();
   };
 
   const openEditAmount = (expense) => {
@@ -1151,7 +1182,8 @@ export default function GroupDetailScreen() {
                     </button>
                     <button
                       className="pa-btn pa-btn-reject"
-                      onClick={() => { setSelectedSplit(split); setShowRejectModal(true); }}
+                      disabled={loadingAction}
+                      onClick={() => { setSelectedProof(proof || null); setSelectedSplit(split); setRejectProofReason(''); setShowRejectProofModal(true); }}
                     >
                       <X size={14} /> Reject
                     </button>
@@ -1571,20 +1603,6 @@ export default function GroupDetailScreen() {
         </div>
       )}
 
-      {/* Reject Split Modal */}
-      {showRejectModal && (
-        <div className="modal-overlay-detail">
-          <div className="modal-detail-card">
-            <div className="modal-header"><h2>Reject Payment</h2><button className="modal-close" onClick={() => setShowRejectModal(false)}><X size={20} /></button></div>
-            <div className="modal-body-scroll">
-              <textarea placeholder="Reason *" value={rejectReason} onChange={e => setRejectReason(e.target.value)} className="detail-textarea" />
-              <button className="add-expense-btn" onClick={handleRejectSplit}>Confirm Reject</button>
-              <button className="cancel-btn" onClick={() => setShowRejectModal(false)}>Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Delete Expense Modal */}
       {showDeleteModal && (
         <div className="modal-overlay-detail">
@@ -1600,15 +1618,31 @@ export default function GroupDetailScreen() {
         </div>
       )}
 
-      {/* Reject Proof Modal */}
+      {/* Reject Payment Modal (shared by the approvals card and the proof modal) */}
       {showRejectProofModal && (
         <div className="modal-overlay-detail">
           <div className="modal-detail-card">
-            <div className="modal-header"><h2>Reject Payment Proof</h2><button className="modal-close" onClick={() => setShowRejectProofModal(false)}><X size={20} /></button></div>
+            <div className="modal-header">
+              <h2>Reject Payment</h2>
+              <button className="modal-close" onClick={closeRejectProofModal}><X size={20} /></button>
+            </div>
             <div className="modal-body-scroll">
-              <textarea placeholder="Reason *" value={rejectProofReason} onChange={e => setRejectProofReason(e.target.value)} className="detail-textarea" />
-              <button className="add-expense-btn" onClick={handleRejectProof}>Confirm</button>
-              <button className="cancel-btn" onClick={() => setShowRejectProofModal(false)}>Cancel</button>
+              <p style={{ fontSize: 13, color: '#5A4AAA', margin: 0 }}>
+                Rejecting <strong>{(selectedSplit?.profiles?.full_name) || 'this member'}</strong>'s payment for
+                {' '}"<strong>{expenses.find(e => e.id === (selectedProof?.expense_id || selectedSplit?.expense_id))?.title || 'this expense'}</strong>"
+                {' '}will notify them with your reason so they can submit a new proof.
+              </p>
+              <textarea
+                placeholder="Reason for rejection *"
+                value={rejectProofReason}
+                onChange={e => setRejectProofReason(e.target.value)}
+                className="detail-textarea"
+                rows={3}
+              />
+              <button className="delete-confirm-btn" onClick={handleRejectProof} disabled={loadingAction}>
+                {loadingAction ? 'Rejecting...' : 'Reject & Notify Member'}
+              </button>
+              <button className="cancel-btn" onClick={closeRejectProofModal}>Cancel</button>
             </div>
           </div>
         </div>
