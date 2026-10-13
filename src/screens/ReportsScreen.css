@@ -764,3 +764,10 @@
   border-radius: 3px;
   display: inline-block;
 }
+
+.schedule-note {
+  font-size: 11px;
+  color: #9E8FCC;
+  line-height: 1.5;
+  margin: 0;
+}

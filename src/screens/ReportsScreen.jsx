@@ -556,44 +556,50 @@ export default function ReportsScreen() {
     }
   };
 
+  // First report date for a schedule (the server job moves it forward after each report)
+  const computeNextReportDate = () => {
+    const now = new Date();
+    if (scheduleForm.frequency === 'monthly') {
+      const day = Math.min(Math.max(Number(scheduleForm.day_of_month) || 1, 1), 28);
+      const next = new Date(now.getFullYear(), now.getMonth(), day);
+      if (next <= now) next.setMonth(next.getMonth() + 1);   // that day already passed this month
+      return next;
+    }
+    const days = scheduleForm.frequency === 'weekly'
+      ? 7                                                       // weekly = every 7 days
+      : Math.max(Number(scheduleForm.custom_interval_days) || 1, 1);
+    const next = new Date(now);
+    next.setDate(next.getDate() + days);
+    return next;
+  };
+
   const handleSaveSchedule = async () => {
     setLoading(true);
     try {
-      const nextDate = new Date();
-      if (scheduleForm.frequency === 'monthly') {
-        nextDate.setMonth(nextDate.getMonth() + 1);
-        nextDate.setDate(scheduleForm.day_of_month);
-      } else {
-        nextDate.setDate(nextDate.getDate() + scheduleForm.custom_interval_days);
-      }
+      const payload = {
+        frequency: scheduleForm.frequency,
+        day_of_month: scheduleForm.day_of_month,
+        custom_interval_days: scheduleForm.custom_interval_days,
+        category_filter: scheduleForm.category_filter,
+        next_scheduled_at: computeNextReportDate().toISOString(),
+        is_active: true,
+      };
 
-      if (reportSchedule) {
-        await supabase
-          .from('report_schedules')
-          .update({
-            frequency: scheduleForm.frequency,
-            day_of_month: scheduleForm.day_of_month,
-            custom_interval_days: scheduleForm.custom_interval_days,
-            category_filter: scheduleForm.category_filter,
-            next_scheduled_at: nextDate.toISOString(),
-            is_active: true,
-          })
-          .eq('id', reportSchedule.id);
-      } else {
-        await supabase.from('report_schedules').insert({
-          user_id: currentUser.id,
-          household_id: selectedHousehold?.id,
-          frequency: scheduleForm.frequency,
-          day_of_month: scheduleForm.day_of_month,
-          custom_interval_days: scheduleForm.custom_interval_days,
-          category_filter: scheduleForm.category_filter,
-          next_scheduled_at: nextDate.toISOString(),
-          is_active: true,
-        });
-      }
+      const query = reportSchedule
+        ? supabase.from('report_schedules').update(payload).eq('id', reportSchedule.id)
+        : supabase.from('report_schedules').insert({
+            ...payload,
+            user_id: currentUser.id,
+            household_id: selectedHousehold?.id,
+          });
+      const { data, error } = await query.select().single();
+      if (error) throw error;
+
+      setReportSchedule(data);   // so "Next report" shows the saved date right away
       showToast('Schedule saved! ✅');
       setShowGenerateModal(false);
-    } catch {
+    } catch (err) {
+      console.error('Save schedule failed:', err);
       showToast('Failed to save schedule.', 'error');
     }
     setLoading(false);
@@ -1005,6 +1011,10 @@ export default function ReportsScreen() {
                       <p>Next report: {new Date(reportSchedule.next_scheduled_at).toLocaleDateString()}</p>
                     </div>
                   )}
+
+                  <p className="schedule-note">
+                    🔔 On each report date at 8:00 AM you'll get a summary notification (and a phone push if you allowed notifications). Turn this off with "Report Schedules" in Settings.
+                  </p>
 
                   <button className="generate-btn" onClick={handleSaveSchedule} disabled={loading}>{loading ? 'Saving...' : 'Save Schedule'}</button>
                 </>
