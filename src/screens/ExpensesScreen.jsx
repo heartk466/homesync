@@ -126,6 +126,10 @@ export default function ExpensesScreen() {
   const [rejectProofReason, setRejectProofReason] = useState('');
   // "Other" category custom type label
   const [otherType, setOtherType] = useState('');
+  // Proof flows (same as GroupDetailScreen)
+  const [showUploadAfterAdd, setShowUploadAfterAdd] = useState(false);
+  const [justAddedExpense, setJustAddedExpense] = useState(null);
+  const [showOwnerProofModal, setShowOwnerProofModal] = useState(false);
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
@@ -425,10 +429,15 @@ export default function ExpensesScreen() {
         expense_id: insertedExpense.id,
         user_id: uid,
         share_amount: Number(splits[uid]),
-        status: uid === expenseForm.who_paid ? 'approved' : 'unpaid',
+        // Owner as payer = automatically paid. A member payer starts Unpaid and
+        // must submit proof (which the owner then approves/rejects).
+        status: (uid === expenseForm.who_paid && uid === selectedHousehold.created_by) ? 'approved' : 'unpaid',
         updated_at: new Date().toISOString(),
       }));
-      const { error: splitError } = await supabase.from('expense_splits').insert(splitRows);
+      // upsert (not insert): the DB trigger may already have created the rows
+      const { error: splitError } = await supabase
+        .from('expense_splits')
+        .upsert(splitRows, { onConflict: 'expense_id,user_id' });
       if (splitError) console.error('Failed to create splits:', splitError);
 
       const dueText = expenseForm.due_date ? ` Due ${fmtDate(expenseForm.due_date)}.` : '';
@@ -437,7 +446,7 @@ export default function ExpensesScreen() {
         .map(uid => ({
           user_id: uid,
           title: 'New Expense Added',
-          message: `${profile?.full_name} added "${insertedExpense.title}" for ₱${totalAmount.toFixed(2)}. Your share: ₱${Number(splits[uid]).toFixed(2)}.${dueText}`,
+          message: `${profile?.full_name} added "${insertedExpense.title}" for ₱${totalAmount.toFixed(2)}. Your share: ₱${Number(splits[uid]).toFixed(2)}.${dueText}${uid === expenseForm.who_paid && uid !== selectedHousehold.created_by ? ' You are marked as the payer — please upload your proof of payment.' : ''}`,
           type: 'expense_added',
           ...notifLink(`expenseId=${insertedExpense.id}`),
         }));
@@ -455,7 +464,14 @@ export default function ExpensesScreen() {
       });
     }
 
-    showToast(isAdmin ? 'Expense added! ✅' : 'Expense submitted for approval! ⏳');
+    const memberPaidUpfront = !isAdmin && expenseForm.who_paid === currentUser.id;
+    if (memberPaidUpfront) {
+      setJustAddedExpense(insertedExpense);
+      setProofForm({ note: '', screenshot: null, screenshotPreview: null });
+      setShowUploadAfterAdd(true);
+    } else {
+      showToast(isAdmin ? 'Expense added! ✅' : 'Expense submitted for approval! ⏳');
+    }
     setShowAddExpense(false);
     setExpenseForm({
       title: '',
@@ -632,6 +648,95 @@ export default function ExpensesScreen() {
     setProofForm({ note: '', screenshot: null, screenshotPreview: null });
     setSelectedExpense(null);
     showToast('Payment proof submitted! ⏳');
+    setLoading(false);
+    await handleHouseholdSelect(selectedHousehold, currentUser, profile);
+  };
+
+  // Member paid upfront and chose to attach proof while creating the expense.
+  // The proof is stored now and linked to their split when the owner approves the expense.
+  const closeUploadAfterAdd = () => {
+    setShowUploadAfterAdd(false);
+    setJustAddedExpense(null);
+    setProofForm({ note: '', screenshot: null, screenshotPreview: null });
+  };
+
+  const handleUploadProofAfterAdd = async () => {
+    if (!proofForm.screenshot || !justAddedExpense) return;
+    setLoading(true);
+    const fileExt = proofForm.screenshot.name.split('.').pop();
+    const fileName = `${currentUser.id}-${justAddedExpense.id}-${Date.now()}.${fileExt}`;
+    const { error: uploadError } = await supabase.storage
+      .from('payment-proofs')
+      .upload(fileName, proofForm.screenshot, { upsert: true });
+    if (uploadError) { showToast('Upload failed', 'error'); setLoading(false); return; }
+    const { data: urlData } = supabase.storage.from('payment-proofs').getPublicUrl(fileName);
+    const { error: proofError } = await supabase.from('payment_proofs').insert({
+      expense_id: justAddedExpense.id,
+      submitted_by: currentUser.id,
+      screenshot_url: urlData.publicUrl,
+      note: proofForm.note || '',
+      status: 'pending_verification',
+    });
+    if (proofError) { showToast('Failed to save proof', 'error'); setLoading(false); return; }
+    closeUploadAfterAdd();
+    showToast('Expense submitted with proof! ⏳');
+    setLoading(false);
+    await handleHouseholdSelect(selectedHousehold, currentUser, profile);
+  };
+
+  const handleSkipProofAfterAdd = async () => {
+    closeUploadAfterAdd();
+    showToast('Submitted for approval — upload your proof after the owner approves');
+    await handleHouseholdSelect(selectedHousehold, currentUser, profile);
+  };
+
+  // Owner submits their own proof: verified immediately (the owner is the approver).
+  const handleOwnerSubmitProof = async () => {
+    if (!proofForm.screenshot) { showToast('Please upload a screenshot.', 'error'); return; }
+    setLoading(true);
+    const fileExt = proofForm.screenshot.name.split('.').pop();
+    const fileName = `${currentUser.id}-${selectedExpense.id}-owner-${Date.now()}.${fileExt}`;
+    const { error: uploadError } = await supabase.storage
+      .from('payment-proofs')
+      .upload(fileName, proofForm.screenshot, { upsert: true });
+    if (uploadError) { showToast('Upload failed', 'error'); setLoading(false); return; }
+    const { data: urlData } = supabase.storage.from('payment-proofs').getPublicUrl(fileName);
+
+    const { data: insertedProof, error: proofError } = await supabase.from('payment_proofs').insert({
+      expense_id: selectedExpense.id,
+      submitted_by: currentUser.id,
+      screenshot_url: urlData.publicUrl,
+      note: proofForm.note,
+      status: 'verified',
+    }).select().single();
+    if (proofError) { showToast('Failed to save proof', 'error'); setLoading(false); return; }
+
+    await supabase
+      .from('expense_splits')
+      .update({ status: 'approved', proof_id: insertedProof.id, updated_at: new Date().toISOString() })
+      .eq('expense_id', selectedExpense.id)
+      .eq('user_id', currentUser.id);
+
+    await recalculateExpenseStatus(selectedExpense.id);
+
+    const { data: allSplits } = await supabase.from('expense_splits').select('user_id').eq('expense_id', selectedExpense.id);
+    const others = (allSplits || []).filter(sp => sp.user_id !== currentUser.id);
+    if (others.length) {
+      await supabase.from('notifications').insert(others.map(sp => ({
+        user_id: sp.user_id,
+        title: 'Payment Confirmed by Owner',
+        message: `The owner has confirmed payment for "${selectedExpense.title}". Tap to view proof.`,
+        type: 'payment_confirmed',
+        link_path: `/groups/${selectedHousehold.id}?type=household`,
+        link_state: JSON.stringify({ type: 'household' }),
+        link_query: `openProof=${selectedExpense.id}&proofId=${insertedProof.id}`,
+      })));
+    }
+
+    setShowOwnerProofModal(false);
+    setProofForm({ note: '', screenshot: null, screenshotPreview: null });
+    setSelectedExpense(null);
+    showToast('Payment confirmed and proof saved! ✅');
     setLoading(false);
     await handleHouseholdSelect(selectedHousehold, currentUser, profile);
   };
@@ -932,7 +1037,12 @@ export default function ExpensesScreen() {
             user_id: split.user_id,
             profiles: split.profiles
           }));
-          const isOwed = mySplit && mySplit.status !== 'approved' && expense.status !== 'paid';
+          const isApprovedExpense = expense.approval_status === 'approved';
+          const iAmPayer = expense.paid_by === currentUser?.id;
+          // Members (and the owner's non-payer share) pay with proof; owner has its own button below
+          const isOwed = !isAdmin && isApprovedExpense && mySplit && mySplit.status === 'unpaid' && expense.status !== 'paid';
+          // Owner can attach proof until their own split has a proof saved (same as GroupDetailScreen)
+          const ownerCanSubmitProof = isAdmin && isApprovedExpense && mySplit && !(mySplit.status === 'approved' && mySplit.proof_id) && expense.status !== 'paid';
           return (
             <div key={expense.id} className={`expense-item ${expense.approval_status === 'pending_approval' ? 'needs-approval' : ''}`} style={{ borderLeftColor: CATEGORY_COLORS[expense.category] || '#3B2AAB' }}>
               <div className="expense-icon-circle" style={{ background: `${CATEGORY_COLORS[expense.category]}22` || '#F0EDFF' }}>
@@ -956,8 +1066,19 @@ export default function ExpensesScreen() {
                 {expense.approval_status === 'rejected' && <p className="rejection-reason">Reason: {expense.rejection_reason}</p>}
                 {isOwed && (
                   <div className="reimburse-row">
-                    <span className="owe-text">You owe ₱{Number(mySplit.share_amount).toFixed(2)}</span>
-                    <button className="pay-btn" onClick={() => { setSelectedExpense(expense); setShowPaymentProofModal(true); }}>Pay</button>
+                    <span className="owe-text">
+                      {iAmPayer ? 'You paid this bill — upload your proof' : `You owe ₱${Number(mySplit.share_amount).toFixed(2)}`}
+                    </span>
+                    <button className="pay-btn" onClick={() => { setSelectedExpense(expense); setProofForm({ note: '', screenshot: null, screenshotPreview: null }); setShowPaymentProofModal(true); }}>
+                      {iAmPayer ? 'Submit Proof' : 'Pay'}
+                    </button>
+                  </div>
+                )}
+                {ownerCanSubmitProof && (
+                  <div className="reimburse-row">
+                    <button className="pay-btn" onClick={() => { setSelectedExpense(expense); setProofForm({ note: '', screenshot: null, screenshotPreview: null }); setShowOwnerProofModal(true); }}>
+                      Submit Payment Proof (as Owner)
+                    </button>
                   </div>
                 )}
                 {mySplit?.status === 'pending_verification' && (
@@ -1197,6 +1318,42 @@ export default function ExpensesScreen() {
         </div>
       )}
 
+      {/* Upload proof right after a member who paid upfront adds an expense */}
+      {showUploadAfterAdd && justAddedExpense && (
+        <div className="modal-overlay">
+          <div className="small-modal">
+            <h2>Upload Payment Proof</h2>
+            <p style={{ fontSize: 13, color: '#5A4AAA', margin: 0 }}>
+              You marked yourself as the payer for "<strong>{justAddedExpense.title}</strong>". Upload a screenshot of your payment now, or do it after the owner approves.
+            </p>
+            {proofForm.screenshotPreview && <img src={proofForm.screenshotPreview} className="proof-preview" alt="proof" />}
+            <button className="upload-proof-btn" onClick={() => proofInputRef.current.click()}>
+              <Camera size={16} /> {proofForm.screenshot ? 'Change Screenshot' : 'Upload Screenshot'}
+            </button>
+            <button className="add-expense-btn" onClick={handleUploadProofAfterAdd} disabled={!proofForm.screenshot || loading}>
+              {loading ? 'Submitting…' : 'Submit Expense + Proof'}
+            </button>
+            <button className="edit-cancel-btn" onClick={handleSkipProofAfterAdd}>Skip for now</button>
+          </div>
+        </div>
+      )}
+
+      {/* Owner Proof Modal (verified immediately) */}
+      {showOwnerProofModal && (
+        <div className="modal-overlay">
+          <div className="small-modal">
+            <h2>Confirm Payment</h2>
+            {proofForm.screenshotPreview && <img src={proofForm.screenshotPreview} className="proof-preview" alt="proof" />}
+            <button className="upload-proof-btn" onClick={() => proofInputRef.current.click()}>
+              <Camera size={16} /> {proofForm.screenshotPreview ? 'Change Screenshot' : 'Upload Screenshot'}
+            </button>
+            <textarea placeholder="Optional note" value={proofForm.note} onChange={e => setProofForm({ ...proofForm, note: e.target.value })} className="reject-textarea" />
+            <button className="add-expense-btn" onClick={handleOwnerSubmitProof} disabled={loading}>{loading ? 'Confirming…' : 'Confirm Payment'}</button>
+            <button className="edit-cancel-btn" onClick={() => { setShowOwnerProofModal(false); setProofForm({ note: '', screenshot: null, screenshotPreview: null }); }}>Cancel</button>
+          </div>
+        </div>
+      )}
+
       {/* Payment Proof Submission Modal */}
       {showPaymentProofModal && (
         <div className="modal-overlay">
@@ -1204,7 +1361,9 @@ export default function ExpensesScreen() {
             <h2>Submit Payment Proof</h2>
             {proofForm.screenshotPreview && <img src={proofForm.screenshotPreview} className="proof-preview" alt="proof" />}
             <button className="upload-proof-btn" onClick={() => proofInputRef.current.click()}><Camera size={16} /> Upload Screenshot</button>
-            <button className="pom-trigger-btn" onClick={() => { setShowPaymentProofModal(false); setShowPayOnlineModal(true); }}>💳 Pay Online</button>
+            {selectedExpense?.paid_by !== currentUser?.id && (
+              <button className="pom-trigger-btn" onClick={() => { setShowPaymentProofModal(false); setShowPayOnlineModal(true); }}>💳 Pay Online</button>
+            )}
             <textarea placeholder="Optional note" value={proofForm.note} onChange={e => setProofForm({ ...proofForm, note: e.target.value })} className="reject-textarea" />
             <button className="add-expense-btn" onClick={handleSubmitProof} disabled={loading}>{loading ? 'Submitting…' : 'Submit'}</button>
             <button className="edit-cancel-btn" onClick={() => { setShowPaymentProofModal(false); setProofForm({ note: '', screenshot: null, screenshotPreview: null }); }}>Cancel</button>

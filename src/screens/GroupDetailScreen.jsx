@@ -487,10 +487,13 @@ export default function GroupDetailScreen() {
         expense_id: insertedExpense.id,
         user_id: uid,
         share_amount: Number(splits[uid]),
-        status: uid === expenseForm.who_paid ? 'approved' : 'unpaid',
+        // Owner as payer = automatically paid. A member payer starts Unpaid and
+        // must submit proof (which the owner then approves/rejects).
+        status: (uid === expenseForm.who_paid && uid === group?.created_by) ? 'approved' : 'unpaid',
         updated_at: new Date().toISOString(),
       }));
-      await supabase.from('expense_splits').insert(splitRows);
+      // upsert (not insert): a DB trigger may already have created the rows
+      await supabase.from('expense_splits').upsert(splitRows, { onConflict: 'expense_id,user_id' });
 
       // Owner-created expenses skip approval, so tell every member who owes a share.
       const dueText = expenseForm.due_date ? ` Due ${fmtDate(expenseForm.due_date)}.` : '';
@@ -499,7 +502,7 @@ export default function GroupDetailScreen() {
         .map(uid => ({
           user_id: uid,
           title: 'New Expense Added',
-          message: `${profile?.full_name} added "${insertedExpense.title}" for ₱${Number(expenseForm.amount).toFixed(2)}. Your share: ₱${Number(splits[uid]).toFixed(2)}.${dueText}`,
+          message: `${profile?.full_name} added "${insertedExpense.title}" for ₱${Number(expenseForm.amount).toFixed(2)}. Your share: ₱${Number(splits[uid]).toFixed(2)}.${dueText}${uid === expenseForm.who_paid && uid !== group?.created_by ? ' You are marked as the payer — please upload your proof of payment.' : ''}`,
           type: 'expense_added',
           link_path: `/groups/${id}?type=${contextType}`,
           link_state: JSON.stringify({ type: contextType }),
@@ -544,29 +547,76 @@ export default function GroupDetailScreen() {
     setLoadingAction(true);
     const splits = expense.members_split || {};
     const memberIds = Object.keys(splits);
+    const ownerId = group?.created_by;
+    const payerIsOwner = expense.paid_by === ownerId;
 
     await supabase.from('expenses')
       .update({ approval_status: 'approved', status: 'pending' })
       .eq('id', expense.id);
 
-    const splitRows = memberIds.map(uid => ({
-      expense_id: expense.id,
-      user_id: uid,
-      share_amount: Number(splits[uid]),
-      status: uid === expense.paid_by ? 'approved' : 'unpaid',
-      updated_at: new Date().toISOString(),
-    }));
-    await supabase.from('expense_splits').insert(splitRows);
+    // If the member attached proof when creating the expense ("Submit Expense + Proof"),
+    // link it to their split so it shows up for the owner to approve/reject.
+    let upfrontProof = null;
+    if (expense.paid_by && !payerIsOwner) {
+      const { data: proofs } = await supabase
+        .from('payment_proofs')
+        .select('id')
+        .eq('expense_id', expense.id)
+        .eq('submitted_by', expense.paid_by)
+        .eq('status', 'pending_verification')
+        .limit(1);
+      upfrontProof = proofs?.[0] || null;
+    }
 
+    // Payer rules:
+    //  • owner is the payer            → automatically Paid
+    //  • member is the payer + proof   → Pending (owner reviews the proof)
+    //  • member is the payer, no proof → Unpaid (member must submit proof; NOT auto-paid)
+    const splitRows = memberIds.map(uid => {
+      let status = 'unpaid';
+      let proof_id = null;
+      if (uid === expense.paid_by) {
+        if (payerIsOwner) status = 'approved';
+        else if (upfrontProof) { status = 'pending_verification'; proof_id = upfrontProof.id; }
+      }
+      return {
+        expense_id: expense.id,
+        user_id: uid,
+        share_amount: Number(splits[uid]),
+        status,
+        proof_id,
+        updated_at: new Date().toISOString(),
+      };
+    });
+    // upsert (not insert): a DB trigger may already have created the rows
+    await supabase.from('expense_splits').upsert(splitRows, { onConflict: 'expense_id,user_id' });
+
+    const needsProof = !payerIsOwner && !upfrontProof;
+    const creatorIsPayer = expense.created_by === expense.paid_by;
     await supabase.from('notifications').insert({
       user_id: expense.created_by,
       title: '✅ Expense Approved!',
-      message: `Your expense "${expense.title}" for ₱${Number(expense.amount).toFixed(2)} was approved by the owner.`,
+      message: needsProof && creatorIsPayer
+        ? `Your expense "${expense.title}" for ₱${Number(expense.amount).toFixed(2)} was approved. Please upload your proof of payment — it is marked paid once the owner approves it.`
+        : `Your expense "${expense.title}" for ₱${Number(expense.amount).toFixed(2)} was approved by the owner.${upfrontProof && creatorIsPayer ? ' Your proof is now waiting for the owner\'s review.' : ''}`,
       type: 'expense_approved',
       link_path: `/groups/${id}?type=${contextType}`,
       link_state: JSON.stringify({ type: contextType }),
       link_query: `expenseId=${expense.id}`,
     });
+
+    // Someone else was named as the payer → tell them to upload their proof
+    if (needsProof && !creatorIsPayer && expense.paid_by) {
+      await supabase.from('notifications').insert({
+        user_id: expense.paid_by,
+        title: '📸 Upload your proof of payment',
+        message: `"${expense.title}" (₱${Number(expense.amount).toFixed(2)}) was approved and you are the payer. Please upload your proof of payment.`,
+        type: 'expense_approved',
+        link_path: `/groups/${id}?type=${contextType}`,
+        link_state: JSON.stringify({ type: contextType }),
+        link_query: `expenseId=${expense.id}`,
+      });
+    }
 
     showToast('Expense approved!');
     fetchGroupAndData();
@@ -1319,9 +1369,13 @@ export default function GroupDetailScreen() {
 
                   {!isOwner && mySplit && mySplit.status === 'unpaid' && expense.status !== 'paid' && (
                     <div className="owe-row" style={{ marginTop: 8 }}>
-                      <span>You owe ₱{Number(mySplit.share_amount).toFixed(2)}</span>
+                      <span>
+                        {expense.paid_by === currentUser?.id
+                          ? 'You paid this bill — upload your proof of payment'
+                          : `You owe ₱${Number(mySplit.share_amount).toFixed(2)}`}
+                      </span>
                       <button className="pay-btn-small" onClick={() => { setSelectedExpense(expense); resetProofForm(); setShowPaymentProofModal(true); }}>
-                        Pay
+                        {expense.paid_by === currentUser?.id ? 'Submit Proof' : 'Pay'}
                       </button>
                     </div>
                   )}
@@ -1559,7 +1613,7 @@ export default function GroupDetailScreen() {
             <div className="modal-body-scroll">
               {proofForm.screenshotPreview ? <img src={proofForm.screenshotPreview} className="proof-preview" alt="proof" /> : <div style={{ textAlign: 'center', padding: '20px 0', color: '#9E8FCC', fontSize: 13 }}>No screenshot selected yet</div>}
               <button className="upload-proof-btn" onClick={() => proofInputRef.current.click()}><Camera size={16} /> {proofForm.screenshotPreview ? 'Change Screenshot' : 'Upload Screenshot'}</button>
-              <button className="pom-trigger-btn" onClick={() => openPayOnline('proof')}>💳 Pay Online</button>
+              {selectedExpense?.paid_by !== currentUser?.id && <button className="pom-trigger-btn" onClick={() => openPayOnline('proof')}>💳 Pay Online</button>}
               <textarea placeholder="Optional note (e.g. GCash ref #)" value={proofForm.note} onChange={e => setProofForm({ ...proofForm, note: e.target.value })} className="detail-textarea" rows={3} />
               <button className="add-expense-btn" onClick={() => handleSubmitProof(false)} disabled={loadingAction}>{loadingAction ? 'Submitting...' : 'Submit Proof'}</button>
               <button className="cancel-btn" onClick={() => { setShowPaymentProofModal(false); resetProofForm(); }}>Cancel</button>
@@ -1580,7 +1634,7 @@ export default function GroupDetailScreen() {
               <div style={{ background: '#FFF3CD', borderRadius: 12, padding: '12px 14px', marginBottom: 12, fontSize: 12, color: '#856404', textAlign: 'center' }}>⚠️ Your previous proof was rejected. Please upload a new, clear screenshot.</div>
               {proofForm.screenshotPreview ? <img src={proofForm.screenshotPreview} className="proof-preview" alt="proof" /> : <div style={{ textAlign: 'center', padding: '20px 0', color: '#9E8FCC', fontSize: 13 }}>Upload a new screenshot</div>}
               <button className="upload-proof-btn" onClick={() => proofInputRef.current.click()}><Camera size={16} /> {proofForm.screenshotPreview ? 'Change Screenshot' : 'Upload New Screenshot'}</button>
-              <button className="pom-trigger-btn" onClick={() => openPayOnline('resubmit')}>💳 Pay Online</button>
+              {selectedExpense?.paid_by !== currentUser?.id && <button className="pom-trigger-btn" onClick={() => openPayOnline('resubmit')}>💳 Pay Online</button>}
               <textarea placeholder="Optional note (e.g. GCash ref #)" value={proofForm.note} onChange={e => setProofForm({ ...proofForm, note: e.target.value })} className="detail-textarea" rows={3} />
               <button className="add-expense-btn" onClick={() => handleSubmitProof(true)} disabled={loadingAction}>{loadingAction ? 'Submitting...' : 'Resubmit Proof'}</button>
               <button className="cancel-btn" onClick={() => { setShowResubmitModal(false); resetProofForm(); }}>Cancel</button>
@@ -1809,7 +1863,7 @@ export default function GroupDetailScreen() {
                 {loadingAction ? 'Submitting...' : 'Submit Expense + Proof'}
               </button>
               <button className="cancel-btn" onClick={() => {
-                showToast('Expense submitted for approval (no proof yet)');
+                showToast('Submitted for approval — upload your proof after the owner approves');
                 setShowUploadAfterAdd(false);
                 setJustAddedExpense(null);
                 resetProofForm();

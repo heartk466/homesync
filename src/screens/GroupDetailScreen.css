@@ -18,10 +18,13 @@
   align-items: center;
   justify-content: space-between;
   padding: 48px 20px 16px;
-  background: transparent;
+  /* Opaque so the member list / cards don't show through the title while
+     scrolling. Same colours as the top of the screen gradient. */
+  background: linear-gradient(180deg, #EEEEEE 0%, #E6E3F0 100%);
+  box-shadow: 0 4px 12px rgba(59, 42, 171, 0.06);
   position: sticky;
   top: 0;
-  z-index: 10;
+  z-index: 50;
 }
 
 .back-btn {
