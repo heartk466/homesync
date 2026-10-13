@@ -1368,12 +1368,17 @@ export default function GroupDetailScreen() {
                   )}
 
                   {!isOwner && mySplit && mySplit.status === 'unpaid' && expense.status !== 'paid' && (
-                    <div className="owe-row" style={{ marginTop: 8 }}>
-                      <span>
-                        {expense.paid_by === currentUser?.id
-                          ? 'You paid this bill — upload your proof of payment'
-                          : `You owe ₱${Number(mySplit.share_amount).toFixed(2)}`}
-                      </span>
+                    <div className="owe-row pay-prompt" style={{ marginTop: 8 }}>
+                      <div className="pay-prompt-text">
+                        {expense.paid_by === currentUser?.id ? (
+                          <>
+                            <strong>You paid this bill</strong>
+                            <span>Upload your proof of payment</span>
+                          </>
+                        ) : (
+                          <strong>You owe ₱{Number(mySplit.share_amount).toFixed(2)}</strong>
+                        )}
+                      </div>
                       <button className="pay-btn-small" onClick={() => { setSelectedExpense(expense); resetProofForm(); setShowPaymentProofModal(true); }}>
                         {expense.paid_by === currentUser?.id ? 'Submit Proof' : 'Pay'}
                       </button>
