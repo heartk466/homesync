@@ -46,6 +46,21 @@ const getTodayStr = () => {
 const fmtDate = (str) =>
   str ? new Date(`${str}T00:00:00`).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
 
+// Dates (this user's own reminder days) on which a reminder will fire for a due date.
+// Only days that are still in the future are listed.
+const getReminderPreview = (dueDate, days) => {
+  if (!dueDate || !days?.length) return [];
+  const due = new Date(`${dueDate}T00:00:00`);
+  const today = new Date(`${getTodayStr()}T00:00:00`);
+  return [...days]
+    .sort((a, b) => b - a)
+    .map(d => { const dt = new Date(due); dt.setDate(dt.getDate() - d); return dt; })
+    .filter(dt => dt >= today)
+    .map(dt => dt.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' }));
+};
+const getMyReminderDays = (profile) =>
+  Array.isArray(profile?.reminder_days) ? profile.reminder_days : [profile?.default_reminder_days || 3];
+
 export default function ExpensesScreen() {
   const navigate = useNavigate();
   const fileInputRef = useRef(null);
@@ -1141,6 +1156,16 @@ export default function ExpensesScreen() {
                 <label>Due Date (optional)</label>
                 <input type="date" value={expenseForm.due_date} min={getTodayStr()} onChange={e => setExpenseForm({ ...expenseForm, due_date: e.target.value })} className={expenseErrors.due_date ? 'input-error' : ''} />
                 {expenseErrors.due_date && <span className="form-error">{expenseErrors.due_date}</span>}
+                {expenseForm.due_date && (() => {
+                  const preview = getReminderPreview(expenseForm.due_date, getMyReminderDays(profile));
+                  return (
+                    <span className="form-hint">
+                      {preview.length
+                        ? `🔔 You'll be reminded on ${preview.join(', ')} (from your Settings). Each member is reminded based on their own Settings.`
+                        : '🔔 None of your reminder days fall before this due date. Other members are reminded based on their own Settings.'}
+                    </span>
+                  );
+                })()}
               </div>
               <div className="form-group">
                 <label>Category</label>

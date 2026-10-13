@@ -48,7 +48,8 @@ export default function SettingsScreen() {
     report_schedules: true,
     group_invites: true,
   });
-  const [reminderDays, setReminderDays] = useState(5);
+  // Which days before a due date this user wants a reminder (0 = on the due date)
+  const [reminderDays, setReminderDays] = useState([3]);
 
   const { currency, setCurrency: setContextCurrency, isDark, setIsDark: setContextDark } = useAppContext();
 
@@ -127,8 +128,10 @@ export default function SettingsScreen() {
       if (profileData?.notification_preferences) {
         setNotifPrefs(profileData.notification_preferences);
       }
-      if (profileData?.default_reminder_days) {
-        setReminderDays(profileData.default_reminder_days);
+      if (Array.isArray(profileData?.reminder_days)) {
+        setReminderDays(profileData.reminder_days);
+      } else if (profileData?.default_reminder_days) {
+        setReminderDays([profileData.default_reminder_days]);
       }
       if (profileData?.currency) {
         setContextCurrency(profileData.currency);
@@ -276,13 +279,18 @@ export default function SettingsScreen() {
     }
   };
 
-  const handleSaveReminderDays = async (days) => {
-    setReminderDays(days);
-    await supabase
+  // Multi-select: tap a chip to add / remove that reminder day
+  const handleToggleReminderDay = async (day) => {
+    const next = reminderDays.includes(day)
+      ? reminderDays.filter(d => d !== day)
+      : [...reminderDays, day].sort((a, b) => a - b);
+    setReminderDays(next);
+    const { error } = await supabase
       .from('profiles')
-      .update({ default_reminder_days: days })
+      .update({ reminder_days: next })
       .eq('id', currentUser.id);
-    showToast('Reminder preference saved!');
+    if (error) { showToast('Could not save reminder preference', 'error'); return; }
+    showToast(next.length ? 'Reminder preference saved!' : 'Due date reminders are off');
   };
 
   const handleSaveCurrency = async (curr) => {
@@ -664,7 +672,22 @@ export default function SettingsScreen() {
     </div>
   );
 
-  const REMINDER_OPTIONS = [3, 5, 7, 14];
+  const REMINDER_OPTIONS = [
+    { value: 0,  label: 'On the day' },
+    { value: 1,  label: '1d before' },
+    { value: 3,  label: '3d before' },
+    { value: 5,  label: '5d before' },
+    { value: 7,  label: '7d before' },
+    { value: 14, label: '14d before' },
+  ];
+
+  const reminderSummary = () => {
+    if (reminderDays.length === 0) return 'No due date reminders. Pick at least one to get notified.';
+    const parts = reminderDays.map(d => (d === 0 ? 'on the due date' : `${d} day${d > 1 ? 's' : ''} before`));
+    const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0];
+    const phone = pushStatus === 'granted' ? '' : ' Allow notifications to get these on your phone too.';
+    return `You'll be reminded at 8:00 AM, ${list}, for approved expenses you still owe.${phone}`;
+  };
   const CURRENCIES = ['PHP', 'USD', 'EUR', 'SGD', 'JPY'];
 
   // Helper: push status badge shown next to "Notifications" section title
@@ -897,7 +920,7 @@ export default function SettingsScreen() {
           {[
             { key: 'expense_approvals',     label: 'Expense Approvals',     icon: '💸' },
             { key: 'payment_confirmations', label: 'Payment Confirmations', icon: '✅' },
-            { key: 'utility_reminders',     label: 'Utility Reminders',     icon: '🏠' },
+            { key: 'utility_reminders',     label: 'Due Date Reminders',    icon: '🏠' },
             { key: 'report_schedules',      label: 'Report Schedules',      icon: '📊' },
             { key: 'group_invites',         label: 'Group Invites',         icon: '👥' },
           ].map(item => (
@@ -913,23 +936,24 @@ export default function SettingsScreen() {
             </div>
           ))}
 
-          <div className="settings-row no-border">
+          <div className="settings-row no-border reminder-label-row">
             <div className="settings-row-left">
               <div className="settings-icon-wrap purple">⏰</div>
-              <span>Default Reminder</span>
-            </div>
-            <div className="reminder-options-row">
-              {REMINDER_OPTIONS.map(d => (
-                <button
-                  key={d}
-                  className={`reminder-chip ${reminderDays === d ? 'active' : ''}`}
-                  onClick={() => handleSaveReminderDays(d)}
-                >
-                  {d}d
-                </button>
-              ))}
+              <span>Remind me before due date</span>
             </div>
           </div>
+          <div className="reminder-options-wrap">
+            {REMINDER_OPTIONS.map(opt => (
+              <button
+                key={opt.value}
+                className={`reminder-chip ${reminderDays.includes(opt.value) ? 'active' : ''}`}
+                onClick={() => handleToggleReminderDay(opt.value)}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <p className="reminder-hint">{reminderSummary()}</p>
         </div>
 
         {/* App Preferences */}

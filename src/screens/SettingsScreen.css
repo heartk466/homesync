@@ -802,3 +802,24 @@
 
 .toast-error { background: #e53e3e; }
 .toast-info { background: #3B2AAB; }
+
+/* Multi-select reminder chips (wrap onto several lines) */
+.reminder-label-row { padding-bottom: 6px; }
+
+.reminder-options-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 2px 0 6px;
+}
+
+.reminder-options-wrap .reminder-chip {
+  padding: 6px 12px;
+}
+
+.reminder-hint {
+  font-size: 11px;
+  color: #9E8FCC;
+  line-height: 1.5;
+  margin: 6px 0 0;
+}
