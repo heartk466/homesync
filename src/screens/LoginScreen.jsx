@@ -78,8 +78,8 @@ export default function LoginScreen() {
     setLoading(true);
 
     const { error } = await supabase.auth.resetPasswordForEmail(formData.email, {
-     redirectTo: 'https://homesync-nsae-o6do3axs9-heartk466s-projects.vercel.app/reset-password',
-    });
+  redirectTo: `${window.location.origin}/reset-password`,
+});
 
     if (error) {
       setErrors({ general: error.message });

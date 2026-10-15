@@ -9,6 +9,7 @@ import GroupsScreen from './screens/GroupsScreen';
 import GroupDetailScreen from './screens/GroupDetailScreen';
 import ReportsScreen from './screens/ReportsScreen';
 import SettingsScreen from './screens/SettingsScreen';
+import ResetPasswordScreen from './screens/ResetPasswordScreen';
 
 function App() {
   return (
@@ -24,6 +25,7 @@ function App() {
         <Route path="/group-detail/:id" element={<GroupDetailScreen />} />
         <Route path="/reports" element={<ReportsScreen />} />
         <Route path="/settings" element={<SettingsScreen />} />
+        <Route path="/reset-password" element={<ResetPasswordScreen />} />
       </Routes>
     </BrowserRouter>
   );
