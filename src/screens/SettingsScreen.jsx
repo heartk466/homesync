@@ -325,7 +325,7 @@ export default function SettingsScreen() {
   const handleChangePassword = async () => {
     const { error } = await supabase.auth.resetPasswordForEmail(
       profile?.email,
-      { redirectTo: 'http://localhost:5173/reset-password' }
+      { redirectTo: `${window.location.origin}/reset-password` }
     );
     if (error) {
       showToast('Failed to send reset email.', 'error');
