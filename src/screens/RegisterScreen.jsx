@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
+import { Eye, EyeOff } from 'lucide-react';
 import './RegisterScreen.css';
 
 export default function RegisterScreen() {
@@ -244,10 +245,7 @@ export default function RegisterScreen() {
   return (
     <div className="register">
       <div className="register-logo-row">
-        <svg className="register-logo-icon" viewBox="0 0 32 32" fill="none">
-          <rect width="32" height="32" rx="8" fill="#3B2AAB"/>
-          <path d="M16 6L6 14v12h7v-6h6v6h7V14L16 6z" fill="white"/>
-        </svg>
+        <img src="/icon-512.png" alt="HomeSync" className="register-logo-icon" />
         <span className="register-logo-text">HomeSync</span>
       </div>
 
@@ -300,7 +298,7 @@ export default function RegisterScreen() {
               onClick={() => setShowPassword(!showPassword)}
               type="button"
             >
-              {showPassword ? '🙈' : '👁️'}
+              {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
             </button>
           </div>
           {errors.password && <span className="error-text">{errors.password}</span>}
@@ -321,7 +319,7 @@ export default function RegisterScreen() {
               onClick={() => setShowConfirmPassword(!showConfirmPassword)}
               type="button"
             >
-              {showConfirmPassword ? '🙈' : '👁️'}
+              {showConfirmPassword ? <EyeOff size={16} /> : <Eye size={16} />}
             </button>
           </div>
           {errors.confirmPassword && <span className="error-text">{errors.confirmPassword}</span>}

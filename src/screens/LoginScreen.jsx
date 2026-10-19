@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
+import { Eye, EyeOff } from 'lucide-react';
 import './LoginScreen.css';
 
 export default function LoginScreen() {
@@ -101,9 +102,7 @@ export default function LoginScreen() {
 
       {/* Logo */}
       <div className="login-logo">
-        <svg viewBox="0 0 60 60" fill="none" className="login-logo-icon">
-          <path d="M30 5L5 25v30h15V38h20v17h15V25L30 5z" fill="#3B2AAB"/>
-        </svg>
+        <img src="/icon-512.png" alt="HomeSync" className="login-logo-icon" />
         <span className="login-logo-text">HomeSync</span>
       </div>
 
@@ -150,7 +149,7 @@ export default function LoginScreen() {
               onClick={() => setShowPassword(!showPassword)}
               type="button"
             >
-              {showPassword ? '🙈' : '👁️'}
+              {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
             </button>
           </div>
           {errors.password && (

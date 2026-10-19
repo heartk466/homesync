@@ -17,21 +17,22 @@
 .register-logo-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  
+  gap: 0;
+  margin-top: 64px;
 }
 
+/* App icon has built-in transparent padding, so crop it in a little */
 .register-logo-icon {
-  width: 36px;
-  height: 36px;
-  margin-top: 80px;
+  width: 64px;
+  height: 64px;
+  object-fit: contain;
+  margin: -10px -4px -10px -10px;
 }
 
 .register-logo-text {
   font-size: 26px;
   font-weight: 700;
   color: #3B2AAB;
-  margin-top: 80px;
 }
 
 /* Heading */
@@ -76,19 +77,29 @@
 
 .input-wrapper input {
   width: 100%;
+  padding-right: 46px;
 }
 
 .eye-btn {
   position: absolute;
-  right: 14px;
+  right: 8px;
   top: 50%;
   transform: translateY(-50%);
-  background: none;
+  width: 30px;
+  height: 30px;
   border: none;
+  border-radius: 50%;
+  background: none;
+  color: #9E8FCC;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
-  font-size: 16px;
   padding: 0;
 }
+
+.eye-btn:hover { background: #F0EDFF; color: #3B2AAB; }
+.eye-btn:focus-visible { outline: 2px solid #3B2AAB; }
 
 input {
   width: 100%;
