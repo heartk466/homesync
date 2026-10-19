@@ -383,7 +383,7 @@ export default function UtilitiesScreen() {
         notifications={notifications}
         unreadCount={unreadCount}
         onMarkAllRead={markAllRead}
-        title="HomeSync"
+        title="Utilities"
         showBell={true}
       />
       <div className="utilities-title-section">
