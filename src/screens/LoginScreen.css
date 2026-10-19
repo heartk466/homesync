@@ -24,8 +24,8 @@
 
 /* App icon has built-in transparent padding, so pull it in a little */
 .login-logo-icon {
-  width: 120px;
-  height: 120px;
+  width: 70px;
+  height: 70px;
   object-fit: contain;
   margin: -16px 0 -24px;
 }

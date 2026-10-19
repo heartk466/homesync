@@ -245,7 +245,7 @@ export default function RegisterScreen() {
   return (
     <div className="register">
       <div className="register-logo-row">
-        <img src="/icons/icon-512.png" alt="HomeSync" className="register-logo-icon" />
+        <img src="/Homesync.svg" alt="HomeSync" className="register-logo-icon" />
         <span className="register-logo-text">HomeSync</span>
       </div>
 
