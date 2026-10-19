@@ -22,12 +22,11 @@
   gap: 0;
 }
 
-/* App icon has built-in transparent padding, so pull it in a little */
 .login-logo-icon {
-  width: 70px;
-  height: 70px;
+  width: 90px;
+  height: 90px;
   object-fit: contain;
-  margin: 16px 0 -24px;
+  margin: 0 0 8px;
 }
 
 .login-logo-text {

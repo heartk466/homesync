@@ -17,16 +17,15 @@
 .register-logo-row {
   display: flex;
   align-items: center;
-  gap: 0;
+  gap: 10px;
   margin-top: 64px;
 }
 
-/* App icon has built-in transparent padding, so crop it in a little */
 .register-logo-icon {
-  width: 64px;
-  height: 64px;
+  width: 48px;
+  height: 48px;
   object-fit: contain;
-  margin: -10px -4px -10px -10px;
+  margin: 0;
 }
 
 .register-logo-text {
