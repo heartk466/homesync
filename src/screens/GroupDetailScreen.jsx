@@ -3,7 +3,7 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import {
   ArrowLeft, Users, Plus, Check, X, Camera,
-  Copy, Share2, AlertCircle, Trash2, Eye, RefreshCw, Pencil, ChevronDown
+  Copy, Share2, AlertCircle, Trash2, Eye, EyeOff, Lock, MoreVertical, RefreshCw, Pencil, ChevronDown
 } from 'lucide-react';
 import './GroupDetailScreen.css';
 import { SUBSCRIPTION_PRESETS } from '../utils/expenseUtils';
@@ -152,6 +152,20 @@ export default function GroupDetailScreen() {
   const myPendingNameRequest = !isAdmin
     ? nameRequests.find(r => r.requested_by === currentUser?.id)
     : null;
+
+  // Header actions dropdown (copy / share / delete)
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef(null);
+
+  // Delete confirmation: password for email accounts, typing the name for
+  // accounts that sign in with Google etc. (they have no password to check)
+  const [deletePassword, setDeletePassword] = useState('');
+  const [deleteTypedName, setDeleteTypedName] = useState('');
+  const [showDeletePassword, setShowDeletePassword] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
+  const authProviders = currentUser?.app_metadata?.providers
+    || (currentUser?.app_metadata?.provider ? [currentUser.app_metadata.provider] : []);
+  const canUsePassword = authProviders.includes('email') && !!currentUser?.email;
 
   const [proofForm, setProofForm] = useState({
     note: '', screenshot: null, screenshotPreview: null
@@ -425,6 +439,17 @@ export default function GroupDetailScreen() {
       .subscribe();
     return () => supabase.removeChannel(channel);
   }, [currentUser?.id, id, contextType, fetchGroupAndData]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onOutside = (e) => { if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false); };
+    document.addEventListener('mousedown', onOutside);
+    document.addEventListener('touchstart', onOutside);
+    return () => {
+      document.removeEventListener('mousedown', onOutside);
+      document.removeEventListener('touchstart', onOutside);
+    };
+  }, [menuOpen]);
 
   const resetExpenseForm = () => {
     setExpenseForm({
@@ -828,22 +853,50 @@ export default function GroupDetailScreen() {
     fetchGroupAndData();
   };
 
+  const closeDeleteGroupModal = () => {
+    if (loadingAction) return;
+    setShowDeleteGroupModal(false);
+    setDeletePassword('');
+    setDeleteTypedName('');
+    setDeleteError('');
+    setShowDeletePassword(false);
+  };
+
+  const deleteConfirmReady = canUsePassword
+    ? deletePassword.length > 0
+    : deleteTypedName.trim() === (group?.name || '');
+
   const handleDeleteGroup = async () => {
+    if (!isAdmin || !deleteConfirmReady) return;
+    setDeleteError('');
     setLoadingAction(true);
+
+    // Nothing is deleted until the owner proves it is them
+    if (canUsePassword) {
+      const { error: authError } = await supabase.auth.signInWithPassword({
+        email: currentUser.email,
+        password: deletePassword,
+      });
+      if (authError) {
+        setDeleteError('Incorrect password. Please try again.');
+        setLoadingAction(false);
+        return;
+      }
+    }
+
     try {
-      if (contextType === 'household') {
-        await supabase.from('expenses').delete().eq('household_id', id);
-        await supabase.from('household_members').delete().eq('household_id', id);
-        await supabase.from('households').delete().eq('id', id);
-      } else {
-        await supabase.from('expenses').delete().eq('group_id', id);
-        await supabase.from('group_members').delete().eq('group_id', id);
-        await supabase.from('groups').delete().eq('id', id);
+      const steps = contextType === 'household'
+        ? [['expenses', 'household_id'], ['household_members', 'household_id'], ['households', 'id']]
+        : [['expenses', 'group_id'], ['group_members', 'group_id'], ['groups', 'id']];
+      for (const [table, column] of steps) {
+        const { error: deleteErr } = await supabase.from(table).delete().eq(column, id);
+        if (deleteErr) throw deleteErr;
       }
       showToast(`${contextType === 'household' ? 'Household' : 'Group'} deleted`);
       setShowDeleteGroupModal(false);
       navigate('/groups');
     } catch (err) {
+      console.error(err);
       showToast('Failed to delete', 'error');
     }
     setLoadingAction(false);
@@ -1393,6 +1446,7 @@ export default function GroupDetailScreen() {
         <button className="back-btn" onClick={() => navigate(-1)}><ArrowLeft size={24} /></button>
         <div className="detail-header-info">
           <div className="detail-name-row">
+            <span className="detail-name-spacer" aria-hidden="true" />
             <h1 className="detail-group-name">{group.name}</h1>
             <button
               className="detail-rename-btn"
@@ -1408,12 +1462,32 @@ export default function GroupDetailScreen() {
             <span className="detail-rename-pending">⏳ Rename to “{myPendingNameRequest.new_name}” awaiting approval</span>
           )}
         </div>
-        <div className="detail-code-actions">
-          <button className="icon-btn-sm" onClick={handleCopyCode}><Copy size={16} /></button>
-          <button className="icon-btn-sm" onClick={handleShare}><Share2 size={16} /></button>
-          {isAdmin && (
-            <button className="icon-btn-sm" onClick={() => setShowDeleteGroupModal(true)}><Trash2 size={16} /></button>
-          )}
+        <div className={`detail-menu${menuOpen ? ' open' : ''}`} ref={menuRef}>
+          <button
+            className="icon-btn-sm detail-menu-trigger"
+            onClick={() => setMenuOpen(o => !o)}
+            aria-haspopup="true"
+            aria-expanded={menuOpen}
+            aria-label="Group actions"
+          >
+            <MoreVertical size={18} />
+          </button>
+          <div className="detail-menu-list">
+            <button className="icon-btn-sm detail-menu-item" style={{ '--i': 0 }} title="Copy invite code" aria-label="Copy invite code"
+              onClick={() => { handleCopyCode(); setMenuOpen(false); }}>
+              <Copy size={16} />
+            </button>
+            <button className="icon-btn-sm detail-menu-item" style={{ '--i': 1 }} title="Share invite code" aria-label="Share invite code"
+              onClick={() => { handleShare(); setMenuOpen(false); }}>
+              <Share2 size={16} />
+            </button>
+            {isAdmin && (
+              <button className="icon-btn-sm detail-menu-item detail-menu-delete" style={{ '--i': 2 }} title={`Delete ${contextLabel}`} aria-label={`Delete ${contextLabel}`}
+                onClick={() => { setMenuOpen(false); setShowDeleteGroupModal(true); }}>
+                <Trash2 size={16} />
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -2054,19 +2128,55 @@ export default function GroupDetailScreen() {
         </div>
       )}
 
-      {/* Delete Group Modal */}
+      {/* Delete Group Modal — needs the owner's password first */}
       {showDeleteGroupModal && (
-        <div className="modal-overlay-detail">
-          <div className="modal-detail-card">
-            <div className="modal-header" style={{ flexDirection: 'column', alignItems: 'center', gap: 8 }}>
-              <AlertCircle size={40} color="#e53e3e" />
-              <h2>Delete {contextType === 'household' ? 'Household' : 'Group'}?</h2>
+        <div className="modal-overlay-detail" onClick={closeDeleteGroupModal}>
+          <div className="rn-card" role="dialog" aria-modal="true" onClick={e => e.stopPropagation()}>
+            <div className="rn-icon"><Lock size={22} /></div>
+            <h2 className="rn-title">Delete {contextLabel}?</h2>
+            <p className="rn-sub">
+              You’re about to delete <strong>{group.name}</strong>. This can’t be undone.
+            </p>
+            <div className="rn-note rn-note-danger">
+              All expenses and members in this {contextLabel} will be removed for everyone.
             </div>
-            <div className="modal-body-scroll">
-              <p style={{ textAlign: 'center', color: '#9E8FCC', fontSize: 13 }}>This will permanently delete everything.</p>
-              <button className="delete-confirm-btn" onClick={handleDeleteGroup} disabled={loadingAction}>{loadingAction ? 'Deleting...' : 'Yes, Delete'}</button>
-              <button className="cancel-btn" onClick={() => setShowDeleteGroupModal(false)}>Cancel</button>
+            <label className="rn-label" htmlFor="dg-input">
+              {canUsePassword ? 'Enter your password to confirm' : `Type “${group.name}” to confirm`}
+            </label>
+            <div className="rn-input-wrap">
+              <input
+                id="dg-input"
+                className="rn-input"
+                type={canUsePassword && !showDeletePassword ? 'password' : 'text'}
+                autoFocus
+                autoComplete={canUsePassword ? 'current-password' : 'off'}
+                placeholder={canUsePassword ? 'Your password' : group.name}
+                value={canUsePassword ? deletePassword : deleteTypedName}
+                onChange={e => {
+                  setDeleteError('');
+                  if (canUsePassword) setDeletePassword(e.target.value);
+                  else setDeleteTypedName(e.target.value);
+                }}
+                onKeyDown={e => { if (e.key === 'Enter') handleDeleteGroup(); }}
+              />
+              {canUsePassword && (
+                <button
+                  type="button"
+                  className="rn-eye"
+                  onClick={() => setShowDeletePassword(v => !v)}
+                  aria-label={showDeletePassword ? 'Hide password' : 'Show password'}
+                >
+                  {showDeletePassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              )}
             </div>
+            <div className="rn-meta">
+              <span className="rn-error">{deleteError}</span>
+            </div>
+            <button className="rn-btn-primary rn-btn-danger" disabled={!deleteConfirmReady || loadingAction} onClick={handleDeleteGroup}>
+              {loadingAction ? 'Verifying…' : `Delete ${contextLabel}`}
+            </button>
+            <button className="rn-btn-ghost" disabled={loadingAction} onClick={closeDeleteGroupModal}>Cancel</button>
           </div>
         </div>
       )}

@@ -14,9 +14,10 @@
 
 /* Header */
 .detail-header {
-  display: flex;
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) 40px;
   align-items: center;
-  justify-content: space-between;
+  column-gap: 8px;
   padding: 48px 20px 16px;
   /* Opaque so the member list / cards don't show through the title while
      scrolling. Same colours as the top of the screen gradient. */
@@ -36,7 +37,7 @@
 }
 
 .detail-header-info {
-  flex: 1;
+  min-width: 0;
   text-align: center;
 }
 
@@ -1056,3 +1057,116 @@
 @media (prefers-reduced-motion: reduce) {
   .rn-card { animation: none; }
 }
+
+/* ── Centered header + hover/tap actions menu ─────────────────────────── */
+.detail-header .back-btn { justify-self: start; }
+
+.detail-name-spacer { width: 22px; height: 22px; flex-shrink: 0; }
+
+.detail-name-row .detail-group-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-menu {
+  position: relative;
+  justify-self: end;
+}
+
+.detail-menu-trigger {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  transition: background 0.15s, transform 0.2s;
+}
+
+.detail-menu.open .detail-menu-trigger { background: #E0D9FF; transform: rotate(90deg); }
+
+/* The list starts right under the button (padding-top bridges the gap so
+   moving the mouse down never closes it) */
+.detail-menu-list {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  z-index: 60;
+}
+
+.detail-menu-item {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  background: white;
+  box-shadow: 0 4px 12px rgba(59, 42, 171, 0.18);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(-10px) scale(0.7);
+  transition: opacity 0.16s ease, transform 0.16s ease, visibility 0s linear 0.16s, background 0.15s, color 0.15s;
+}
+
+.detail-menu-item:hover { background: #E0D9FF; }
+.detail-menu-delete { color: #e53e3e; }
+.detail-menu-delete:hover { background: #ffe5e5; }
+
+.detail-menu.open .detail-menu-item {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: none;
+  transition: opacity 0.2s ease, transform 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.2), visibility 0s, background 0.15s, color 0.15s;
+  transition-delay: calc(var(--i) * 50ms), calc(var(--i) * 50ms), 0s, 0s, 0s;
+}
+
+/* Mouse: open on hover. Touch devices use the tap toggle only. */
+@media (hover: hover) {
+  .detail-menu:hover .detail-menu-trigger { background: #E0D9FF; transform: rotate(90deg); }
+  .detail-menu:hover .detail-menu-item {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transform: none;
+    transition: opacity 0.2s ease, transform 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.2), visibility 0s, background 0.15s, color 0.15s;
+    transition-delay: calc(var(--i) * 50ms), calc(var(--i) * 50ms), 0s, 0s, 0s;
+  }
+}
+
+.detail-menu-trigger:focus-visible,
+.detail-menu-item:focus-visible { outline: 2px solid #3B2AAB; outline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .detail-menu-trigger, .detail-menu-item { transition: none !important; }
+}
+
+/* ── Delete confirmation modal additions ──────────────────────────────── */
+.rn-note-danger { background: #FFF0F0; color: #C53030; }
+
+.rn-input-wrap { position: relative; }
+.rn-input-wrap .rn-input { padding-right: 46px; }
+
+.rn-eye {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: #9E8FCC;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.rn-eye:hover { background: #F0EDFF; color: #3B2AAB; }
+.rn-eye:focus-visible { outline: 2px solid #3B2AAB; }
+
+.rn-btn-danger { background: #C53030; box-shadow: 0 6px 16px rgba(197, 48, 48, 0.28); }
