@@ -9,6 +9,7 @@ import './ExpensesScreen.css';
 import TopBar from '../components/TopBar';
 import BottomNav from '../components/BottomNav';
 import PayOnlineModal from '../components/PayOnlineModal';
+import { detectCategory } from '../utils/categoryDetection';
 import {
   fetchAllHouseholdExpenses,
   checkDuplicate,
@@ -133,6 +134,12 @@ export default function ExpensesScreen() {
     custom_splits: {},
   });
   const [expenseErrors, setExpenseErrors] = useState({});
+  // Category auto-detect: stops overriding once the user picks a category themselves
+  const [categoryTouched, setCategoryTouched] = useState(false);
+  const [categoryAutoDetected, setCategoryAutoDetected] = useState(false);
+
+  // Nobody to split with when the household has a single member
+  const isSolo = householdMembers.length <= 1;
 
   // Payment proof form
   const [proofForm, setProofForm] = useState({ note: '', screenshot: null, screenshotPreview: null });
@@ -304,6 +311,8 @@ export default function ExpensesScreen() {
       custom_splits: {},
     });
     setExpenseErrors({});
+    setCategoryTouched(false);
+    setCategoryAutoDetected(false);
 
     await fetchExpensesData(activeProfile, activeUser, adminStatus, membersList, household.id);
   }, [currentUser, profile, fetchExpensesData]);
@@ -377,15 +386,30 @@ export default function ExpensesScreen() {
     setFilteredExpenses(result);
   }, [searchQuery, filterStatus, filterCategory, filterFrom, filterTo, expenses]);
 
+  // Typing in Description picks a matching category — until the user chooses one by hand
+  const handleTitleChange = (value) => {
+    const hit = categoryTouched ? null : detectCategory(value);
+    setExpenseForm(prev => ({ ...prev, title: value, ...(hit ? { category: hit.category } : {}) }));
+    if (hit) {
+      setCategoryAutoDetected(true);
+      setOtherType(hit.category === 'Other' ? (hit.otherType || '') : '');
+    }
+  };
+
   const proceedAddExpense = async () => {
+    // Single-member household: that member is the only participant
+    const participants = isSolo ? householdMembers.map(m => m.user_id) : expenseForm.selected_members;
+    const splitType = isSolo ? 'equal' : expenseForm.split_type;
+    // "None" = nobody has paid yet
+    const payerId = expenseForm.who_paid === 'none' ? null : expenseForm.who_paid;
     const splits = {};
     const totalAmount = Number(expenseForm.amount);
-    if (expenseForm.split_type === 'equal') {
-      const share = totalAmount / expenseForm.selected_members.length;
-      expenseForm.selected_members.forEach(id => { splits[id] = share.toFixed(2); });
+    if (splitType === 'equal') {
+      const share = totalAmount / participants.length;
+      participants.forEach(id => { splits[id] = share.toFixed(2); });
     } else {
       let customTotal = 0;
-      expenseForm.selected_members.forEach(id => {
+      participants.forEach(id => {
         const val = Number(expenseForm.custom_splits[id]) || 0;
         splits[id] = val.toFixed(2);
         customTotal += val;
@@ -411,8 +435,8 @@ export default function ExpensesScreen() {
       expense_date: getTodayStr(),              // auto: the day it was created (not editable)
       due_date: expenseForm.due_date || null,   // optional
       location: selectedHousehold.name,         // always the household whose tab is selected
-      paid_by: expenseForm.who_paid,
-      split_type: expenseForm.split_type,
+      paid_by: payerId,
+      split_type: splitType,
       members_split: splits,
       status: 'pending',
       approval_status: isAdmin ? 'approved' : 'pending_approval',
@@ -440,7 +464,7 @@ export default function ExpensesScreen() {
     if (isAdmin) {
       // Owner-created expenses are approved right away, so create the split rows now
       // (same as GroupDetailScreen) and tell every member who owes a share.
-      const splitRows = expenseForm.selected_members.map(uid => ({
+      const splitRows = participants.map(uid => ({
         expense_id: insertedExpense.id,
         user_id: uid,
         share_amount: Number(splits[uid]),
@@ -456,12 +480,12 @@ export default function ExpensesScreen() {
       if (splitError) console.error('Failed to create splits:', splitError);
 
       const dueText = expenseForm.due_date ? ` Due ${fmtDate(expenseForm.due_date)}.` : '';
-      const notifRows = expenseForm.selected_members
+      const notifRows = participants
         .filter(uid => uid !== currentUser.id)
         .map(uid => ({
           user_id: uid,
           title: 'New Expense Added',
-          message: `${profile?.full_name} added "${insertedExpense.title}" for ₱${totalAmount.toFixed(2)}. Your share: ₱${Number(splits[uid]).toFixed(2)}.${dueText}${uid === expenseForm.who_paid && uid !== selectedHousehold.created_by ? ' You are marked as the payer — please upload your proof of payment.' : ''}`,
+          message: `${profile?.full_name} added "${insertedExpense.title}" for ₱${totalAmount.toFixed(2)}. Your share: ₱${Number(splits[uid]).toFixed(2)}.${dueText}${!payerId ? ' It is marked unpaid — please upload your proof of payment once you pay your share.' : ''}${uid === expenseForm.who_paid && uid !== selectedHousehold.created_by ? ' You are marked as the payer — please upload your proof of payment.' : ''}`,
           type: 'expense_added',
           ...notifLink(`expenseId=${insertedExpense.id}`),
         }));
@@ -500,6 +524,8 @@ export default function ExpensesScreen() {
       custom_splits: {},
     });
     setOtherType('');
+    setCategoryTouched(false);
+    setCategoryAutoDetected(false);
     await handleHouseholdSelect(selectedHousehold, currentUser, profile);
   };
 
@@ -509,7 +535,7 @@ export default function ExpensesScreen() {
     if (!expenseForm.amount || isNaN(expenseForm.amount)) errors.amount = 'Valid amount is required';
     if (expenseForm.due_date && expenseForm.due_date < getTodayStr()) errors.due_date = 'Due date cannot be in the past';
     if (!expenseForm.who_paid) errors.who_paid = 'Please select who paid';
-    if (expenseForm.selected_members.length === 0) errors.members = 'Select at least one member to split with';
+    if (!isSolo && expenseForm.selected_members.length === 0) errors.members = 'Select at least one member to split with';
 
     if (Object.keys(errors).length > 0) {
       setExpenseErrors(errors);
@@ -825,11 +851,17 @@ export default function ExpensesScreen() {
     setUnreadCount(0);
   };
 
-  const getStatusBadge = (expense) => {
+  const getStatusBadge = (expense, splits = []) => {
     if (expense.approval_status === 'pending_approval') return { label: 'Waiting Approval', color: '#3B2AAB', bg: '#F0EDFF' };
     if (expense.approval_status === 'rejected') return { label: 'Rejected', color: '#e53e3e', bg: '#ffe5e5' };
     if (expense.status === 'paid') return { label: 'Paid', color: '#38a169', bg: '#f0fff4' };
     if (expense.status === 'verifying') return { label: 'Verifying', color: '#c05621', bg: '#fffaf0' };
+    // "Who Paid: None" — nobody has paid yet, then shares get approved one by one
+    if (!expense.paid_by && splits.length > 0) {
+      const paidCount = splits.filter(s => s.status === 'approved').length;
+      if (paidCount === 0) return { label: 'Unpaid', color: '#e53e3e', bg: '#FEE2E2' };
+      return { label: `${paidCount}/${splits.length} Paid`, color: '#856404', bg: '#fff3cd' };
+    }
     return { label: 'Pending', color: '#856404', bg: '#fff3cd' };
   };
 
@@ -985,7 +1017,7 @@ export default function ExpensesScreen() {
               {reimburseDetails.length > 0
                 ? reimburseDetails.map((r, i) => (
                   <span key={i} className="stat-reimburse-line">
-                    Owe ₱{Number(r.amount).toFixed(2)} → {r.payer?.full_name}
+                    Owe ₱{Number(r.amount).toFixed(2)}{r.payer?.full_name ? ` → ${r.payer.full_name}` : ' · unpaid'}
                   </span>
                 ))
                 : 'Nothing to pay 🎉'}
@@ -1047,7 +1079,7 @@ export default function ExpensesScreen() {
         {filteredExpenses.map(expense => {
           const splits = expenseSplits[expense.id] || [];
           const mySplit = splits.find(s => s.user_id === currentUser?.id);
-          const badge = getStatusBadge(expense);
+          const badge = getStatusBadge(expense, splits);
           const expenseMembers = splits.map(split => ({
             user_id: split.user_id,
             profiles: split.profiles
@@ -1121,7 +1153,7 @@ export default function ExpensesScreen() {
           <div className="add-expense-modal">
             <div className="modal-header">
               <h2>Add Expense · {selectedHousehold?.name}</h2>
-              <button className="modal-close" onClick={() => { setShowAddExpense(false); setOtherType(''); setExpenseForm({
+              <button className="modal-close" onClick={() => { setShowAddExpense(false); setOtherType(''); setCategoryTouched(false); setCategoryAutoDetected(false); setExpenseForm({
                 title: '',
                 amount: '',
                 category: 'Rent',
@@ -1136,7 +1168,7 @@ export default function ExpensesScreen() {
             <div className="modal-scroll">
               <div className="form-group">
                 <label>Description *</label>
-                <input type="text" placeholder="e.g. Electricity bill" value={expenseForm.title} onChange={e => setExpenseForm({ ...expenseForm, title: e.target.value })} className={expenseErrors.title ? 'input-error' : ''} />
+                <input type="text" placeholder="e.g. Electricity bill" value={expenseForm.title} onChange={e => handleTitleChange(e.target.value)} className={expenseErrors.title ? 'input-error' : ''} />
                 {expenseErrors.title && <span className="form-error">{expenseErrors.title}</span>}
               </div>
               <div className="form-group">
@@ -1174,6 +1206,8 @@ export default function ExpensesScreen() {
                     value={expenseForm.category}
                     onChange={e => {
                       setExpenseForm({ ...expenseForm, category: e.target.value });
+                      setCategoryTouched(true);
+                      setCategoryAutoDetected(false);
                       if (e.target.value !== 'Other') setOtherType('');
                     }}
                   >
@@ -1181,12 +1215,15 @@ export default function ExpensesScreen() {
                   </select>
                   <ChevronDown size={14} className="select-arrow" />
                 </div>
+                {categoryAutoDetected && !categoryTouched && (
+                  <span className="form-hint">✨ Picked from your description — change it anytime.</span>
+                )}
                 {expenseForm.category === 'Other' && (
                   <input
                     type="text"
                     placeholder="Specify type (e.g. Pet supplies, Haircut)"
                     value={otherType}
-                    onChange={e => setOtherType(e.target.value)}
+                    onChange={e => { setOtherType(e.target.value); setCategoryTouched(true); setCategoryAutoDetected(false); }}
                     style={{ marginTop: 8 }}
                   />
                 )}
@@ -1222,11 +1259,13 @@ export default function ExpensesScreen() {
                   <select value={expenseForm.who_paid} onChange={e => setExpenseForm({ ...expenseForm, who_paid: e.target.value })} className={expenseErrors.who_paid ? 'input-error' : ''}>
                     <option value="">Select member</option>
                     {householdMembers.map(m => <option key={m.user_id} value={m.user_id}>{m.profiles?.full_name}</option>)}
+                    <option value="none">None — nobody has paid yet</option>
                   </select>
                   <ChevronDown size={14} className="select-arrow" />
                 </div>
                 {expenseErrors.who_paid && <span className="form-error">{expenseErrors.who_paid}</span>}
               </div>
+              {!isSolo && (<>
               <div className="form-group">
                 <label>Split With *</label>
                 <div className="members-select">
@@ -1248,7 +1287,8 @@ export default function ExpensesScreen() {
                   <button type="button" className={`split-btn ${expenseForm.split_type === 'custom' ? 'active' : ''}`} onClick={() => setExpenseForm({ ...expenseForm, split_type: 'custom' })}>Custom</button>
                 </div>
               </div>
-              {expenseForm.split_type === 'custom' && (
+              </>)}
+              {!isSolo && expenseForm.split_type === 'custom' && (
                 <div className="form-group">
                   <label>Custom Amounts</label>
                   {(() => {

@@ -9,6 +9,7 @@ import './GroupDetailScreen.css';
 import { SUBSCRIPTION_PRESETS } from '../utils/expenseUtils';
 import PayOnlineModal from '../components/PayOnlineModal';
 import { openPaymentApp } from '../utils/paymentUtils';
+import { detectCategory } from '../utils/categoryDetection';
 
 const ALL_EXPENSE_CATEGORIES = [
   'Rent', 'Electricity', 'Water', 'Internet',
@@ -135,6 +136,22 @@ export default function GroupDetailScreen() {
   });
   const [expenseErrors, setExpenseErrors] = useState({});
   const [otherType, setOtherType] = useState('');
+  // Category auto-detect: stops overriding once the user picks a category themselves
+  const [categoryTouched, setCategoryTouched] = useState(false);
+  const [categoryAutoDetected, setCategoryAutoDetected] = useState(false);
+
+  // Rename household / group
+  const [renameStep, setRenameStep] = useState(null); // null | 'edit' | 'confirm'
+  const [renameValue, setRenameValue] = useState('');
+  const [renameLoading, setRenameLoading] = useState(false);
+  const [nameRequests, setNameRequests] = useState([]);
+
+  // Nobody to split with when the household/group has a single member
+  const isSolo = members.length <= 1;
+  const contextLabel = contextType === 'household' ? 'household' : 'group';
+  const myPendingNameRequest = !isAdmin
+    ? nameRequests.find(r => r.requested_by === currentUser?.id)
+    : null;
 
   const [proofForm, setProofForm] = useState({
     note: '', screenshot: null, screenshotPreview: null
@@ -268,6 +285,19 @@ export default function GroupDetailScreen() {
       } else {
         setPendingExpenseApprovals([]);
       }
+
+      // Pending rename requests (owner sees all, a member sees only their own).
+      // If the table doesn't exist yet this just returns an error and we show none.
+      const { data: nameReqData } = await supabase
+        .from('name_change_requests')
+        .select('*')
+        .eq(contextType === 'household' ? 'household_id' : 'group_id', id)
+        .eq('status', 'pending')
+        .order('created_at', { ascending: true });
+      setNameRequests((nameReqData || []).map(r => ({
+        ...r,
+        profiles: profilesMap[r.requested_by] || { full_name: 'A member' },
+      })));
     } catch (err) {
       console.error(err);
       setError(err.message);
@@ -368,6 +398,11 @@ export default function GroupDetailScreen() {
         event: '*', schema: 'public', table: 'payment_proofs',
       }, () => fetchGroupAndData())
       .on('postgres_changes', {
+        event: 'UPDATE', schema: 'public',
+        table: contextType === 'household' ? 'households' : 'groups',
+        filter: `id=eq.${id}`,
+      }, () => fetchGroupAndData())
+      .on('postgres_changes', {
         event: '*', schema: 'public', table: 'expense_splits',
       }, () => {
         if (expenses.length) {
@@ -377,6 +412,19 @@ export default function GroupDetailScreen() {
       .subscribe();
     return () => supabase.removeChannel(channel);
   }, [currentUser, group, id, contextType, fetchGroupAndData, fetchExpenseSplits, expenses.length]);
+
+  // Separate channel so a missing table can never break the expense updates above
+  useEffect(() => {
+    if (!currentUser) return;
+    const channel = supabase
+      .channel(`name-requests-${id}`)
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'name_change_requests',
+        filter: `${contextType === 'household' ? 'household_id' : 'group_id'}=eq.${id}`,
+      }, () => fetchGroupAndData())
+      .subscribe();
+    return () => supabase.removeChannel(channel);
+  }, [currentUser?.id, id, contextType, fetchGroupAndData]);
 
   const resetExpenseForm = () => {
     setExpenseForm({
@@ -388,6 +436,8 @@ export default function GroupDetailScreen() {
     });
     setExpenseErrors({});
     setOtherType('');
+    setCategoryTouched(false);
+    setCategoryAutoDetected(false);
   };
 
   const resetProofForm = () => {
@@ -400,6 +450,10 @@ export default function GroupDetailScreen() {
     const paidCount = splits.filter(s => s.status === 'approved').length;
     const total = splits.length;
     if (total === 0) return { label: 'No splits', color: '#856404', bg: '#fff3cd' };
+    // "Who Paid: None" and nothing paid or awaiting review yet
+    if (!expense.paid_by && paidCount === 0 && !splits.some(s => s.status === 'pending_verification')) {
+      return { label: 'Unpaid', color: '#e53e3e', bg: '#FEE2E2' };
+    }
     if (paidCount === total) return { label: 'Fully Paid', color: '#38a169', bg: '#f0fff4' };
     return { label: `${paidCount}/${total} Paid`, color: '#856404', bg: '#fff3cd' };
   };
@@ -430,13 +484,23 @@ export default function GroupDetailScreen() {
     setShowViewProofModal(true);
   };
 
+  // Typing in Description picks a matching category — until the user chooses one by hand
+  const handleTitleChange = (value) => {
+    const hit = categoryTouched ? null : detectCategory(value);
+    setExpenseForm(prev => ({ ...prev, title: value, ...(hit ? { category: hit.category } : {}) }));
+    if (hit) {
+      setCategoryAutoDetected(true);
+      setOtherType(hit.category === 'Other' ? (hit.otherType || '') : '');
+    }
+  };
+
   const handleAddExpense = async () => {
     const errors = {};
     if (!expenseForm.title.trim()) errors.title = 'Title required';
     if (expenseForm.due_date && expenseForm.due_date < getTodayStr()) errors.due_date = 'Due date cannot be in the past';
     if (!expenseForm.amount || isNaN(expenseForm.amount)) errors.amount = 'Valid amount required';
     if (!expenseForm.who_paid) errors.who_paid = 'Select who paid';
-    if (expenseForm.selected_members.length === 0) errors.members = 'Select at least one member';
+    if (!isSolo && expenseForm.selected_members.length === 0) errors.members = 'Select at least one member';
 
     if (Object.keys(errors).length > 0) {
       setExpenseErrors(errors);
@@ -445,13 +509,18 @@ export default function GroupDetailScreen() {
     }
 
     setLoadingAction(true);
+    // Single-member household/group: that member is the only participant
+    const participants = isSolo ? members.map(m => m.user_id) : expenseForm.selected_members;
+    const splitType = isSolo ? 'equal' : expenseForm.split_type;
+    // "None" = nobody has paid yet
+    const payerId = expenseForm.who_paid === 'none' ? null : expenseForm.who_paid;
     const splits = {};
-    if (expenseForm.split_type === 'equal') {
-      const share = Number(expenseForm.amount) / expenseForm.selected_members.length;
-      expenseForm.selected_members.forEach(uid => { splits[uid] = share.toFixed(2); });
+    if (splitType === 'equal') {
+      const share = Number(expenseForm.amount) / participants.length;
+      participants.forEach(uid => { splits[uid] = share.toFixed(2); });
     } else {
       let total = 0;
-      expenseForm.selected_members.forEach(uid => {
+      participants.forEach(uid => {
         const val = Number(expenseForm.custom_splits[uid]) || 0;
         splits[uid] = val.toFixed(2);
         total += val;
@@ -475,8 +544,8 @@ export default function GroupDetailScreen() {
       expense_date: getTodayStr(),             // auto: the day it was created
       due_date: expenseForm.due_date || null,  // optional
       location: expenseForm.location || group?.name,
-      paid_by: expenseForm.who_paid,
-      split_type: expenseForm.split_type,
+      paid_by: payerId,
+      split_type: splitType,
       members_split: splits,
       status: 'pending',
       approval_status: isAdmin ? 'approved' : 'pending_approval',
@@ -498,7 +567,7 @@ export default function GroupDetailScreen() {
     }
 
     if (isAdmin) {
-      const splitRows = expenseForm.selected_members.map(uid => ({
+      const splitRows = participants.map(uid => ({
         expense_id: insertedExpense.id,
         user_id: uid,
         share_amount: Number(splits[uid]),
@@ -512,12 +581,12 @@ export default function GroupDetailScreen() {
 
       // Owner-created expenses skip approval, so tell every member who owes a share.
       const dueText = expenseForm.due_date ? ` Due ${fmtDate(expenseForm.due_date)}.` : '';
-      const notifRows = expenseForm.selected_members
+      const notifRows = participants
         .filter(uid => uid !== currentUser.id)
         .map(uid => ({
           user_id: uid,
           title: 'New Expense Added',
-          message: `${profile?.full_name} added "${insertedExpense.title}" for ₱${Number(expenseForm.amount).toFixed(2)}. Your share: ₱${Number(splits[uid]).toFixed(2)}.${dueText}${uid === expenseForm.who_paid && uid !== group?.created_by ? ' You are marked as the payer — please upload your proof of payment.' : ''}`,
+          message: `${profile?.full_name} added "${insertedExpense.title}" for ₱${Number(expenseForm.amount).toFixed(2)}. Your share: ₱${Number(splits[uid]).toFixed(2)}.${dueText}${!payerId ? ' It is marked unpaid — please upload your proof of payment once you pay your share.' : ''}${uid === expenseForm.who_paid && uid !== group?.created_by ? ' You are marked as the payer — please upload your proof of payment.' : ''}`,
           type: 'expense_added',
           link_path: `/groups/${id}?type=${contextType}`,
           link_state: JSON.stringify({ type: contextType }),
@@ -611,7 +680,9 @@ export default function GroupDetailScreen() {
     await supabase.from('notifications').insert({
       user_id: expense.created_by,
       title: '✅ Expense Approved!',
-      message: needsProof && creatorIsPayer
+      message: !expense.paid_by
+        ? `Your expense "${expense.title}" for ₱${Number(expense.amount).toFixed(2)} was approved and is marked Unpaid. Upload your proof of payment for your share — it is marked paid once the owner approves it.`
+        : needsProof && creatorIsPayer
         ? `Your expense "${expense.title}" for ₱${Number(expense.amount).toFixed(2)} was approved. Please upload your proof of payment — it is marked paid once the owner approves it.`
         : `Your expense "${expense.title}" for ₱${Number(expense.amount).toFixed(2)} was approved by the owner.${upfrontProof && creatorIsPayer ? ' Your proof is now waiting for the owner\'s review.' : ''}`,
       type: 'expense_approved',
@@ -631,6 +702,22 @@ export default function GroupDetailScreen() {
         link_state: JSON.stringify({ type: contextType }),
         link_query: `expenseId=${expense.id}`,
       });
+    }
+
+    // No payer: every member submits proof for their own share, so let them know
+    if (!expense.paid_by) {
+      const others = memberIds.filter(uid => uid !== expense.created_by && uid !== currentUser?.id);
+      if (others.length) {
+        await supabase.from('notifications').insert(others.map(uid => ({
+          user_id: uid,
+          title: 'New Expense Added',
+          message: `"${expense.title}" for ₱${Number(expense.amount).toFixed(2)} was added and is marked Unpaid. Your share: ₱${Number(splits[uid]).toFixed(2)}. Upload your proof of payment once you pay.`,
+          type: 'expense_added',
+          link_path: `/groups/${id}?type=${contextType}`,
+          link_state: JSON.stringify({ type: contextType }),
+          link_query: `expenseId=${expense.id}`,
+        })));
+      }
     }
 
     showToast('Expense approved!');
@@ -1128,6 +1215,149 @@ export default function GroupDetailScreen() {
     fetchGroupAndData();
   };
 
+  // ── Rename household / group ─────────────────────────────────────────────
+  const nameTable = contextType === 'household' ? 'households' : 'groups';
+  const nameColumn = contextType === 'household' ? 'household_id' : 'group_id';
+  const trimmedRename = renameValue.trim();
+  const renameInvalid =
+    trimmedRename.length < 2 ? 'Name must be at least 2 characters'
+    : trimmedRename === group?.name ? 'Enter a different name'
+    : '';
+
+  const openRename = () => {
+    if (myPendingNameRequest) {
+      showToast('Your rename request is still waiting for the owner', 'error');
+      return;
+    }
+    setRenameValue(group?.name || '');
+    setRenameStep('edit');
+  };
+
+  const closeRename = () => {
+    if (renameLoading) return;
+    setRenameStep(null);
+    setRenameValue('');
+  };
+
+  const handleConfirmRename = async () => {
+    if (renameInvalid) return;
+    const newName = trimmedRename;
+    const oldName = group.name;
+    setRenameLoading(true);
+
+    if (isAdmin) {
+      const { error: updateError } = await supabase.from(nameTable).update({ name: newName }).eq('id', id);
+      if (updateError) {
+        showToast('Could not change the name. Please try again.', 'error');
+        setRenameLoading(false);
+        return;
+      }
+      // Keep the name shown on older expenses in sync (best effort)
+      await supabase.from('expenses').update({ location: newName }).eq(nameColumn, id).eq('location', oldName);
+
+      const rows = members
+        .filter(m => m.user_id !== currentUser.id)
+        .map(m => ({
+          user_id: m.user_id,
+          title: `${contextLabel === 'household' ? 'Household' : 'Group'} renamed`,
+          message: `${profile?.full_name} renamed "${oldName}" to "${newName}".`,
+          type: 'name_changed',
+          link_path: `/groups/${id}?type=${contextType}`,
+          link_state: JSON.stringify({ type: contextType }),
+        }));
+      if (rows.length) await supabase.from('notifications').insert(rows);
+
+      setGroup(g => ({ ...g, name: newName }));
+      showToast(`${contextLabel === 'household' ? 'Household' : 'Group'} name changed`);
+    } else {
+      const { error: requestError } = await supabase.from('name_change_requests').insert({
+        [nameColumn]: id,
+        requested_by: currentUser.id,
+        old_name: oldName,
+        new_name: newName,
+        status: 'pending',
+      });
+      if (requestError) {
+        showToast('Could not send your request. Please try again.', 'error');
+        setRenameLoading(false);
+        return;
+      }
+      await supabase.from('notifications').insert({
+        user_id: group.created_by,
+        title: '✏️ Name change request',
+        message: `${profile?.full_name} wants to rename "${oldName}" to "${newName}". Tap to review.`,
+        type: 'approval_request',
+        link_path: `/groups/${id}?type=${contextType}`,
+        link_state: JSON.stringify({ type: contextType }),
+      });
+      showToast('Request sent to the owner');
+    }
+
+    setRenameLoading(false);
+    setRenameStep(null);
+    setRenameValue('');
+    fetchGroupAndData();
+  };
+
+  const handleApproveNameRequest = async (req) => {
+    setLoadingAction(true);
+    const { error: updateError } = await supabase.from(nameTable).update({ name: req.new_name }).eq('id', id);
+    if (updateError) {
+      showToast('Could not change the name. Please try again.', 'error');
+      setLoadingAction(false);
+      return;
+    }
+    await supabase.from('name_change_requests').update({ status: 'approved' }).eq('id', req.id);
+    await supabase.from('expenses').update({ location: req.new_name }).eq(nameColumn, id).eq('location', group.name);
+
+    const rows = members
+      .filter(m => m.user_id !== currentUser.id)
+      .map(m => m.user_id === req.requested_by
+        ? {
+            user_id: m.user_id,
+            title: '✅ Name change approved',
+            message: `The owner approved renaming "${req.old_name}" to "${req.new_name}".`,
+            type: 'name_change_approved',
+            link_path: `/groups/${id}?type=${contextType}`,
+            link_state: JSON.stringify({ type: contextType }),
+          }
+        : {
+            user_id: m.user_id,
+            title: `${contextLabel === 'household' ? 'Household' : 'Group'} renamed`,
+            message: `"${req.old_name}" is now called "${req.new_name}".`,
+            type: 'name_changed',
+            link_path: `/groups/${id}?type=${contextType}`,
+            link_state: JSON.stringify({ type: contextType }),
+          });
+    if (rows.length) await supabase.from('notifications').insert(rows);
+
+    setGroup(g => ({ ...g, name: req.new_name }));
+    showToast('Name change approved');
+    fetchGroupAndData();
+    setLoadingAction(false);
+  };
+
+  const handleRejectNameRequest = async (req) => {
+    setLoadingAction(true);
+    const { error: updateError } = await supabase.from('name_change_requests').update({ status: 'rejected' }).eq('id', req.id);
+    if (updateError) {
+      showToast('Could not reject the request. Please try again.', 'error');
+      setLoadingAction(false);
+      return;
+    }
+    await supabase.from('notifications').insert({
+      user_id: req.requested_by,
+      title: '❌ Name change declined',
+      message: `The owner declined renaming "${req.old_name}" to "${req.new_name}".`,
+      type: 'name_change_rejected',
+      link_path: `/groups/${id}?type=${contextType}`,
+      link_state: JSON.stringify({ type: contextType }),
+    });
+    showToast('Request declined');
+    fetchGroupAndData();
+    setLoadingAction(false);
+  };
+
   if (loading) {
     return (
       <div className="group-detail-screen">
@@ -1162,8 +1392,21 @@ export default function GroupDetailScreen() {
       <div className="detail-header">
         <button className="back-btn" onClick={() => navigate(-1)}><ArrowLeft size={24} /></button>
         <div className="detail-header-info">
-          <h1 className="detail-group-name">{group.name}</h1>
+          <div className="detail-name-row">
+            <h1 className="detail-group-name">{group.name}</h1>
+            <button
+              className="detail-rename-btn"
+              onClick={openRename}
+              title={isAdmin ? `Rename ${contextLabel}` : `Request a new ${contextLabel} name`}
+              aria-label={`Rename ${contextLabel}`}
+            >
+              <Pencil size={12} />
+            </button>
+          </div>
           <p className="detail-group-type">{contextType === 'household' ? '🏠 Household' : '✈️ Trip Group'}</p>
+          {myPendingNameRequest && (
+            <span className="detail-rename-pending">⏳ Rename to “{myPendingNameRequest.new_name}” awaiting approval</span>
+          )}
         </div>
         <div className="detail-code-actions">
           <button className="icon-btn-sm" onClick={handleCopyCode}><Copy size={16} /></button>
@@ -1208,13 +1451,37 @@ export default function GroupDetailScreen() {
       {/* Pending Approvals — ONE section for both kinds of admin approvals:
           1) a member's newly created expense  (Approve / Reject)
           2) a member's payment proof          (Approve / Reject / View Proof) */}
-      {isAdmin && (pendingExpenseApprovals.length + pendingApprovals.length) > 0 && (
+      {isAdmin && (pendingExpenseApprovals.length + pendingApprovals.length + nameRequests.length) > 0 && (
         <div className="detail-pending-section">
           <h3 className="section-title">
-            ⏳ Pending Approvals ({pendingExpenseApprovals.length + pendingApprovals.length})
+            ⏳ Pending Approvals ({pendingExpenseApprovals.length + pendingApprovals.length + nameRequests.length})
           </h3>
 
           <div className="pa-list">
+            {/* Rename requests from members */}
+            {nameRequests.map(req => (
+              <div key={`name-${req.id}`} className="pa-card">
+                <div className="pa-top">
+                  <div className="pa-icon pa-icon-name">✏️</div>
+                  <div className="pa-info">
+                    <div className="pa-title-row">
+                      <span className="pa-title">Rename {contextLabel}</span>
+                    </div>
+                    <div className="pa-meta">{req.profiles?.full_name} wants to change “{req.old_name}” to “{req.new_name}”</div>
+                    <span className="pa-tag pa-tag-name">Name change</span>
+                  </div>
+                </div>
+                <div className="pa-actions">
+                  <button className="pa-btn pa-btn-approve" disabled={loadingAction} onClick={() => handleApproveNameRequest(req)}>
+                    <Check size={14} /> Approve
+                  </button>
+                  <button className="pa-btn pa-btn-reject" disabled={loadingAction} onClick={() => handleRejectNameRequest(req)}>
+                    <X size={14} /> Reject
+                  </button>
+                </div>
+              </div>
+            ))}
+
             {/* New expenses waiting for approval */}
             {pendingExpenseApprovals.map(expense => (
               <div
@@ -1451,7 +1718,7 @@ export default function GroupDetailScreen() {
                   placeholder="e.g. Electricity bill"
                   className={`detail-input${expenseErrors.title ? ' input-error' : ''}`}
                   value={expenseForm.title}
-                  onChange={e => setExpenseForm({ ...expenseForm, title: e.target.value })}
+                  onChange={e => handleTitleChange(e.target.value)}
                 />
               </div>
 
@@ -1502,6 +1769,8 @@ export default function GroupDetailScreen() {
                     value={expenseForm.category}
                     onChange={e => {
                       setExpenseForm({ ...expenseForm, category: e.target.value });
+                      setCategoryTouched(true);
+                      setCategoryAutoDetected(false);
                       if (e.target.value !== 'Other') setOtherType('');
                     }}
                     className="detail-input"
@@ -1511,6 +1780,9 @@ export default function GroupDetailScreen() {
                   </select>
                   <ChevronDown size={14} style={{ position: 'absolute', right: 14, top: '50%', transform: 'translateY(-50%)', color: '#9E8FCC', pointerEvents: 'none' }} />
                 </div>
+                {categoryAutoDetected && !categoryTouched && (
+                  <span className="detail-hint">✨ Picked from your description — change it anytime.</span>
+                )}
                 {/* Other — custom type input */}
                 {expenseForm.category === 'Other' && (
                   <input
@@ -1518,7 +1790,7 @@ export default function GroupDetailScreen() {
                     placeholder="Specify type (e.g. Pet supplies, Haircut)"
                     className="detail-input"
                     value={otherType}
-                    onChange={e => setOtherType(e.target.value)}
+                    onChange={e => { setOtherType(e.target.value); setCategoryTouched(true); setCategoryAutoDetected(false); }}
                     style={{ marginTop: 6 }}
                   />
                 )}
@@ -1561,11 +1833,13 @@ export default function GroupDetailScreen() {
                   >
                     <option value="">Select member</option>
                     {members.map(m => <option key={m.user_id} value={m.user_id}>{m.profiles?.full_name}</option>)}
+                    <option value="none">None — nobody has paid yet</option>
                   </select>
                   <ChevronDown size={14} style={{ position: 'absolute', right: 14, top: '50%', transform: 'translateY(-50%)', color: '#9E8FCC', pointerEvents: 'none' }} />
                 </div>
               </div>
 
+              {!isSolo && (<>
               {/* Split with */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <label style={{ fontSize: 12, fontWeight: 600, color: '#5A4AAA' }}>Split With *</label>
@@ -1590,8 +1864,10 @@ export default function GroupDetailScreen() {
                 </div>
               </div>
 
+              </>)}
+
               {/* Custom splits */}
-              {expenseForm.split_type === 'custom' && expenseForm.selected_members.map((uid, i) => {
+              {!isSolo && expenseForm.split_type === 'custom' && expenseForm.selected_members.map((uid, i) => {
                 const member = members.find(m => m.user_id === uid);
                 const totalAmt = Number(expenseForm.amount) || 0;
                 const prevTotal = expenseForm.selected_members.slice(0, i).reduce((sum, pid) => sum + (Number(expenseForm.custom_splits[pid]) || 0), 0);
@@ -1615,7 +1891,7 @@ export default function GroupDetailScreen() {
                   </div>
                 );
               })}
-              {expenseForm.split_type === 'custom' && (() => {
+              {!isSolo && expenseForm.split_type === 'custom' && (() => {
                 const totalAmt = Number(expenseForm.amount) || 0;
                 const customTotal = expenseForm.selected_members.reduce((sum, uid) => sum + (Number(expenseForm.custom_splits[uid]) || 0), 0);
                 const rem = totalAmt - customTotal;
@@ -1691,7 +1967,7 @@ export default function GroupDetailScreen() {
               </div>
               <p className="pom-owner-hint">Pay your biller directly, then upload the screenshot above.</p>
               <textarea placeholder="Optional note" value={proofForm.note} onChange={e => setProofForm({ ...proofForm, note: e.target.value })} className="detail-textarea" rows={3} />
-              <div style={{ background: '#F0EDFF', borderRadius: 12, padding: '10px 14px', fontSize: 12, color: '#3B2AAB', textAlign: 'center' }}>📢 This will automatically mark the expense as paid for all members.</div>
+              <div style={{ background: '#F0EDFF', borderRadius: 12, padding: '10px 14px', fontSize: 12, color: '#3B2AAB', textAlign: 'center' }}>{isSolo ? '📢 This will mark the expense as paid.' : '📢 This marks your share as paid. The expense is fully paid once every member’s share is approved.'}</div>
               <button className="add-expense-btn" onClick={handleOwnerSubmitProof} disabled={loadingAction}>{loadingAction ? 'Confirming...' : 'Confirm Payment'}</button>
               <button className="cancel-btn" onClick={() => setShowOwnerProofModal(false)}>Cancel</button>
             </div>
@@ -1921,6 +2197,73 @@ export default function GroupDetailScreen() {
         amount={selectedExpense?.members_split?.[currentUser?.id]}
         onProceed={handlePayOnlineProceed}
       />
+
+      {/* Rename household / group — step 1: edit, step 2: confirm */}
+      {renameStep && (
+        <div className="modal-overlay-detail" onClick={closeRename}>
+          <div className="rn-card" role="dialog" aria-modal="true" onClick={e => e.stopPropagation()}>
+            {renameStep === 'edit' ? (
+              <>
+                <div className="rn-icon"><Pencil size={22} /></div>
+                <h2 className="rn-title">Rename {contextLabel}</h2>
+                <p className="rn-sub">
+                  {isAdmin
+                    ? `Fix a typo or pick a new name. Everyone in the ${contextLabel} will see it.`
+                    : `Suggest a new name. The owner needs to approve it before it changes.`}
+                </p>
+                <label className="rn-label" htmlFor="rn-input">New name</label>
+                <input
+                  id="rn-input"
+                  className="rn-input"
+                  type="text"
+                  autoFocus
+                  maxLength={40}
+                  value={renameValue}
+                  onChange={e => setRenameValue(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && !renameInvalid) setRenameStep('confirm'); }}
+                  placeholder={`e.g. ${contextType === 'household' ? 'Win and K House' : 'Cebu Trip 2026'}`}
+                />
+                <div className="rn-meta">
+                  <span className={renameValue && renameInvalid ? 'rn-error' : ''}>{renameValue ? renameInvalid : ''}</span>
+                  <span>{renameValue.length}/40</span>
+                </div>
+                <button className="rn-btn-primary" disabled={!!renameInvalid} onClick={() => setRenameStep('confirm')}>
+                  Continue
+                </button>
+                <button className="rn-btn-ghost" onClick={closeRename}>Cancel</button>
+              </>
+            ) : (
+              <>
+                <div className="rn-icon rn-icon-confirm"><AlertCircle size={24} /></div>
+                <h2 className="rn-title">
+                  {isAdmin ? `Change the ${contextLabel} name?` : 'Send name change request?'}
+                </h2>
+                <div className="rn-diff">
+                  <div className="rn-diff-row">
+                    <span className="rn-diff-label">Current</span>
+                    <span className="rn-old">{group.name}</span>
+                  </div>
+                  <div className="rn-diff-row">
+                    <span className="rn-diff-label">New</span>
+                    <span className="rn-new">{trimmedRename}</span>
+                  </div>
+                </div>
+                <div className={`rn-note ${isAdmin ? '' : 'rn-note-warn'}`}>
+                  {isAdmin
+                    ? `Are you sure? All members will be notified of the new ${contextLabel} name.`
+                    : 'Are you sure? Your request goes to the owner, and the name only changes once they approve it.'}
+                </div>
+                <button className="rn-btn-primary" disabled={renameLoading} onClick={handleConfirmRename}>
+                  {renameLoading ? 'Saving…' : isAdmin ? 'Yes, change name' : 'Yes, send request'}
+                </button>
+                <button className="rn-btn-ghost" disabled={renameLoading} onClick={() => setRenameStep('edit')}>
+                  Go back
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {toast && <div className={`toast-detail toast-${toast.type}`}>{toast.msg}</div>}
 
