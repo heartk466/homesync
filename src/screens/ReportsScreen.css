@@ -771,3 +771,59 @@
   line-height: 1.5;
   margin: 0;
 }
+
+/* ── Side-by-side switchers + hover dropdown ──────────────────────────── */
+.reports-title-section {
+  position: relative;
+  z-index: 60;            /* keep dropdowns above the scrolling cards */
+}
+
+.switcher-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.switcher-row .household-switcher-wrap {
+  margin-top: 0;
+  min-width: 0;          
+  flex: 0 1 auto;
+}
+
+.switcher-row .household-switcher-wrap.is-open { z-index: 80; }
+
+.household-switcher-pill {
+  max-width: 100%;
+  transition: filter 0.15s ease;
+}
+
+.household-switcher-pill:hover { filter: brightness(1.1); }
+
+.member-pill { background: #5A4AAA; }
+
+.pill-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.pill-chevron { flex-shrink: 0; transition: transform 0.2s ease; }
+.pill-chevron.open { transform: rotate(180deg); }
+
+
+.household-dropdown {
+  margin-top: 0;
+  top: 100%;
+  max-height: 260px;
+  overflow-y: auto;
+  animation: dropdown-in 0.15s ease;
+}
+
+.household-dropdown.align-right { left: auto; right: 0; }
+
+@keyframes dropdown-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}

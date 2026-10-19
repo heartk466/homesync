@@ -446,6 +446,10 @@ export default function ReportsScreen() {
     return (((current - last) / last) * 100).toFixed(1);
   };
 
+  // true on devices with a real mouse; touch devices fall back to tap-to-toggle
+  const canHover = () =>
+    typeof window !== 'undefined' && window.matchMedia('(hover: hover)').matches;
+
   const handleSwitchHousehold = async (h) => {
     setSelectedHousehold(h);
     setShowHouseholdDropdown(false);
@@ -662,47 +666,68 @@ export default function ReportsScreen() {
           </button>
         </div>
 
-        {/* Household Switcher */}
-        {allHouseholds.length > 1 && (
-          <div className="household-switcher-wrap">
-            <button className="household-switcher-pill" onClick={() => setShowHouseholdDropdown(!showHouseholdDropdown)}>
-              🏠 {selectedHousehold?.name}
-              <ChevronDown size={14}/>
-            </button>
-            {showHouseholdDropdown && (
-              <div className="household-dropdown">
-                <div className="household-search-wrap">
-                  <Search size={13} className="household-search-icon"/>
-                  <input type="text" placeholder="Search household..." value={householdSearch} onChange={e => setHouseholdSearch(e.target.value)} className="household-search-input" />
-                </div>
-                {allHouseholds.filter(h => h.name.toLowerCase().includes(householdSearch.toLowerCase())).map(h => (
-                  <button key={h.id} className={`household-option ${selectedHousehold?.id === h.id ? 'active' : ''}`} onClick={() => handleSwitchHousehold(h)}>
-                    <span className="household-option-name">{h.name}</span>
-                    <span className="household-option-role">{h.role}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+        {/* Household + Member switchers (side by side, open on hover) */}
+        {(allHouseholds.length > 1 || (isAdmin && householdMembers.length > 1)) && (
+          <div className="switcher-row">
 
-        {/* Member Selector (only for admin) */}
-        {isAdmin && householdMembers.length > 1 && (
-          <div className="household-switcher-wrap" style={{ marginTop: 8 }}>
-            <button className="household-switcher-pill" style={{ background: '#5A4AAA' }} onClick={() => setShowMemberDropdown(!showMemberDropdown)}>
-              <Users size={14}/> {householdMembers.find(m => m.user_id === selectedMemberId)?.profiles?.full_name || 'Select Member'}
-              <ChevronDown size={14}/>
-            </button>
-            {showMemberDropdown && (
-              <div className="household-dropdown">
-                {householdMembers.map(m => (
-                  <button key={m.user_id} className={`household-option ${selectedMemberId === m.user_id ? 'active' : ''}`} onClick={() => handleMemberChange(m.user_id)}>
-                    <span className="household-option-name">{m.profiles?.full_name}</span>
-                    <span className="household-option-role">{m.role}</span>
-                  </button>
-                ))}
+            {allHouseholds.length > 1 && (
+              <div
+                className={`household-switcher-wrap ${showHouseholdDropdown ? 'is-open' : ''}`}
+                onMouseEnter={() => { if (canHover()) { setShowMemberDropdown(false); setShowHouseholdDropdown(true); } }}
+                onMouseLeave={() => { if (canHover()) setShowHouseholdDropdown(false); }}
+              >
+                <button
+                  className="household-switcher-pill"
+                  onClick={() => { if (!canHover()) { setShowMemberDropdown(false); setShowHouseholdDropdown(!showHouseholdDropdown); } }}
+                >
+                  <span className="pill-text">🏠 {selectedHousehold?.name}</span>
+                  <ChevronDown size={14} className={`pill-chevron ${showHouseholdDropdown ? 'open' : ''}`}/>
+                </button>
+                {showHouseholdDropdown && (
+                  <div className="household-dropdown">
+                    <div className="household-search-wrap">
+                      <Search size={13} className="household-search-icon"/>
+                      <input type="text" placeholder="Search household..." value={householdSearch} onChange={e => setHouseholdSearch(e.target.value)} className="household-search-input" />
+                    </div>
+                    {allHouseholds.filter(h => h.name.toLowerCase().includes(householdSearch.toLowerCase())).map(h => (
+                      <button key={h.id} className={`household-option ${selectedHousehold?.id === h.id ? 'active' : ''}`} onClick={() => handleSwitchHousehold(h)}>
+                        <span className="household-option-name">{h.name}</span>
+                        <span className="household-option-role">{h.role}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
+
+            {/* Member Selector (only for admin) */}
+            {isAdmin && householdMembers.length > 1 && (
+              <div
+                className={`household-switcher-wrap ${showMemberDropdown ? 'is-open' : ''}`}
+                onMouseEnter={() => { if (canHover()) { setShowHouseholdDropdown(false); setShowMemberDropdown(true); } }}
+                onMouseLeave={() => { if (canHover()) setShowMemberDropdown(false); }}
+              >
+                <button
+                  className="household-switcher-pill member-pill"
+                  onClick={() => { if (!canHover()) { setShowHouseholdDropdown(false); setShowMemberDropdown(!showMemberDropdown); } }}
+                >
+                  <Users size={14}/>
+                  <span className="pill-text">{householdMembers.find(m => m.user_id === selectedMemberId)?.profiles?.full_name || 'Select Member'}</span>
+                  <ChevronDown size={14} className={`pill-chevron ${showMemberDropdown ? 'open' : ''}`}/>
+                </button>
+                {showMemberDropdown && (
+                  <div className="household-dropdown align-right">
+                    {householdMembers.map(m => (
+                      <button key={m.user_id} className={`household-option ${selectedMemberId === m.user_id ? 'active' : ''}`} onClick={() => handleMemberChange(m.user_id)}>
+                        <span className="household-option-name">{m.profiles?.full_name}</span>
+                        <span className="household-option-role">{m.role}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
           </div>
         )}
       </div>
