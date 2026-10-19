@@ -102,7 +102,7 @@ export default function LoginScreen() {
 
       {/* Logo */}
       <div className="login-logo">
-        <img src="/icons/icon-512.png" alt="HomeSync" className="login-logo-icon" />
+        <img src="/Homesync.svg" alt="HomeSync" className="login-logo-icon" />
         <span className="login-logo-text">HomeSync</span>
       </div>
 
