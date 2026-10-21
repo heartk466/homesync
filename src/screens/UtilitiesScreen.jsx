@@ -8,6 +8,7 @@ import {
 import TopBar from '../components/TopBar';
 import BottomNav from '../components/BottomNav';
 import PayOnlineModal from '../components/PayOnlineModal';
+import { softDeleteExpense, overpaidOf, followupDueOf, num as toNum } from '../utils/expenseEditUtils';
 import './UtilitiesScreen.css';
 import {
   fetchAllUtilityItems,
@@ -198,6 +199,7 @@ export default function UtilitiesScreen() {
       .select('*')
       .eq('household_id', household.id)
       .in('category', UTILITY_CATEGORIES)
+      .is('deleted_at', null)
       .order('expense_date', { ascending: false });
 
     console.log('[Utilities] Expense query result:', { utilityExpenses, expError });
@@ -256,6 +258,9 @@ export default function UtilitiesScreen() {
         mySplit: mySplit,
         myShareAmount: mySplit ? Number(mySplit.share_amount) : 0,
         myStatus: mySplit ? mySplit.status : 'unpaid',
+        myPaidAmount: mySplit ? toNum(mySplit.paid_amount) : 0,
+        myOverpaid: mySplit ? overpaidOf(mySplit) : 0,
+        myFollowupDue: mySplit ? followupDueOf(mySplit) : 0,
       };
     });
 
@@ -351,10 +356,29 @@ export default function UtilitiesScreen() {
   const handleAdjustSplit = async () => {};
   const handleDeleteUtility = async () => {
     if (!selectedUtility) return;
-    await supabase.from('expenses').delete().eq('id', selectedUtility.id);
-    setShowDeleteModal(false);
-    setSelectedUtility(null);
-    showToast('Utility deleted.');
+    try {
+      // soft delete: the data stays in the database; blocked while members have paid
+      const res = await softDeleteExpense({
+        expense: { ...selectedUtility, paid_by: selectedUtility.paid_by },
+        actor: { id: currentUser.id, name: profile?.full_name || 'The admin' },
+        linkFor: (expenseId) => ({
+          link_path: `/groups/${activeHousehold?.id}?type=household`,
+          link_state: JSON.stringify({ type: 'household' }),
+          link_query: `expenseId=${expenseId}`,
+        }),
+      });
+      if (res.blocked) {
+        showToast('Refund the members who paid first (Expenses screen).', 'error');
+        setShowDeleteModal(false);
+        return;
+      }
+      setShowDeleteModal(false);
+      setSelectedUtility(null);
+      showToast('Utility deleted.');
+    } catch (err) {
+      console.error(err);
+      showToast(err.message || 'Could not delete utility.', 'error');
+    }
     fetchHouseholdData(activeHousehold, currentUser);
   };
   const resetUtilityForm = () => {};
@@ -456,6 +480,7 @@ export default function UtilitiesScreen() {
             // "Paid" = expense status is 'paid' OR current user's own split is approved
             const isPaid = utility.status === 'paid' || utility.myStatus === 'approved';
             const isVerifying = !isPaid && (utility.status === 'verifying' || utility.myStatus === 'pending_verification');
+            const isPartly = !isPaid && !isVerifying && utility.myStatus === 'partly_paid';
             return (
               <div key={utility.id} className="utility-item">
                 <div className="utility-icon-wrap" style={{ background: config.bg, color: config.color }}>{config.icon}</div>
@@ -463,7 +488,23 @@ export default function UtilitiesScreen() {
                   <p className="utility-name">{utility.category} – {utility.title}: ₱{Number(utility.amount).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
                   <p className="utility-meta">{utility.split_method} | {utility.expense_date} | {utility.location}</p>
                   {myShare > 0 && <p className="utility-my-share">Your share: ₱{myShare.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>}
-                  {!isAdmin && !isPaid && !isVerifying && (
+                  {utility.myPaidAmount > 0 && utility.myStatus !== 'approved' && (
+                    <p className="utility-my-share" style={{ color: '#c05621' }}>
+                      Paid ₱{utility.myPaidAmount.toLocaleString('en-PH', { minimumFractionDigits: 2 })} so far
+                    </p>
+                  )}
+                  {utility.myOverpaid > 0 && (
+                    <p className="utility-my-share" style={{ color: '#2B6CB0' }}>
+                      Overpaid ₱{utility.myOverpaid.toLocaleString('en-PH', { minimumFractionDigits: 2 })} — refund pending
+                    </p>
+                  )}
+                  {!isAdmin && isPartly && (
+                    <div className="confirmation-row">
+                      <span className="owe-text">₱{utility.myFollowupDue.toLocaleString('en-PH', { minimumFractionDigits: 2 })} follow-up due</span>
+                      <button className="pay-btn" onClick={() => navigate('/expenses')}>Pay in Expenses</button>
+                    </div>
+                  )}
+                  {!isAdmin && !isPaid && !isVerifying && !isPartly && (
                     <div className="confirmation-row">
                       <button className="pay-btn" onClick={() => { setSelectedUtility(utility); setShowPaymentProofModal(true); }}>Pay</button>
                     </div>
@@ -478,6 +519,8 @@ export default function UtilitiesScreen() {
                   <span className="status-badge" style={{
                     background: isPaid
                       ? '#D1FAE5'
+                      : isPartly
+                        ? '#FEEBC8'
                       : isVerifying
                         ? '#fffaf0'
                         : utility.approval_status === 'pending_approval'
@@ -485,6 +528,8 @@ export default function UtilitiesScreen() {
                           : '#FFF3CD',
                     color: isPaid
                       ? '#065F46'
+                      : isPartly
+                        ? '#c05621'
                       : isVerifying
                         ? '#c05621'
                         : utility.approval_status === 'pending_approval'
@@ -493,6 +538,8 @@ export default function UtilitiesScreen() {
                   }}>
                     {isPaid
                       ? '✓ Paid'
+                      : isPartly
+                        ? '◐ Partly Paid'
                       : isVerifying
                         ? '🔍 Verifying'
                         : utility.approval_status === 'pending_approval'
@@ -560,6 +607,11 @@ export default function UtilitiesScreen() {
           <div className="small-modal">
             <AlertCircle size={40} color="#e53e3e"/>
             <h2>Delete Utility?</h2>
+            {selectedUtility && (
+              <p className="modal-subtitle">
+                {selectedUtility.category} – {selectedUtility.title} · ₱{Number(selectedUtility.amount).toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+              </p>
+            )}
             <button className="delete-confirm-btn" onClick={handleDeleteUtility}>Yes, Delete</button>
             <button className="cancel-btn" onClick={() => setShowDeleteModal(false)}>Cancel</button>
           </div>

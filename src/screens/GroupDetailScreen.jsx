@@ -8,6 +8,16 @@ import {
 import './GroupDetailScreen.css';
 import { SUBSCRIPTION_PRESETS } from '../utils/expenseUtils';
 import PayOnlineModal from '../components/PayOnlineModal';
+import EditExpenseModal from '../components/EditExpenseModal';
+import DeleteExpenseModal from '../components/DeleteExpenseModal';
+import FollowupPaymentModal from '../components/FollowupPaymentModal';
+import RefundModal from '../components/RefundModal';
+import ExpenseProofsModal from '../components/ExpenseProofsModal';
+import {
+  fetchExpenseExtras, softDeleteExpense, submitFollowupProof, reviewFollowupProof,
+  sendRefund, confirmRefund, followupDueOf, overpaidOf, splitStatusMeta,
+  num as toNum,
+} from '../utils/expenseEditUtils';
 import { openPaymentApp } from '../utils/paymentUtils';
 import { detectCategory } from '../utils/categoryDetection';
 
@@ -120,12 +130,14 @@ export default function GroupDetailScreen() {
     if (payOnlineOrigin === 'resubmit') setShowResubmitModal(true);
   };
 
-  // Edit Amount state
-  const [showEditAmountModal, setShowEditAmountModal] = useState(false);
-  const [editAmountExpense, setEditAmountExpense] = useState(null);
-  const [editAmountValue, setEditAmountValue] = useState('');
-  const [editAmountLoading, setEditAmountLoading] = useState(false);
-  const [editCustomSplits, setEditCustomSplits] = useState({});
+  // Edit / follow-up / refund / proofs (shared modals)
+  const [editExpense, setEditExpense] = useState(null);
+  const [extras, setExtras] = useState({ followups: {}, refunds: {} });
+  const [followupFor, setFollowupFor] = useState(null);   // { expense, split }
+  const [showFollowupPayOnline, setShowFollowupPayOnline] = useState(false);
+  const [refundFor, setRefundFor] = useState(null);       // { expense, split }
+  const [proofsFor, setProofsFor] = useState(null);       // { expense, split }
+  const [xmLoading, setXmLoading] = useState(false);
 
   const [expenseForm, setExpenseForm] = useState({
     title: '', amount: '', category: 'Food',
@@ -275,6 +287,7 @@ export default function GroupDetailScreen() {
         .from('expenses')
         .select('*')
         .eq(expenseColumn, id)
+        .is('deleted_at', null)
         .order('created_at', { ascending: false });
       if (expError) throw expError;
       const allExpenses = expensesData || [];
@@ -285,6 +298,7 @@ export default function GroupDetailScreen() {
           .from('expenses')
           .select('*')
           .eq(contextType === 'household' ? 'household_id' : 'group_id', id)
+          .is('deleted_at', null)
           .eq('approval_status', 'pending_approval');
 
         if (pendingExp && pendingExp.length > 0) {
@@ -330,14 +344,16 @@ export default function GroupDetailScreen() {
       }
 
       const expenseIds = expenses.map(e => e.id);
-      const [splitsMap, proofsResult] = await Promise.all([
+      const [splitsMap, proofsResult, extrasResult] = await Promise.all([
         fetchExpenseSplits(expenseIds),
         supabase
           .from('payment_proofs')
           .select(`*, profiles:submitted_by (id, full_name, email, avatar_url)`)
-          .in('expense_id', expenseIds)
+          .in('expense_id', expenseIds),
+        fetchExpenseExtras(expenseIds),
       ]);
 
+      setExtras(extrasResult);
       setExpenseSplits(splitsMap);
       const proofsData = proofsResult.data || [];
       setAllPaymentProofs(proofsData);
@@ -480,6 +496,7 @@ export default function GroupDetailScreen() {
       return { label: 'Unpaid', color: '#e53e3e', bg: '#FEE2E2' };
     }
     if (paidCount === total) return { label: 'Fully Paid', color: '#38a169', bg: '#f0fff4' };
+    if (splits.some(s => s.status === 'partly_paid')) return { label: 'Partly Paid', color: '#c05621', bg: '#FEEBC8' };
     return { label: `${paidCount}/${total} Paid`, color: '#856404', bg: '#fff3cd' };
   };
 
@@ -766,7 +783,12 @@ export default function GroupDetailScreen() {
     //    is never told "rejected" about an expense that still exists.
     const { error: deleteError } = await supabase
       .from('expenses')
-      .delete()
+      .update({
+        approval_status: 'rejected',
+        rejection_reason: reason,
+        deleted_at: new Date().toISOString(),
+        deleted_by: profile?.id,
+      })
       .eq('id', expense.id);
 
     if (deleteError) {
@@ -845,13 +867,96 @@ export default function GroupDetailScreen() {
     setLoadingAction(false);
   };
 
+  // ── shared helpers for the edit / follow-up / refund / delete flows ──
+  const flowLink = (expenseId) => ({
+    link_path: `/groups/${id}?type=${contextType}`,
+    link_state: JSON.stringify({ type: contextType }),
+    link_query: `expenseId=${expenseId}`,
+  });
+  const flowActor = () => ({ id: currentUser.id, name: profile?.full_name || 'The admin' });
+
   const handleDeleteExpense = async () => {
-    await supabase.from('expenses').delete().eq('id', selectedExpense.id);
-    setShowDeleteModal(false);
-    setSelectedExpense(null);
-    showToast('Expense deleted');
+    if (!selectedExpense) return;
+    setXmLoading(true);
+    try {
+      const res = await softDeleteExpense({ expense: selectedExpense, actor: flowActor(), linkFor: flowLink });
+      if (res.blocked) {
+        showToast('Refund the members who paid first', 'error');
+      } else {
+        setShowDeleteModal(false);
+        setSelectedExpense(null);
+        showToast('Expense deleted');
+      }
+    } catch (err) {
+      console.error(err);
+      showToast(err.message || 'Could not delete expense', 'error');
+    }
+    setXmLoading(false);
     fetchGroupAndData();
   };
+
+  const handleSubmitFollowup = async ({ file, note }) => {
+    setXmLoading(true);
+    try {
+      await submitFollowupProof({
+        expense: followupFor.expense, split: followupFor.split, user: currentUser,
+        userName: profile?.full_name || 'A member', adminId: group?.created_by,
+        file, note, linkFor: flowLink,
+      });
+      showToast('Follow-up proof submitted! ⏳');
+      setFollowupFor(null);
+      fetchGroupAndData();
+    } catch (err) {
+      showToast(err.message || 'Could not submit follow-up', 'error');
+    }
+    setXmLoading(false);
+  };
+
+  const handleReviewFollowup = async (proof, approve, reason) => {
+    setXmLoading(true);
+    try {
+      await reviewFollowupProof({ proof, approve, reason, expense: proofsFor?.expense, actor: flowActor(), linkFor: flowLink });
+      showToast(approve ? 'Follow-up payment approved! ✅' : 'Follow-up payment rejected');
+      setProofsFor(null);
+      fetchGroupAndData();
+    } catch (err) {
+      showToast(err.message || 'Could not update follow-up', 'error');
+    }
+    setXmLoading(false);
+  };
+
+  const handleSendRefund = async ({ amount, file, note }) => {
+    setXmLoading(true);
+    try {
+      await sendRefund({ expense: refundFor.expense, split: refundFor.split, amount, file, note, actor: flowActor(), linkFor: flowLink });
+      showToast('Refund sent and member notified! 💸');
+      setRefundFor(null);
+      fetchGroupAndData();
+    } catch (err) {
+      showToast(err.message || 'Could not send refund', 'error');
+    }
+    setXmLoading(false);
+  };
+
+  const handleConfirmRefund = async (refund) => {
+    setXmLoading(true);
+    try {
+      await confirmRefund({
+        refund, expense: proofsFor?.expense, user: currentUser,
+        userName: profile?.full_name || 'A member', adminId: group?.created_by, linkFor: flowLink,
+      });
+      showToast('Thanks — refund confirmed ✅');
+      setProofsFor(null);
+      fetchGroupAndData();
+    } catch (err) {
+      showToast(err.message || 'Could not confirm refund', 'error');
+    }
+    setXmLoading(false);
+  };
+
+  const originalProofFor = (split) =>
+    allPaymentProofs.find(p => p.id === split.proof_id)
+    || [...allPaymentProofs].reverse().find(p => p.expense_id === split.expense_id && p.submitted_by === split.user_id);
 
   const closeDeleteGroupModal = () => {
     if (loadingAction) return;
@@ -1204,70 +1309,6 @@ export default function GroupDetailScreen() {
     setSelectedSplit(null);
   };
 
-  const openEditAmount = (expense) => {
-    setEditAmountExpense(expense);
-    setEditAmountValue(String(expense.amount));
-    // Pre-fill custom splits from existing splits in DB
-    const splits = expenseSplits[expense.id] || [];
-    const prefilled = {};
-    splits.forEach(s => { prefilled[s.user_id] = String(s.share_amount); });
-    setEditCustomSplits(prefilled);
-    setShowEditAmountModal(true);
-  };
-
-  const handleSaveEditAmount = async () => {
-    const newAmount = Number(editAmountValue);
-    if (!newAmount || isNaN(newAmount) || newAmount <= 0) {
-      showToast('Please enter a valid amount', 'error');
-      return;
-    }
-    const splits = expenseSplits[editAmountExpense.id] || [];
-    const splitType = editAmountExpense.split_type;
-    let newMembersSplit = {};
-
-    if (splitType === 'equal') {
-      const share = newAmount / splits.length;
-      splits.forEach(s => { newMembersSplit[s.user_id] = share.toFixed(2); });
-    } else {
-      // custom — validate total
-      let total = 0;
-      splits.forEach(s => { total += Number(editCustomSplits[s.user_id]) || 0; });
-      if (Math.abs(total - newAmount) > 0.01) {
-        showToast(`Custom split total ₱${total.toFixed(2)} doesn't equal ₱${newAmount.toFixed(2)}`, 'error');
-        return;
-      }
-      splits.forEach(s => { newMembersSplit[s.user_id] = (Number(editCustomSplits[s.user_id]) || 0).toFixed(2); });
-    }
-
-    setEditAmountLoading(true);
-    // Update expense amount and members_split
-    await supabase.from('expenses').update({ amount: newAmount, members_split: newMembersSplit }).eq('id', editAmountExpense.id);
-    // Update each expense_split share_amount
-    for (const split of splits) {
-      await supabase.from('expense_splits').update({ share_amount: Number(newMembersSplit[split.user_id]) }).eq('id', split.id);
-    }
-
-    // Notify all members that the amount was changed
-    const notifTargets = members.filter(m => m.user_id !== currentUser.id);
-    for (const m of notifTargets) {
-      await supabase.from('notifications').insert({
-        user_id: m.user_id,
-        title: '✏️ Expense Amount Updated',
-        message: `The owner updated "${editAmountExpense.title}" from ₱${Number(editAmountExpense.amount).toFixed(2)} to ₱${newAmount.toFixed(2)}.`,
-        type: 'expense_updated',
-        link_path: `/groups/${id}?type=${contextType}`,
-        link_state: JSON.stringify({ type: contextType }),
-        link_query: `expenseId=${editAmountExpense.id}`,
-      });
-    }
-
-    setShowEditAmountModal(false);
-    setEditAmountExpense(null);
-    setEditAmountLoading(false);
-    showToast('Amount updated and members notified! ✅');
-    fetchGroupAndData();
-  };
-
   // ── Rename household / group ─────────────────────────────────────────────
   const nameTable = contextType === 'household' ? 'households' : 'groups';
   const nameColumn = contextType === 'household' ? 'household_id' : 'group_id';
@@ -1596,6 +1637,29 @@ export default function GroupDetailScreen() {
               const expense = expenses.find(e => e.id === split.expense_id);
               const proof = allPaymentProofs.find(p => p.id === split.proof_id)
                 || allPaymentProofs.find(p => p.expense_id === split.expense_id && p.submitted_by === split.user_id && p.status === 'pending_verification');
+              const pendingFollowup = (extras.followups[split.expense_id] || []).find(f => f.user_id === split.user_id && f.status === 'pending_verification');
+              if (pendingFollowup) {
+                return (
+                  <div key={`pay-${split.id}`} className="pa-card">
+                    <div className="pa-top">
+                      <div className="pa-icon pa-icon-payment">📸</div>
+                      <div className="pa-info">
+                        <div className="pa-title-row">
+                          <span className="pa-title">{expense?.title}</span>
+                          <span className="pa-amount">₱{Number(pendingFollowup.amount).toFixed(2)}</span>
+                        </div>
+                        <div className="pa-meta">{split.profiles?.full_name}'s follow-up payment</div>
+                        <span className="pa-tag pa-tag-payment">Follow-up proof</span>
+                      </div>
+                    </div>
+                    <div className="pa-actions">
+                      <button className="pa-btn pa-btn-proof" onClick={() => expense && setProofsFor({ expense, split })}>
+                        <Eye size={14} /> Review
+                      </button>
+                    </div>
+                  </div>
+                );
+              }
               return (
                 <div key={`pay-${split.id}`} className="pa-card">
                   <div className="pa-top">
@@ -1669,8 +1733,19 @@ export default function GroupDetailScreen() {
                       const member = members.find(m => m.user_id === split.user_id);
                       const proof = allPaymentProofs.find(p => p.id === split.proof_id)
                         || allPaymentProofs.find(p => p.expense_id === split.expense_id && p.submitted_by === split.user_id);
+                      const statusMeta = splitStatusMeta(split);
+                      const hasPendingFollowup = (extras.followups[expense.id] || []).some(f => f.user_id === split.user_id && f.status === 'pending_verification');
+                      const mine = split.user_id === currentUser?.id;
+                      const due = followupDueOf(split);
+                      const over = overpaidOf(split);
+                      const myUnconfirmed = mine && (extras.refunds[expense.id] || []).some(r => r.user_id === split.user_id && r.status === 'sent');
+                      const showPayLine = (isOwner || mine) && split.user_id !== expense.paid_by && (
+                        split.status === 'partly_paid' || over > 0
+                        || (extras.followups[expense.id] || []).some(f => f.user_id === split.user_id)
+                        || (extras.refunds[expense.id] || []).some(r => r.user_id === split.user_id));
                       return (
-                        <div key={split.id} style={{
+                        <React.Fragment key={split.id}>
+                        <div style={{
                           display: 'grid',
                           gridTemplateColumns: '1fr auto auto auto',
                           alignItems: 'center',
@@ -1695,14 +1770,14 @@ export default function GroupDetailScreen() {
                             padding: '2px 8px',
                             borderRadius: 50,
                             whiteSpace: 'nowrap',
-                            background: split.status === 'approved' ? '#D1FAE5' : split.status === 'pending_verification' ? '#FFF3CD' : '#FEE2E2',
-                            color: split.status === 'approved' ? '#065F46' : split.status === 'pending_verification' ? '#856404' : '#e53e3e'
+                            background: statusMeta.bg,
+                            color: statusMeta.color
                           }}>
-                            {split.status === 'approved' ? 'Paid' : split.status === 'pending_verification' ? 'Pending' : 'Unpaid'}
+                            {statusMeta.label}
                           </span>
                           <div style={{ width: 28, display: 'flex', justifyContent: 'center' }}>
                             {proof && (
-                              <button className="view-proof-btn" style={{ padding: '2px 6px' }} onClick={() => openProofModal(proof, split)}>
+                              <button className="view-proof-btn" style={{ padding: '2px 6px' }} onClick={() => (hasPendingFollowup ? setProofsFor({ expense, split }) : openProofModal(proof, split))}>
                                 <Eye size={12} />
                               </button>
                             )}
@@ -1711,6 +1786,29 @@ export default function GroupDetailScreen() {
                             )}
                           </div>
                         </div>
+                        {showPayLine && (
+                          <div className="xm-pay-line" style={{ marginBottom: 6 }}>
+                            <div className="xm-pay-line-top">
+                              <p className="xm-pay-line-name">{mine ? 'You' : split.profiles?.full_name}</p>
+                              <span className="xm-pay-line-text">Paid ₱{toNum(split.paid_amount).toFixed(2)} of ₱{toNum(split.share_amount).toFixed(2)}</span>
+                            </div>
+                            {due > 0 && <p className="xm-pay-line-text" style={{ color: '#c05621', fontWeight: 600 }}>{mine ? `Follow-up payment due: ₱${due.toFixed(2)}` : `Needs to pay ₱${due.toFixed(2)} more`}</p>}
+                            {over > 0 && <p className="xm-pay-line-text" style={{ color: '#2B6CB0', fontWeight: 600 }}>{mine ? `You overpaid ₱${over.toFixed(2)} — the admin will refund you` : `Overpaid ₱${over.toFixed(2)} — refund needed`}</p>}
+                            {myUnconfirmed && <p className="xm-pay-line-text" style={{ color: '#2B6CB0', fontWeight: 600 }}>💸 A refund was sent — please confirm once received</p>}
+                            <div className="xm-pay-line-actions">
+                              {mine && due > 0 && (
+                                <button className="xm-btn-sm" onClick={() => setFollowupFor({ expense, split })}>Follow-up Payment</button>
+                              )}
+                              {isOwner && over > 0 && (
+                                <button className="xm-btn-sm" onClick={() => setRefundFor({ expense, split })}>Refund ₱{over.toFixed(2)}</button>
+                              )}
+                              <button className="xm-btn-sm xm-soft" onClick={() => setProofsFor({ expense, split })}>
+                                <Eye size={11} style={{ verticalAlign: -1, marginRight: 4 }} />{myUnconfirmed ? 'Confirm refund' : 'Proofs'}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                        </React.Fragment>
                       );
                     })}
                   </div>
@@ -1756,7 +1854,7 @@ export default function GroupDetailScreen() {
                   </div>
                   {isAdmin && (
                     <>
-                      <button className="icon-btn" onClick={() => openEditAmount(expense)} title="Edit amount" style={{ color: '#3B2AAB' }}>
+                      <button className="icon-btn" onClick={() => setEditExpense(expense)} title="Edit expense" style={{ color: '#3B2AAB' }}>
                         <Pencil size={14} />
                       </button>
                       <button className="icon-btn delete" onClick={() => { setSelectedExpense(expense); setShowDeleteModal(true); }}>
@@ -2083,19 +2181,18 @@ export default function GroupDetailScreen() {
         </div>
       )}
 
-      {/* Delete Expense Modal */}
-      {showDeleteModal && (
-        <div className="modal-overlay-detail">
-          <div className="modal-detail-card">
-            <div className="modal-header" style={{ flexDirection: 'column', alignItems: 'center', gap: 8 }}>
-              <AlertCircle size={40} color="#e53e3e" /><h2>Delete Expense?</h2>
-            </div>
-            <div className="modal-body-scroll">
-              <button className="delete-confirm-btn" onClick={handleDeleteExpense}>Yes, Delete</button>
-              <button className="cancel-btn" onClick={() => setShowDeleteModal(false)}>Cancel</button>
-            </div>
-          </div>
-        </div>
+      {/* Delete Expense (shows what is being deleted; blocked until paid members are refunded) */}
+      {showDeleteModal && selectedExpense && (
+        <DeleteExpenseModal
+          expense={selectedExpense}
+          splits={expenseSplits[selectedExpense.id] || []}
+          icon={CATEGORY_ICONS[selectedExpense.category] || '📦'}
+          color={CATEGORY_COLORS[selectedExpense.category] || '#3B2AAB'}
+          loading={xmLoading}
+          onConfirm={handleDeleteExpense}
+          onClose={() => { setShowDeleteModal(false); setSelectedExpense(null); }}
+          onRefund={(split) => { setShowDeleteModal(false); setRefundFor({ expense: selectedExpense, split }); }}
+        />
       )}
 
       {/* Reject Payment Modal (shared by the approvals card and the proof modal) */}
@@ -2423,125 +2520,70 @@ export default function GroupDetailScreen() {
           </div>
         </div>
       )}
-      {/* Edit Amount Modal */}
-      {showEditAmountModal && editAmountExpense && (() => {
-        const splits = expenseSplits[editAmountExpense.id] || [];
-        const newAmount = Number(editAmountValue) || 0;
-        const isCustom = editAmountExpense.split_type === 'custom';
-        const equalShare = splits.length > 0 ? (newAmount / splits.length) : 0;
+      {/* Edit Expense (admin only) */}
+      {editExpense && isAdmin && (
+        <EditExpenseModal
+          expense={editExpense}
+          splits={expenseSplits[editExpense.id] || []}
+          members={members}
+          actor={flowActor()}
+          linkFor={flowLink}
+          categories={ALL_EXPENSE_CATEGORIES}
+          showToast={showToast}
+          onClose={() => setEditExpense(null)}
+          onSaved={() => { setEditExpense(null); fetchGroupAndData(); }}
+        />
+      )}
 
-        // Running total for custom split "remaining" logic
-        let runningTotal = 0;
-        const splitEntries = splits.map((s, i) => {
-          const entered = Number(editCustomSplits[s.user_id]) || 0;
-          const remaining = newAmount - runningTotal;
-          const isLast = i === splits.length - 1;
-          runningTotal += entered;
-          return { s, entered, remaining, isLast };
-        });
-        const customTotal = splits.reduce((sum, s) => sum + (Number(editCustomSplits[s.user_id]) || 0), 0);
-        const customRemaining = newAmount - customTotal;
+      {/* Follow-up payment (member) */}
+      {followupFor && (
+        <FollowupPaymentModal
+          hidden={showFollowupPayOnline}
+          expense={followupFor.expense}
+          split={followupFor.split}
+          loading={xmLoading}
+          onSubmit={handleSubmitFollowup}
+          onClose={() => setFollowupFor(null)}
+          onPayOnline={() => setShowFollowupPayOnline(true)}
+        />
+      )}
+      <PayOnlineModal
+        show={showFollowupPayOnline}
+        onClose={() => setShowFollowupPayOnline(false)}
+        receiverId={group?.created_by}
+        itemTitle={followupFor?.expense?.title}
+        amount={followupDueOf(followupFor?.split)}
+        onProceed={() => setShowFollowupPayOnline(false)}
+      />
 
-        return (
-          <div className="modal-overlay-detail">
-            <div className="modal-detail-card">
-              <div className="modal-header">
-                <h2>Edit Expense Amount</h2>
-                <button className="modal-close" onClick={() => setShowEditAmountModal(false)}><X size={20} /></button>
-              </div>
-              <div className="modal-body-scroll">
-                <div style={{ background: '#F8F6FF', borderRadius: 12, padding: '10px 14px', marginBottom: 12, fontSize: 12, color: '#5A4AAA' }}>
-                  <strong>{editAmountExpense.title}</strong> · Original: ₱{Number(editAmountExpense.amount).toFixed(2)}
-                </div>
+      {/* Refund (admin) */}
+      {refundFor && isAdmin && (
+        <RefundModal
+          expense={refundFor.expense}
+          split={refundFor.split}
+          loading={xmLoading}
+          onSubmit={handleSendRefund}
+          onClose={() => setRefundFor(null)}
+        />
+      )}
 
-                <label style={{ fontSize: 12, fontWeight: 600, color: '#5A4AAA' }}>New Amount</label>
-                <div className="amount-input-wrap" style={{ marginTop: 6, marginBottom: 12 }}>
-                  <span className="peso-sign">₱</span>
-                  <input
-                    type="number"
-                    placeholder="0.00"
-                    value={editAmountValue}
-                    onChange={e => {
-                      setEditAmountValue(e.target.value);
-                      // Reset custom splits when amount changes
-                      if (isCustom) setEditCustomSplits({});
-                    }}
-                  />
-                </div>
-
-                {/* Equal split preview */}
-                {!isCustom && newAmount > 0 && splits.length > 0 && (
-                  <div style={{ background: '#F0EDFF', borderRadius: 12, padding: '10px 14px', marginBottom: 12 }}>
-                    <p style={{ margin: 0, fontSize: 12, fontWeight: 700, color: '#3B2AAB' }}>Equal Split Preview</p>
-                    {splits.map(s => (
-                      <div key={s.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: 12, color: '#2D1A7A' }}>
-                        <span>{s.profiles?.full_name}</span>
-                        <span style={{ fontWeight: 700 }}>₱{equalShare.toFixed(2)}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Custom split inputs with running remainder */}
-                {isCustom && (
-                  <>
-                    <div style={{ background: '#FFF3CD', borderRadius: 10, padding: '8px 12px', marginBottom: 10, fontSize: 11, color: '#856404' }}>
-                      ⚠️ This expense uses custom splits. Adjust each member's share below. Suggested equal share: ₱{equalShare.toFixed(2)} each.
-                    </div>
-                    {splitEntries.map(({ s, remaining }) => {
-                      const prevTotal = splits.slice(0, splits.indexOf(s)).reduce((sum, ps) => sum + (Number(editCustomSplits[ps.user_id]) || 0), 0);
-                      const thisRemaining = newAmount - prevTotal;
-                      return (
-                        <div key={s.id} style={{ marginBottom: 10 }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                            <span style={{ fontSize: 12, fontWeight: 600, color: '#2D1A7A' }}>{s.profiles?.full_name}</span>
-                            {newAmount > 0 && (
-                              <span style={{ fontSize: 10, color: '#9E8FCC' }}>
-                                {Number(editCustomSplits[s.user_id]) > 0
-                                  ? `₱${thisRemaining.toFixed(2)} left to assign`
-                                  : `₱${thisRemaining.toFixed(2)} still needs to be split`}
-                              </span>
-                            )}
-                          </div>
-                          <div className="amount-input-wrap small">
-                            <span className="peso-sign">₱</span>
-                            <input
-                              type="number"
-                              placeholder="0.00"
-                              value={editCustomSplits[s.user_id] || ''}
-                              onChange={e => setEditCustomSplits(prev => ({ ...prev, [s.user_id]: e.target.value }))}
-                            />
-                          </div>
-                        </div>
-                      );
-                    })}
-                    {newAmount > 0 && (
-                      <div style={{
-                        padding: '8px 12px', borderRadius: 10, marginBottom: 8, fontSize: 12, fontWeight: 700,
-                        background: Math.abs(customRemaining) < 0.01 ? '#D1FAE5' : '#FEE2E2',
-                        color: Math.abs(customRemaining) < 0.01 ? '#065F46' : '#e53e3e'
-                      }}>
-                        {Math.abs(customRemaining) < 0.01
-                          ? '✅ Split total matches!'
-                          : `₱${Math.abs(customRemaining).toFixed(2)} ${customRemaining > 0 ? 'still unassigned' : 'over budget'}`}
-                      </div>
-                    )}
-                  </>
-                )}
-
-                <div style={{ background: '#FFF3CD', borderRadius: 10, padding: '8px 12px', marginBottom: 12, fontSize: 11, color: '#856404' }}>
-                  📢 All household members will be notified of this change.
-                </div>
-
-                <button className="add-expense-btn" onClick={handleSaveEditAmount} disabled={editAmountLoading}>
-                  {editAmountLoading ? 'Saving…' : 'Save Changes'}
-                </button>
-                <button className="cancel-btn" onClick={() => setShowEditAmountModal(false)}>Cancel</button>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
+      {/* Payment history: original proof, follow-ups, refunds */}
+      {proofsFor && (
+        <ExpenseProofsModal
+          expense={proofsFor.expense}
+          split={(expenseSplits[proofsFor.expense.id] || []).find(x => x.id === proofsFor.split.id) || proofsFor.split}
+          originalProof={originalProofFor(proofsFor.split)}
+          followups={(extras.followups[proofsFor.expense.id] || []).filter(f => f.user_id === proofsFor.split.user_id)}
+          refunds={(extras.refunds[proofsFor.expense.id] || []).filter(r => r.user_id === proofsFor.split.user_id)}
+          isAdmin={isAdmin}
+          currentUserId={currentUser?.id}
+          loading={xmLoading}
+          onReviewFollowup={handleReviewFollowup}
+          onConfirmRefund={handleConfirmRefund}
+          onRefund={isAdmin && overpaidOf(proofsFor.split) > 0 ? () => { setRefundFor(proofsFor); setProofsFor(null); } : undefined}
+          onClose={() => setProofsFor(null)}
+        />
+      )}
 
     </div>
   );

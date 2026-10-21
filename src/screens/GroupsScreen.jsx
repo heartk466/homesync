@@ -70,7 +70,7 @@ export default function GroupsScreen() {
     if (!expenseIds.length) return {};
     const { data, error } = await supabase
       .from('expense_splits')
-      .select('expense_id, user_id, share_amount, status')
+      .select('expense_id, user_id, share_amount, paid_amount, status')
       .in('expense_id', expenseIds);
     if (error) { console.error('Error fetching splits:', error); return {}; }
     const grouped = {};
@@ -92,6 +92,7 @@ export default function GroupsScreen() {
       .from('expenses')
       .select('id, amount, paid_by, status, approval_status, category')
       .eq('household_id', householdData.id)
+      .is('deleted_at', null)
       .eq('approval_status', 'approved')
       .gte('expense_date', firstDay)
       .lte('expense_date', lastDay);
@@ -132,7 +133,8 @@ export default function GroupsScreen() {
       if (mySplit) {
         yourShare += Number(mySplit.share_amount);
         if (mySplit.status !== 'approved') {
-          pendingOwed += Number(mySplit.share_amount);
+          // only what is still owed (share minus what the admin approved)
+          pendingOwed += Math.max(Number(mySplit.share_amount) - (Number(mySplit.paid_amount) || 0), 0);
         } else {
           if (UTILITY_CATEGORIES.includes(expense.category)) {
             utilitiesTotal += Number(mySplit.share_amount);
@@ -190,6 +192,7 @@ export default function GroupsScreen() {
       .from('expenses')
       .select('id, amount, category, approval_status')
       .eq('group_id', group.id)
+      .is('deleted_at', null)
       .eq('approval_status', 'approved')
       .gte('expense_date', firstDay)
       .lte('expense_date', lastDay);
@@ -214,7 +217,9 @@ export default function GroupsScreen() {
         if (mySplit.status === 'approved') {
           yourShare += Number(mySplit.share_amount);
         } else {
-          pendingOwed += Number(mySplit.share_amount);
+          // partly paid: count what is approved as paid, the rest as owed
+          yourShare += Math.min(Number(mySplit.paid_amount) || 0, Number(mySplit.share_amount) || 0);
+          pendingOwed += Math.max(Number(mySplit.share_amount) - (Number(mySplit.paid_amount) || 0), 0);
         }
       }
     }

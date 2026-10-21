@@ -35,6 +35,7 @@ export async function fetchAllHouseholdExpenses(householdId) {
     .from('expenses')
     .select('*')
     .eq('household_id', householdId)
+    .is('deleted_at', null)   // soft-deleted expenses stay in the database but are hidden
     .order('expense_date', { ascending: false });
   if (error) return [];
   return data;
@@ -55,6 +56,7 @@ export async function fetchAllUtilityItems(householdId) {
     .select('*')
     .eq('household_id', householdId)
     .in('category', UTILITY_CATEGORIES)
+    .is('deleted_at', null)
     .order('expense_date', { ascending: false });
   if (expError) return { utilities: utilities || [], fromExpenses: [] };
 
@@ -96,7 +98,8 @@ export async function checkDuplicate(householdId, category, amount, date) {
     .eq('household_id', householdId)
     .eq('category', category)
     .eq('amount', amount)
-    .eq('expense_date', date);
+    .eq('expense_date', date)
+    .is('deleted_at', null);
 
   const { data: existingUtilities } = await supabase
     .from('utilities')

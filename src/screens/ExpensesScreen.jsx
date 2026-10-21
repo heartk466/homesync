@@ -3,12 +3,22 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import {
   Search, Filter, X, Check, Plus,
-  Trash2, AlertCircle, ChevronDown, Camera, Pencil
+  Trash2, AlertCircle, ChevronDown, Camera, Pencil, Eye
 } from 'lucide-react';
 import './ExpensesScreen.css';
 import TopBar from '../components/TopBar';
 import BottomNav from '../components/BottomNav';
 import PayOnlineModal from '../components/PayOnlineModal';
+import EditExpenseModal from '../components/EditExpenseModal';
+import DeleteExpenseModal from '../components/DeleteExpenseModal';
+import FollowupPaymentModal from '../components/FollowupPaymentModal';
+import RefundModal from '../components/RefundModal';
+import ExpenseProofsModal from '../components/ExpenseProofsModal';
+import {
+  fetchExpenseExtras, softDeleteExpense, submitFollowupProof, reviewFollowupProof,
+  sendRefund, confirmRefund, dropDeletedExpenses, followupDueOf, overpaidOf,
+  num as toNum,
+} from '../utils/expenseEditUtils';
 import { detectCategory } from '../utils/categoryDetection';
 import {
   fetchAllHouseholdExpenses,
@@ -101,12 +111,15 @@ export default function ExpensesScreen() {
   const [selectedSplit, setSelectedSplit] = useState(null);
   const [selectedProof, setSelectedProof] = useState(null);
 
-  // Edit Amount state
-  const [showEditAmountModal, setShowEditAmountModal] = useState(false);
-  const [editAmountExpense, setEditAmountExpense] = useState(null);
-  const [editAmountValue, setEditAmountValue] = useState('');
-  const [editAmountLoading, setEditAmountLoading] = useState(false);
-  const [editCustomSplits, setEditCustomSplits] = useState({});
+  // Edit / follow-up / refund / proofs (shared modals)
+  const [editExpense, setEditExpense] = useState(null);
+  const [extras, setExtras] = useState({ followups: {}, refunds: {} });
+  const [allProofs, setAllProofs] = useState([]);
+  const [followupFor, setFollowupFor] = useState(null);   // { expense, split }
+  const [showFollowupPayOnline, setShowFollowupPayOnline] = useState(false);
+  const [refundFor, setRefundFor] = useState(null);       // { expense, split }
+  const [proofsFor, setProofsFor] = useState(null);       // { expense, split }
+  const [xmLoading, setXmLoading] = useState(false);
   const [showDuplicateModal, setShowDuplicateModal] = useState(false);
   const [duplicateItem, setDuplicateItem] = useState(null);
   const [pendingExpenseData, setPendingExpenseData] = useState(null);
@@ -159,20 +172,19 @@ export default function ExpensesScreen() {
   };
 
   const fetchExpenseSplits = useCallback(async (expenseIds) => {
-    if (!expenseIds.length) return;
+    if (!expenseIds.length) return {};
     const { data, error } = await supabase
       .from('expense_splits')
       .select(`*, profiles:user_id (id, full_name, avatar_url)`)
       .in('expense_id', expenseIds);
-    if (error) console.error(error);
-    else {
-      const grouped = {};
-      data.forEach(split => {
-        if (!grouped[split.expense_id]) grouped[split.expense_id] = [];
-        grouped[split.expense_id].push(split);
-      });
-      setExpenseSplits(grouped);
-    }
+    if (error) { console.error(error); return {}; }
+    const grouped = {};
+    data.forEach(split => {
+      if (!grouped[split.expense_id]) grouped[split.expense_id] = [];
+      grouped[split.expense_id].push(split);
+    });
+    setExpenseSplits(grouped);
+    return grouped;
   }, []);
 
   // ========== FIXED: fetchExpensesData with correct summary calculations ==========
@@ -182,19 +194,31 @@ export default function ExpensesScreen() {
     const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
 
     // Fetch all expenses for this household (including pending approval, but summary only for approved)
-    const expensesData = await fetchAllHouseholdExpenses(householdId);
-    if (!expensesData) return;
+    const rawExpenses = await fetchAllHouseholdExpenses(householdId);
+    if (!rawExpenses) return;
+    // soft-deleted expenses stay in the database but are hidden here
+    const expensesData = await dropDeletedExpenses(rawExpenses);
 
     // Only show approved expenses in the main list
     const approvedExpenses = expensesData.filter(e => e.approval_status === 'approved');
     setExpenses(approvedExpenses);
     setFilteredExpenses(approvedExpenses);
-    await fetchExpenseSplits(expensesData.map(e => e.id));
+    const groupedSplits = (await fetchExpenseSplits(expensesData.map(e => e.id))) || {};
+
+    // follow-up proofs, refunds and every original proof (for the history modal)
+    const allIds = expensesData.map(e => e.id);
+    setExtras(await fetchExpenseExtras(allIds));
+    if (allIds.length) {
+      const { data: proofsAll } = await supabase.from('payment_proofs').select('*').in('expense_id', allIds);
+      setAllProofs(proofsAll || []);
+    } else {
+      setAllProofs([]);
+    }
 
     // Pending approvals (splits with status pending_verification) – for owner
     let pendingSplits = [];
     for (const exp of expensesData) {
-      const splits = expenseSplits[exp.id] || [];
+      const splits = groupedSplits[exp.id] || [];
       const pending = splits.filter(s => s.status === 'pending_verification');
       pendingSplits.push(...pending);
     }
@@ -231,14 +255,16 @@ export default function ExpensesScreen() {
       householdTotal += Number(expense.amount);
 
       // Find user's split
-      const splits = expenseSplits[expense.id] || [];
+      const splits = groupedSplits[expense.id] || [];
       const mySplit = splits.find(s => s.user_id === user.id);
       if (mySplit && mySplit.status !== 'approved') {
-        userUnpaidTotal += Number(mySplit.share_amount);
+        // only what is still owed: share minus what the admin already approved
+        const owedNow = Math.max(toNum(mySplit.share_amount) - toNum(mySplit.paid_amount), 0);
+        userUnpaidTotal += owedNow;
         const payer = memberData?.find(m => m.user_id === expense.paid_by);
         reimburseList.push({
           expense,
-          amount: mySplit.share_amount,
+          amount: owedNow,
           payer: payer?.profiles,
         });
       }
@@ -249,7 +275,7 @@ export default function ExpensesScreen() {
     setReimburseDetails(reimburseList);
     setTotalSaved(householdTotal); // Same as Total Shared
 
-  }, [expenseSplits, fetchExpenseSplits]);
+  }, [fetchExpenseSplits]);
 
   const fetchNotifications = async (userId) => {
     const { data } = await supabase
@@ -633,13 +659,98 @@ export default function ExpensesScreen() {
     setLoading(false);
   };
 
+  // ── shared helpers for the edit / follow-up / refund / delete flows ──
+  const flowLink = (expenseId) => ({
+    link_path: `/groups/${selectedHousehold?.id}?type=household`,
+    link_state: JSON.stringify({ type: 'household' }),
+    link_query: `expenseId=${expenseId}`,
+  });
+  const flowActor = () => ({ id: currentUser.id, name: profile?.full_name || 'The admin' });
+  const reloadAll = () => handleHouseholdSelect(selectedHousehold, currentUser, profile);
+
   const handleDeleteExpense = async () => {
-    await supabase.from('expenses').delete().eq('id', selectedExpense.id);
-    setShowDeleteModal(false);
-    setSelectedExpense(null);
-    showToast('Expense deleted.');
-    await handleHouseholdSelect(selectedHousehold, currentUser, profile);
+    if (!selectedExpense) return;
+    setXmLoading(true);
+    try {
+      const res = await softDeleteExpense({ expense: selectedExpense, actor: flowActor(), linkFor: flowLink });
+      if (res.blocked) {
+        showToast('Refund the members who paid first.', 'error');
+      } else {
+        setShowDeleteModal(false);
+        setSelectedExpense(null);
+        showToast('Expense deleted.');
+      }
+    } catch (err) {
+      console.error(err);
+      showToast(err.message || 'Could not delete expense', 'error');
+    }
+    setXmLoading(false);
+    await reloadAll();
   };
+
+  const handleSubmitFollowup = async ({ file, note }) => {
+    setXmLoading(true);
+    try {
+      await submitFollowupProof({
+        expense: followupFor.expense, split: followupFor.split, user: currentUser,
+        userName: profile?.full_name || 'A member', adminId: selectedHousehold?.created_by,
+        file, note, linkFor: flowLink,
+      });
+      showToast('Follow-up proof submitted! ⏳');
+      setFollowupFor(null);
+      await reloadAll();
+    } catch (err) {
+      showToast(err.message || 'Could not submit follow-up', 'error');
+    }
+    setXmLoading(false);
+  };
+
+  const handleReviewFollowup = async (proof, approve, reason) => {
+    setXmLoading(true);
+    try {
+      await reviewFollowupProof({ proof, approve, reason, expense: proofsFor?.expense, actor: flowActor(), linkFor: flowLink });
+      showToast(approve ? 'Follow-up payment approved! ✅' : 'Follow-up payment rejected.');
+      setProofsFor(null);
+      await reloadAll();
+    } catch (err) {
+      showToast(err.message || 'Could not update follow-up', 'error');
+    }
+    setXmLoading(false);
+  };
+
+  const handleSendRefund = async ({ amount, file, note }) => {
+    setXmLoading(true);
+    try {
+      await sendRefund({ expense: refundFor.expense, split: refundFor.split, amount, file, note, actor: flowActor(), linkFor: flowLink });
+      showToast('Refund sent and member notified! 💸');
+      setRefundFor(null);
+      await reloadAll();
+    } catch (err) {
+      showToast(err.message || 'Could not send refund', 'error');
+    }
+    setXmLoading(false);
+  };
+
+  const handleConfirmRefund = async (refund) => {
+    setXmLoading(true);
+    try {
+      await confirmRefund({
+        refund, expense: proofsFor?.expense, user: currentUser,
+        userName: profile?.full_name || 'A member', adminId: selectedHousehold?.created_by, linkFor: flowLink,
+      });
+      showToast('Thanks — refund confirmed ✅');
+      setProofsFor(null);
+      await reloadAll();
+    } catch (err) {
+      showToast(err.message || 'Could not confirm refund', 'error');
+    }
+    setXmLoading(false);
+  };
+
+  // original proof for a member's split (for the history modal)
+  const originalProofFor = (split) =>
+    allProofs.find(p => p.id === split.proof_id)
+    || [...allProofs].reverse().find(p => p.expense_id === split.expense_id && p.submitted_by === split.user_id);
 
   const handleSubmitProof = async () => {
     if (!proofForm.screenshot) { showToast('Please upload a screenshot.', 'error'); return; }
@@ -856,6 +967,7 @@ export default function ExpensesScreen() {
     if (expense.approval_status === 'rejected') return { label: 'Rejected', color: '#e53e3e', bg: '#ffe5e5' };
     if (expense.status === 'paid') return { label: 'Paid', color: '#38a169', bg: '#f0fff4' };
     if (expense.status === 'verifying') return { label: 'Verifying', color: '#c05621', bg: '#fffaf0' };
+    if (splits.some(s => s.status === 'partly_paid')) return { label: 'Partly Paid', color: '#c05621', bg: '#FEEBC8' };
     // "Who Paid: None" — nobody has paid yet, then shares get approved one by one
     if (!expense.paid_by && splits.length > 0) {
       const paidCount = splits.filter(s => s.status === 'approved').length;
@@ -870,65 +982,6 @@ export default function ExpensesScreen() {
     if (p?.avatar_url) return <img src={p.avatar_url} alt="" className="member-avatar-img" />;
     const initials = p?.full_name?.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase() || '?';
     return <div className="member-avatar-initials">{initials}</div>;
-  };
-
-  const openEditAmount = (expense) => {
-    setEditAmountExpense(expense);
-    setEditAmountValue(String(expense.amount));
-    const splits = expenseSplits[expense.id] || [];
-    const prefilled = {};
-    splits.forEach(s => { prefilled[s.user_id] = String(s.share_amount); });
-    setEditCustomSplits(prefilled);
-    setShowEditAmountModal(true);
-  };
-
-  const handleSaveEditAmount = async () => {
-    const newAmount = Number(editAmountValue);
-    if (!newAmount || isNaN(newAmount) || newAmount <= 0) {
-      showToast('Please enter a valid amount', 'error');
-      return;
-    }
-    const splits = expenseSplits[editAmountExpense.id] || [];
-    const splitType = editAmountExpense.split_type;
-    let newMembersSplit = {};
-
-    if (splitType === 'equal') {
-      const share = newAmount / splits.length;
-      splits.forEach(s => { newMembersSplit[s.user_id] = share.toFixed(2); });
-    } else {
-      let total = 0;
-      splits.forEach(s => { total += Number(editCustomSplits[s.user_id]) || 0; });
-      if (Math.abs(total - newAmount) > 0.01) {
-        showToast(`Custom split total ₱${total.toFixed(2)} doesn't equal ₱${newAmount.toFixed(2)}`, 'error');
-        return;
-      }
-      splits.forEach(s => { newMembersSplit[s.user_id] = (Number(editCustomSplits[s.user_id]) || 0).toFixed(2); });
-    }
-
-    setEditAmountLoading(true);
-    await supabase.from('expenses').update({ amount: newAmount, members_split: newMembersSplit }).eq('id', editAmountExpense.id);
-    for (const split of splits) {
-      await supabase.from('expense_splits').update({ share_amount: Number(newMembersSplit[split.user_id]) }).eq('id', split.id);
-    }
-
-    const notifTargets = householdMembers.filter(m => m.user_id !== currentUser.id);
-    for (const m of notifTargets) {
-      await supabase.from('notifications').insert({
-        user_id: m.user_id,
-        title: '✏️ Expense Amount Updated',
-        message: `The owner updated "${editAmountExpense.title}" from ₱${Number(editAmountExpense.amount).toFixed(2)} to ₱${newAmount.toFixed(2)}.`,
-        type: 'expense_updated',
-        link_path: `/groups/${selectedHousehold.id}?type=household`,
-        link_state: JSON.stringify({ type: 'household' }),
-        link_query: `expenseId=${editAmountExpense.id}`,
-      });
-    }
-
-    setShowEditAmountModal(false);
-    setEditAmountExpense(null);
-    setEditAmountLoading(false);
-    showToast('Amount updated and members notified! ✅');
-    await handleHouseholdSelect(selectedHousehold, currentUser, profile);
   };
 
   return (
@@ -1051,6 +1104,20 @@ export default function ExpensesScreen() {
             {pendingApprovals.map(split => {
               const expense = expenses.find(e => e.id === split.expense_id);
               const proof = pendingPaymentProofs.find(p => p.id === split.proof_id);
+              const pendingFollowup = (extras.followups[split.expense_id] || []).find(f => f.user_id === split.user_id && f.status === 'pending_verification');
+              if (pendingFollowup) {
+                return (
+                  <div key={split.id} className="pending-item">
+                    <div className="pending-info">
+                      <p className="pending-name">{expense?.title} – {split.profiles?.full_name}</p>
+                      <p className="pending-amount">Follow-up ₱{Number(pendingFollowup.amount).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+                    </div>
+                    <div className="pending-actions">
+                      <button className="view-proof-btn" onClick={() => expense && setProofsFor({ expense, split })}>Review</button>
+                    </div>
+                  </div>
+                );
+              }
               return (
                 <div key={split.id} className="pending-item">
                   <div className="pending-info">
@@ -1133,10 +1200,44 @@ export default function ExpensesScreen() {
                     <span className="owe-text">⏳ Proof submitted, awaiting approval</span>
                   </div>
                 )}
+                {/* Follow-up / overpaid / history rows (admin sees every member, a member sees only themselves) */}
+                {splits
+                  .filter(sp => (isAdmin || sp.user_id === currentUser?.id) && sp.user_id !== expense.paid_by && (
+                    sp.status === 'partly_paid' || overpaidOf(sp) > 0
+                    || (extras.followups[expense.id] || []).some(f => f.user_id === sp.user_id)
+                    || (extras.refunds[expense.id] || []).some(r => r.user_id === sp.user_id)))
+                  .map(sp => {
+                    const mine = sp.user_id === currentUser?.id;
+                    const due = followupDueOf(sp);
+                    const over = overpaidOf(sp);
+                    const unconfirmed = (extras.refunds[expense.id] || []).some(r => r.user_id === sp.user_id && r.status === 'sent');
+                    return (
+                      <div key={sp.id} className="xm-pay-line">
+                        <div className="xm-pay-line-top">
+                          <p className="xm-pay-line-name">{mine ? 'You' : sp.profiles?.full_name}</p>
+                          <span className="xm-pay-line-text">Paid ₱{toNum(sp.paid_amount).toFixed(2)} of ₱{toNum(sp.share_amount).toFixed(2)}</span>
+                        </div>
+                        {due > 0 && <p className="xm-pay-line-text" style={{ color: '#c05621', fontWeight: 600 }}>{mine ? `Follow-up payment due: ₱${due.toFixed(2)}` : `Needs to pay ₱${due.toFixed(2)} more`}</p>}
+                        {over > 0 && <p className="xm-pay-line-text" style={{ color: '#2B6CB0', fontWeight: 600 }}>{mine ? `You overpaid ₱${over.toFixed(2)} — the admin will refund you` : `Overpaid ₱${over.toFixed(2)} — refund needed`}</p>}
+                        {mine && unconfirmed && <p className="xm-pay-line-text" style={{ color: '#2B6CB0', fontWeight: 600 }}>💸 A refund was sent — please confirm once received</p>}
+                        <div className="xm-pay-line-actions">
+                          {mine && due > 0 && (
+                            <button className="xm-btn-sm" onClick={() => setFollowupFor({ expense, split: sp })}>Follow-up Payment</button>
+                          )}
+                          {isAdmin && over > 0 && (
+                            <button className="xm-btn-sm" onClick={() => setRefundFor({ expense, split: sp })}>Refund ₱{over.toFixed(2)}</button>
+                          )}
+                          <button className="xm-btn-sm xm-soft" onClick={() => setProofsFor({ expense, split: sp })}>
+                            <Eye size={11} style={{ verticalAlign: -1, marginRight: 4 }} />{unconfirmed && mine ? 'Confirm refund' : 'Proofs'}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
               </div>
               {isAdmin && (
                 <div className="expense-admin-col">
-                  <button className="icon-btn" onClick={() => openEditAmount(expense)} title="Edit amount" style={{ color: '#3B2AAB' }}><Pencil size={14} /></button>
+                  <button className="icon-btn" onClick={() => setEditExpense(expense)} title="Edit expense" style={{ color: '#3B2AAB' }}><Pencil size={14} /></button>
                   <button className="icon-btn delete" onClick={() => { setSelectedExpense(expense); setShowDeleteModal(true); }}><Trash2 size={14} /></button>
                 </div>
               )}
@@ -1372,15 +1473,18 @@ export default function ExpensesScreen() {
       )}
 
       {/* Delete Expense Modal */}
-      {showDeleteModal && (
-        <div className="modal-overlay">
-          <div className="small-modal">
-            <AlertCircle size={40} color="#e53e3e" />
-            <h2>Delete Expense?</h2>
-            <button className="delete-confirm-btn" onClick={handleDeleteExpense}>Yes, Delete</button>
-            <button className="edit-cancel-btn" onClick={() => setShowDeleteModal(false)}>Cancel</button>
-          </div>
-        </div>
+      {/* Delete Expense (shows what is being deleted; blocked until paid members are refunded) */}
+      {showDeleteModal && selectedExpense && (
+        <DeleteExpenseModal
+          expense={selectedExpense}
+          splits={expenseSplits[selectedExpense.id] || []}
+          icon={CATEGORY_ICONS[selectedExpense.category] || '📦'}
+          color={CATEGORY_COLORS[selectedExpense.category] || '#3B2AAB'}
+          loading={xmLoading}
+          onConfirm={handleDeleteExpense}
+          onClose={() => { setShowDeleteModal(false); setSelectedExpense(null); }}
+          onRefund={(split) => { setShowDeleteModal(false); setRefundFor({ expense: selectedExpense, split }); }}
+        />
       )}
 
       {/* Upload proof right after a member who paid upfront adds an expense */}
@@ -1514,117 +1618,70 @@ export default function ExpensesScreen() {
         </div>
       )}
 
-      {/* Edit Amount Modal */}
-      {showEditAmountModal && editAmountExpense && (() => {
-        const splits = expenseSplits[editAmountExpense.id] || [];
-        const newAmount = Number(editAmountValue) || 0;
-        const isCustom = editAmountExpense.split_type === 'custom';
-        const equalShare = splits.length > 0 ? (newAmount / splits.length) : 0;
-        const customTotal = splits.reduce((sum, s) => sum + (Number(editCustomSplits[s.user_id]) || 0), 0);
-        const customRemaining = newAmount - customTotal;
+      {/* Edit Expense (admin only) */}
+      {editExpense && isAdmin && (
+        <EditExpenseModal
+          expense={editExpense}
+          splits={expenseSplits[editExpense.id] || []}
+          members={householdMembers}
+          actor={flowActor()}
+          linkFor={flowLink}
+          categories={ALL_CATEGORIES}
+          showToast={showToast}
+          onClose={() => setEditExpense(null)}
+          onSaved={async () => { setEditExpense(null); await reloadAll(); }}
+        />
+      )}
 
-        return (
-          <div className="modal-overlay">
-            <div className="add-expense-modal">
-              <div className="modal-header">
-                <h2>✏️ Edit Expense Amount</h2>
-                <button className="modal-close" onClick={() => setShowEditAmountModal(false)}><X size={18} /></button>
-              </div>
-              <div className="modal-scroll">
-                <div style={{ background: '#F8F6FF', borderRadius: 12, padding: '10px 14px', marginBottom: 12, fontSize: 12, color: '#5A4AAA' }}>
-                  <strong>{editAmountExpense.title}</strong> · Original: ₱{Number(editAmountExpense.amount).toFixed(2)}
-                </div>
+      {/* Follow-up payment (member) */}
+      {followupFor && (
+        <FollowupPaymentModal
+          hidden={showFollowupPayOnline}
+          expense={followupFor.expense}
+          split={followupFor.split}
+          loading={xmLoading}
+          onSubmit={handleSubmitFollowup}
+          onClose={() => setFollowupFor(null)}
+          onPayOnline={() => setShowFollowupPayOnline(true)}
+        />
+      )}
+      <PayOnlineModal
+        show={showFollowupPayOnline}
+        onClose={() => setShowFollowupPayOnline(false)}
+        receiverId={selectedHousehold?.created_by}
+        itemTitle={followupFor?.expense?.title}
+        amount={followupDueOf(followupFor?.split)}
+        onProceed={() => setShowFollowupPayOnline(false)}
+      />
 
-                <div className="form-group">
-                  <label>New Amount</label>
-                  <div className="amount-input-wrap">
-                    <span className="peso-sign">₱</span>
-                    <input
-                      type="number"
-                      placeholder="0.00"
-                      value={editAmountValue}
-                      onChange={e => {
-                        setEditAmountValue(e.target.value);
-                        if (isCustom) setEditCustomSplits({});
-                      }}
-                    />
-                  </div>
-                </div>
+      {/* Refund (admin) */}
+      {refundFor && isAdmin && (
+        <RefundModal
+          expense={refundFor.expense}
+          split={refundFor.split}
+          loading={xmLoading}
+          onSubmit={handleSendRefund}
+          onClose={() => setRefundFor(null)}
+        />
+      )}
 
-                {/* Equal split preview */}
-                {!isCustom && newAmount > 0 && splits.length > 0 && (
-                  <div style={{ background: '#F0EDFF', borderRadius: 12, padding: '10px 14px', marginBottom: 12 }}>
-                    <p style={{ margin: '0 0 6px', fontSize: 12, fontWeight: 700, color: '#3B2AAB' }}>Equal Split Preview</p>
-                    {splits.map(s => (
-                      <div key={s.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', fontSize: 12, color: '#2D1A7A' }}>
-                        <span>{s.profiles?.full_name}</span>
-                        <span style={{ fontWeight: 700 }}>₱{equalShare.toFixed(2)}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Custom split inputs */}
-                {isCustom && (
-                  <>
-                    <div style={{ background: '#FFF3CD', borderRadius: 10, padding: '8px 12px', marginBottom: 10, fontSize: 11, color: '#856404' }}>
-                      ⚠️ Custom split detected. Adjust each member's share. Suggested equal: ₱{equalShare.toFixed(2)} each.
-                    </div>
-                    {splits.map((s, i) => {
-                      const prevTotal = splits.slice(0, i).reduce((sum, ps) => sum + (Number(editCustomSplits[ps.user_id]) || 0), 0);
-                      const thisRemaining = newAmount - prevTotal;
-                      const hasEntered = Number(editCustomSplits[s.user_id]) > 0;
-                      return (
-                        <div key={s.id} className="form-group" style={{ marginBottom: 10 }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <label>{s.profiles?.full_name}</label>
-                            {newAmount > 0 && (
-                              <span style={{ fontSize: 10, color: '#9E8FCC' }}>
-                                {hasEntered
-                                  ? `₱${(newAmount - prevTotal - (Number(editCustomSplits[s.user_id]) || 0)).toFixed(2)} left after this`
-                                  : `₱${thisRemaining.toFixed(2)} still needs to be split`}
-                              </span>
-                            )}
-                          </div>
-                          <div className="amount-input-wrap small" style={{ width: '100%' }}>
-                            <span className="peso-sign">₱</span>
-                            <input
-                              type="number"
-                              placeholder="0.00"
-                              value={editCustomSplits[s.user_id] || ''}
-                              onChange={e => setEditCustomSplits(prev => ({ ...prev, [s.user_id]: e.target.value }))}
-                            />
-                          </div>
-                        </div>
-                      );
-                    })}
-                    {newAmount > 0 && (
-                      <div style={{
-                        padding: '8px 12px', borderRadius: 10, marginBottom: 8, fontSize: 12, fontWeight: 700,
-                        background: Math.abs(customRemaining) < 0.01 ? '#D1FAE5' : '#FEE2E2',
-                        color: Math.abs(customRemaining) < 0.01 ? '#065F46' : '#e53e3e'
-                      }}>
-                        {Math.abs(customRemaining) < 0.01
-                          ? '✅ Split total matches!'
-                          : `₱${Math.abs(customRemaining).toFixed(2)} ${customRemaining > 0 ? 'still unassigned' : 'over budget'}`}
-                      </div>
-                    )}
-                  </>
-                )}
-
-                <div style={{ background: '#FFF3CD', borderRadius: 10, padding: '8px 12px', marginBottom: 12, fontSize: 11, color: '#856404' }}>
-                  📢 All household members will be notified of this change.
-                </div>
-
-                <button className="add-expense-btn" onClick={handleSaveEditAmount} disabled={editAmountLoading}>
-                  {editAmountLoading ? 'Saving…' : 'Save Changes'}
-                </button>
-                <button className="edit-cancel-btn" onClick={() => setShowEditAmountModal(false)} style={{ marginTop: 8, background: 'none', border: 'none', color: '#9E8FCC', cursor: 'pointer', fontSize: 13 }}>Cancel</button>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
+      {/* Payment history: original proof, follow-ups, refunds */}
+      {proofsFor && (
+        <ExpenseProofsModal
+          expense={proofsFor.expense}
+          split={(expenseSplits[proofsFor.expense.id] || []).find(x => x.id === proofsFor.split.id) || proofsFor.split}
+          originalProof={originalProofFor(proofsFor.split)}
+          followups={(extras.followups[proofsFor.expense.id] || []).filter(f => f.user_id === proofsFor.split.user_id)}
+          refunds={(extras.refunds[proofsFor.expense.id] || []).filter(r => r.user_id === proofsFor.split.user_id)}
+          isAdmin={isAdmin}
+          currentUserId={currentUser?.id}
+          loading={xmLoading}
+          onReviewFollowup={handleReviewFollowup}
+          onConfirmRefund={handleConfirmRefund}
+          onRefund={isAdmin && overpaidOf(proofsFor.split) > 0 ? () => { setRefundFor(proofsFor); setProofsFor(null); } : undefined}
+          onClose={() => setProofsFor(null)}
+        />
+      )}
 
       <BottomNav active="expenses" pendingCount={isAdmin ? pendingApprovals.length : 0} />
     </div>

@@ -12,6 +12,7 @@ import TopBar from '../components/TopBar';
 import BottomNav from '../components/BottomNav';
 import ChatDrawer from '../components/ChatDrawer';       
 import { fetchAllHouseholdExpenses, UTILITY_CATEGORIES } from '../utils/expenseUtils';
+import { dropDeletedExpenses } from '../utils/expenseEditUtils';
 import { useAppContext } from '../AppContext';
 
 // ── Reusable Forecast Card ────────────────────────────────────────────────────
@@ -189,7 +190,7 @@ export default function DashboardScreen() {
     if (!expenseIds.length) return {};
     const { data, error } = await supabase
       .from('expense_splits')
-      .select('expense_id, user_id, share_amount, status')
+      .select('expense_id, user_id, share_amount, paid_amount, status')
       .in('expense_id', expenseIds);
     if (error) return {};
     const grouped = {};
@@ -253,9 +254,17 @@ export default function DashboardScreen() {
       const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().split('T')[0];
       const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0).toISOString().split('T')[0];
 
-      const allExpenses = await fetchAllHouseholdExpenses(selectedHousehold.id);
+      // soft-deleted expenses stay in the database but are hidden
+      const allExpenses = await dropDeletedExpenses(await fetchAllHouseholdExpenses(selectedHousehold.id));
       const expenseIds = allExpenses.map(e => e.id);
       const splitsByExpense = await fetchExpenseSplits(expenseIds);
+
+      // What the member has actually paid (admin-approved). Overpaid members only
+      // count their real share; partly paid members count what is approved so far.
+      const paidOf = (sp) => sp.status === 'approved'
+        ? Number(sp.share_amount)
+        : Math.min(Number(sp.paid_amount) || 0, Number(sp.share_amount) || 0);
+      const owedOf = (sp) => Math.max(Number(sp.share_amount) - (Number(sp.paid_amount) || 0), 0);
 
       let myApprovedTotal = 0;
       let myUtilitiesTotal = 0;
@@ -266,9 +275,9 @@ export default function DashboardScreen() {
         const splits = splitsByExpense[expense.id] || [];
         const mySplit = splits.find(s => s.user_id === user.id);
         if (mySplit) {
-          const amount = Number(mySplit.share_amount);
+          const amount = paidOf(mySplit);
           const expenseDate = expense.expense_date;
-          if (mySplit.status === 'approved' && expense.approval_status === 'approved') {
+          if (amount > 0 && expense.approval_status === 'approved') {
             if (expenseDate >= firstDay && expenseDate <= lastDay) {
               myApprovedTotal += amount;
               if (UTILITY_CATEGORIES.includes(expense.category)) {
@@ -278,8 +287,9 @@ export default function DashboardScreen() {
             if (expenseDate >= lastMonthStart && expenseDate <= lastMonthEnd) {
               lastMonthTotal += amount;
             }
-          } else if (mySplit.status !== 'approved' && expenseDate >= firstDay && expenseDate <= lastDay) {
-            myPendingTotal += amount;
+          }
+          if (mySplit.status !== 'approved' && expenseDate >= firstDay && expenseDate <= lastDay) {
+            myPendingTotal += owedOf(mySplit);
           }
         }
       }
@@ -294,11 +304,11 @@ export default function DashboardScreen() {
       for (const expense of allExpenses) {
         const splits = splitsByExpense[expense.id] || [];
         const mySplit = splits.find(s => s.user_id === user.id);
-        if (mySplit && mySplit.status === 'approved' && expense.approval_status === 'approved') {
+        if (mySplit && paidOf(mySplit) > 0 && expense.approval_status === 'approved') {
           const expenseDate = expense.expense_date;
           if (expenseDate >= firstDay && expenseDate <= lastDay) {
             const cat = expense.category || 'Other';
-            categories[cat] = (categories[cat] || 0) + Number(mySplit.share_amount);
+            categories[cat] = (categories[cat] || 0) + paidOf(mySplit);
           }
         }
       }
@@ -309,10 +319,10 @@ export default function DashboardScreen() {
       for (const expense of allExpenses) {
         const splits = splitsByExpense[expense.id] || [];
         const mySplit = splits.find(s => s.user_id === user.id);
-        if (mySplit && mySplit.status === 'approved' && expense.approval_status === 'approved') {
+        if (mySplit && paidOf(mySplit) > 0 && expense.approval_status === 'approved') {
           const d = new Date(expense.expense_date);
           const key = d.toLocaleDateString('en-US', { month: 'short' });
-          monthlyMap[key] = (monthlyMap[key] || 0) + Number(mySplit.share_amount);
+          monthlyMap[key] = (monthlyMap[key] || 0) + paidOf(mySplit);
         }
       }
       const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -375,6 +385,7 @@ export default function DashboardScreen() {
             .from('expenses')
             .select('id, amount, category, approval_status')
             .eq('group_id', group.id)
+            .is('deleted_at', null)
             .eq('approval_status', 'approved')
             .gte('expense_date', firstDay)
             .lte('expense_date', lastDay);
@@ -384,8 +395,8 @@ export default function DashboardScreen() {
           for (const exp of (groupExpenses || [])) {
             const splits = groupSplitsMap[exp.id] || [];
             const mySplit = splits.find(s => s.user_id === user.id);
-            if (mySplit && mySplit.status === 'approved') {
-              paidTotal += Number(mySplit.share_amount);
+            if (mySplit) {
+              paidTotal += paidOf(mySplit);
             }
           }
           return { ...group, currentMonthPaid: paidTotal };

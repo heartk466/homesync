@@ -89,7 +89,7 @@ export default function ReportsScreen() {
       chunks.map(chunk =>
         supabase
           .from('expense_splits')
-          .select('id, expense_id, user_id, share_amount, status')
+          .select('id, expense_id, user_id, share_amount, paid_amount, status')
           .in('expense_id', chunk)
       )
     );
@@ -127,6 +127,7 @@ export default function ReportsScreen() {
       .from('expenses')
       .select('*')
       .eq('household_id', houseData.id)
+      .is('deleted_at', null)
       .order('expense_date', { ascending: false });
     const allExpenses = householdExpenses || [];
 
@@ -173,7 +174,12 @@ export default function ReportsScreen() {
     const getPaidAmountForUser = (expense) => {
       const userSplit = (splitsMap[expense.id] || []).find(s => s.user_id === targetUserId);
       if (userSplit) {
-        return userSplit.status === 'approved' ? (Number(userSplit.share_amount) || 0) : 0;
+        // Paid only counts once the admin has APPROVED a proof. An overpaid
+        // member only counts their real share; a partly paid member counts
+        // what has been approved so far.
+        const share = Number(userSplit.share_amount) || 0;
+        if (userSplit.status === 'approved') return share;
+        return Math.min(Number(userSplit.paid_amount) || 0, share);
       }
       // No split row exists yet (e.g. no split_details were ever created for this
       // expense) — fall back to the old whole-expense signal, since there's no
@@ -195,8 +201,8 @@ export default function ReportsScreen() {
         // 'approved' = owner confirmed payment — not pending
         // 'pending_verification' = member submitted proof, awaiting owner — already paid by member, not pending
         if (userSplit.status === 'approved' || userSplit.status === 'pending_verification') return 0;
-        // 'unpaid' = genuinely still owes money
-        return Number(userSplit.share_amount) || 0;
+        // 'unpaid' = still owes the whole share; 'partly_paid' = owes the rest
+        return Math.max((Number(userSplit.share_amount) || 0) - (Number(userSplit.paid_amount) || 0), 0);
       }
 
       // No split row at all — if expense is fully paid, nothing pending
