@@ -601,6 +601,75 @@ export default function UtilitiesScreen() {
         </div>
       )}
 
+      {/* Filter Modal (same layout as the Expenses screen) */}
+      {showFilter && (
+        <div className="modal-overlay">
+          <div className="filter-modal">
+            <div className="modal-header">
+              <h2>Filter</h2>
+              <button className="modal-close" onClick={() => setShowFilter(false)}><X size={18} /></button>
+            </div>
+
+            <div className="form-group">
+              <label>Status</label>
+              <div className="checkbox-group">
+                {['paid', 'pending', 'verifying'].map(st => (
+                  <label key={st} className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={filterStatus.includes(st)}
+                      onChange={e => {
+                        if (e.target.checked) setFilterStatus([...filterStatus, st]);
+                        else setFilterStatus(filterStatus.filter(x => x !== st));
+                      }}
+                    />
+                    {st.charAt(0).toUpperCase() + st.slice(1)}
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label>Utility Type</label>
+              <div className="checkbox-group">
+                {UTILITY_CATEGORIES.map(c => (
+                  <label key={c} className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={filterType.includes(c)}
+                      onChange={e => {
+                        if (e.target.checked) setFilterType([...filterType, c]);
+                        else setFilterType(filterType.filter(x => x !== c));
+                      }}
+                    />
+                    {c}
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label>Date Range</label>
+              <div className="date-range-row">
+                <input type="date" value={filterFrom} onChange={e => setFilterFrom(e.target.value)} />
+                <span>to</span>
+                <input type="date" value={filterTo} onChange={e => setFilterTo(e.target.value)} />
+              </div>
+            </div>
+
+            <div className="filter-actions">
+              <button
+                className="filter-reset-btn"
+                onClick={() => { setFilterStatus([]); setFilterType([]); setFilterFrom(''); setFilterTo(''); setShowFilter(false); }}
+              >
+                Reset
+              </button>
+              <button className="filter-apply-btn" onClick={() => setShowFilter(false)}>Apply</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Delete Modal */}
       {showDeleteModal && (
         <div className="modal-overlay">
