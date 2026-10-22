@@ -1,23 +1,75 @@
-import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import {
   BarChart, Bar, XAxis, YAxis, ResponsiveContainer,
   PieChart, Pie, Cell, Legend, Tooltip
 } from 'recharts';
-import { Search, Filter, X, ChevronDown, FileText, Eye, Download, Users } from 'lucide-react';
+import { Search, Filter, X, ChevronDown, FileText, Eye, Download, Users, Check } from 'lucide-react';
 import TopBar from '../components/TopBar';
 import BottomNav from '../components/BottomNav';
 import { fetchAllHouseholdExpenses } from '../utils/expenseUtils';
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
+import {
+  computeReport, periodLabel, statementFromReport, statementFromMonthly,
+  exportReportPdf, datePresets, REPORT_CATEGORIES, peso,
+} from '../utils/reportUtils';
 import './ReportsScreen.css';
 
 const COLORS = ['#3B2AAB', '#2D1A7A', '#D4C5FF', '#AE96FF', '#6B46C1', '#9F7AEA', '#7C3AED', '#C4B5FD'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+// Tap-friendly category chips with a one-click "Select all".
+// value === null means "all categories".
+function CategoryPicker({ options, value, onChange }) {
+  const isOn = (c) => value === null || value.includes(c);
+  const allOn = value === null || value.length === options.length;
+  const count = value === null ? options.length : value.length;
+  const toggle = (c) => {
+    const base = value === null ? options : value;
+    const next = base.includes(c) ? base.filter((x) => x !== c) : [...base, c];
+    onChange(next.length === options.length ? null : next);
+  };
+  return (
+    <div className="cat-picker">
+      <div className="cat-picker-head">
+        <span className="cat-count">{allOn ? 'All categories' : `${count} of ${options.length} selected`}</span>
+        <div className="cat-head-actions">
+          <button type="button" className={`cat-all-btn ${allOn ? 'active' : ''}`} onClick={() => onChange(null)}>
+            <Check size={12} /> Select all
+          </button>
+          <button type="button" className="cat-clear-btn" disabled={value !== null && value.length === 0} onClick={() => onChange([])}>
+            Clear
+          </button>
+        </div>
+      </div>
+      <div className="cat-chip-grid">
+        {options.map((c) => (
+          <button type="button" key={c} className={`cat-chip ${isOn(c) ? 'active' : ''}`} onClick={() => toggle(c)}>
+            {isOn(c) && <Check size={11} />}
+            {c}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// A clean on/off switch (replaces the browser checkbox)
+function SwitchRow({ checked, onChange, title, hint }) {
+  return (
+    <button type="button" role="switch" aria-checked={checked} className={`switch-row ${checked ? 'on' : ''}`} onClick={() => onChange(!checked)}>
+      <span className="switch-text">
+        <span className="switch-title">{title}</span>
+        {hint && <span className="switch-hint">{hint}</span>}
+      </span>
+      <span className="switch-track"><span className="switch-thumb" /></span>
+    </button>
+  );
+}
+
 export default function ReportsScreen() {
   const navigate = useNavigate();
+  const location = useLocation();
 
   const [profile, setProfile] = useState(null);
   const [currentUser, setCurrentUser] = useState(null);
@@ -41,6 +93,10 @@ export default function ReportsScreen() {
   const [statementHistory, setStatementHistory] = useState([]);
   const [recentActivity, setRecentActivity] = useState([]);
   const [reportSchedule, setReportSchedule] = useState(null);
+  const [savedReports, setSavedReports] = useState([]);     // reports saved in Statement History
+  const [highlightId, setHighlightId] = useState(null);
+  const statementRef = useRef(null);
+  const openedFromLink = useRef(false);
 
   // UI State
   const [showGenerateModal, setShowGenerateModal] = useState(false);
@@ -57,20 +113,22 @@ export default function ReportsScreen() {
   const [loading, setLoading] = useState(false);
   const [showMemberDropdown, setShowMemberDropdown] = useState(false);
 
-  // Generate Report Form
+  // Generate Report Form  (category_filter: null = all categories)
+  const presets = datePresets();
   const [reportForm, setReportForm] = useState({
-    expense_range: new Date().toISOString().split('T')[0],
-    category_filter: [],
-    member_filter: '', // 'all' or specific user_id
-    include_split_details: true,
+    from: presets.thisMonth.from,
+    to: presets.thisMonth.to,
+    category_filter: null,
+    member_filter: 'all',          // admin only: 'all' or a user id
+    include_split_details: false,
   });
 
-  // Schedule Form
+  // Schedule Form  (category_filter: null = all categories)
   const [scheduleForm, setScheduleForm] = useState({
     frequency: 'monthly',
     day_of_month: 1,
     custom_interval_days: 30,
-    category_filter: [],
+    category_filter: null,
   });
 
   const showToast = (message, type = 'success') => {
@@ -102,6 +160,20 @@ export default function ReportsScreen() {
       });
     });
     return grouped;
+  };
+
+  // Reports this user generated (manual + scheduled) for the household
+  const loadSavedReports = async (houseId, userId) => {
+    if (!houseId || !userId) return;
+    const { data, error } = await supabase
+      .from('generated_reports')
+      .select('*')
+      .eq('household_id', houseId)
+      .eq('generated_by', userId)
+      .order('created_at', { ascending: false })
+      .limit(40);
+    if (error) { console.error('Load reports failed:', error); return; }
+    setSavedReports(data || []);
   };
 
   // Report data is always scoped to ONE household — the one selected in the
@@ -298,17 +370,28 @@ export default function ReportsScreen() {
 
     // Recent activity — table may not exist yet, safe fallback
     try {
-      const { data: activity, error: actError } = await supabase
+      // try with the person's name + avatar; fall back to plain rows
+      let { data: activity, error: actError } = await supabase
         .from('report_activity')
-        .select('*')
+        .select('*, profiles:user_id (full_name, avatar_url)')
         .eq('household_id', houseData.id)
         .order('created_at', { ascending: false })
         .limit(10);
+      if (actError) {
+        ({ data: activity, error: actError } = await supabase
+          .from('report_activity')
+          .select('*')
+          .eq('household_id', houseData.id)
+          .order('created_at', { ascending: false })
+          .limit(10));
+      }
       if (!actError) setRecentActivity(activity || []);
       else setRecentActivity([]);
     } catch (_) {
       setRecentActivity([]);
     }
+
+    await loadSavedReports(houseData.id, resolvedUserId || currentUser?.id);
   };
 
   const fetchHouseholdMembers = async (householdId, resolvedUserId = null) => {
@@ -407,7 +490,7 @@ export default function ReportsScreen() {
             frequency: schedule.frequency,
             day_of_month: schedule.day_of_month,
             custom_interval_days: schedule.custom_interval_days || 30,
-            category_filter: schedule.category_filter || [],
+            category_filter: schedule.category_filter && schedule.category_filter.length ? schedule.category_filter : null,
           });
         }
       } catch (_) { /* table may not exist yet */ }
@@ -447,6 +530,19 @@ export default function ReportsScreen() {
   // selectedMemberId changes are handled directly in handleMemberChange()
   // No useEffect here — avoids stale currentUser causing 0 values on initial load
 
+  // Tapping the "report ready" notification lands here with ?report=<id>
+  useEffect(() => {
+    const id = new URLSearchParams(location.search).get('report') || location.state?.report;
+    if (!id || openedFromLink.current) return;
+    const rep = savedReports.find((r) => r.id === id);
+    if (rep) {
+      openedFromLink.current = true;
+      setSelectedStatement(statementFromReport(rep, memberNameMap()));
+      setShowStatementDetail(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedReports, householdMembers, location.search]);
+
   const getYoYChange = (current, last) => {
     if (last === 0) return null;
     return (((current - last) / last) * 100).toFixed(1);
@@ -473,95 +569,156 @@ export default function ReportsScreen() {
     showToast(`Viewing report for ${householdMembers.find(m => m.user_id === memberId)?.profiles?.full_name}`);
   };
 
+  const memberNameMap = () =>
+    Object.fromEntries(householdMembers.map((m) => [m.user_id, m.profiles?.full_name || 'Member']));
+
+  // Admins can pick a member (or the household total); everyone else gets their own report
+  const effectiveMemberId = () => (isAdmin ? (reportForm.member_filter || 'all') : currentUser?.id);
+
+  const reportFormProblem = () => {
+    if (!reportForm.from || !reportForm.to) return 'Pick a start and end date.';
+    if (reportForm.from > reportForm.to) return 'The start date must be before the end date.';
+    if (reportForm.category_filter !== null && reportForm.category_filter.length === 0) return 'Pick at least one category.';
+    return null;
+  };
+
+  // Builds the report described by the form (nothing is saved here)
+  const buildReportFromForm = async () => {
+    const memberId = effectiveMemberId();
+    const { data: exps, error } = await supabase
+      .from('expenses')
+      .select('*')
+      .eq('household_id', selectedHousehold.id)
+      .eq('approval_status', 'approved')
+      .is('deleted_at', null)
+      .gte('expense_date', reportForm.from)
+      .lte('expense_date', reportForm.to);
+    if (error) throw error;
+    const list = exps || [];
+    const splitsMap = list.length ? await fetchExpenseSplits(list.map((e) => e.id)) : {};
+    const names = memberNameMap();
+    const result = computeReport({
+      expenses: list,
+      splitsMap,
+      memberId,
+      categories: reportForm.category_filter,
+      includeSplits: reportForm.include_split_details,
+      memberNames: names,
+    });
+    return { memberId, names, ...result };
+  };
+
+  const memberLabelOf = (memberId, names) => (memberId === 'all' ? 'All Members' : (names[memberId] || 'Member'));
+
   const handleGenerateReport = async () => {
+    const problem = reportFormProblem();
+    if (problem) { showToast(problem, 'error'); return; }
     setLoading(true);
     try {
+      const built = await buildReportFromForm();
+      if (built.count === 0) {
+        showToast('No expenses match these filters.', 'error');
+        setLoading(false);
+        return;
+      }
+
+      // 1. save the report so it appears in Statement History
+      const { data: saved, error } = await supabase
+        .from('generated_reports')
+        .insert({
+          household_id: selectedHousehold.id,
+          generated_by: currentUser.id,
+          member_id: built.memberId === 'all' ? null : built.memberId,
+          kind: 'manual',
+          period_from: reportForm.from,
+          period_to: reportForm.to,
+          categories: reportForm.category_filter === null ? [] : reportForm.category_filter,
+          include_split_details: reportForm.include_split_details,
+          total: built.total,
+          paid: built.paid,
+          pending: built.pending,
+          expense_count: built.count,
+          rows: built.rows,
+        })
+        .select()
+        .single();
+      if (error) throw error;
+
+      const label = periodLabel(reportForm.from, reportForm.to);
+      const who = memberLabelOf(built.memberId, built.names);
+
+      // 2. recent activity line
       try {
         await supabase.from('report_activity').insert({
           user_id: currentUser.id,
-          household_id: selectedHousehold?.id,
+          household_id: selectedHousehold.id,
           action: 'generated',
-          description: `${profile?.full_name} generated a report for ${selectedHousehold?.name}`,
+          description: `${profile?.full_name} generated a report for ${selectedHousehold.name} (${label})`,
         });
       } catch (_) { /* table may not exist */ }
-      showToast('Report generated! ✅');
-      setShowGenerateModal(false);
+
+      // 3. bell notification for the person who generated it
+      try {
+        await supabase.from('notifications').insert({
+          user_id: currentUser.id,
+          title: '📄 Your report is ready',
+          message: `${selectedHousehold.name} · ${label} · ${who}. Total ${peso(built.total)} (paid ${peso(built.paid)}, pending ${peso(built.pending)}) across ${built.count} expense${built.count === 1 ? '' : 's'}.`,
+          type: 'report_generated',
+          link_path: '/reports',
+          link_query: `report=${saved.id}`,
+        });
+      } catch (_) { /* ignore – the report itself is saved */ }
+      await fetchNotifications(currentUser.id);
+
+      // 4. refresh history and show the new report
       await fetchReportData(selectedHousehold, selectedMemberId || currentUser?.id, currentUser?.id);
-    } catch {
+      setShowGenerateModal(false);
+      showToast('Report generated! It’s in Statement History ✅');
+      setHighlightId(saved.id);
+      setTimeout(() => statementRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 250);
+      setTimeout(() => setHighlightId(null), 4500);
+    } catch (err) {
+      console.error('Generate report failed:', err);
       showToast('Failed to generate report.', 'error');
     }
     setLoading(false);
   };
 
+  // statement = a saved / automatic statement, or null = "export what the form describes" (not saved)
   const handleExportPDF = async (statement) => {
     try {
-      const doc = new jsPDF();
-      const targetMember = householdMembers.find(m => m.user_id === selectedMemberId);
-      const memberName = targetMember?.profiles?.full_name || 'All Members';
-
-      doc.setFontSize(20);
-      doc.setTextColor(59, 42, 171);
-      doc.text('HomeSync Report', 14, 20);
-      doc.setFontSize(12);
-      doc.setTextColor(100);
-      doc.text(`Household: ${selectedHousehold?.name || ''}`, 14, 30);
-      doc.text(`Member: ${memberName}`, 14, 38);
-      doc.text(`Period: ${statement?.period || 'Full Year'}`, 14, 46);
-      doc.text(`Generated: ${new Date().toLocaleDateString()}`, 14, 54);
-
-      doc.setFontSize(14);
-      doc.setTextColor(59, 42, 171);
-      doc.text('Summary', 14, 66);
-
-      const expenses = statement?.expenses || [];
-      const total = expenses.reduce((sum, e) => sum + Number(e.user_share || e.amount), 0);
-      const paid = expenses.filter(e => e.status === 'paid').reduce((sum, e) => sum + Number(e.user_share || e.amount), 0);
-      const pending = total - paid;
-
-      autoTable(doc, {
-        startY: 70,
-        head: [['Total Expenses (Your Share)', 'Paid', 'Pending']],
-        body: [[
-          `₱${total.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`,
-          `₱${paid.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`,
-          `₱${pending.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`,
-        ]],
-        styles: { font: 'helvetica', fontSize: 10 },
-        headStyles: { fillColor: [59, 42, 171] },
-      });
-
-      doc.setFontSize(14);
-      doc.setTextColor(59, 42, 171);
-      doc.text('Expense Details', 14, doc.lastAutoTable.finalY + 14);
-
-      autoTable(doc, {
-        startY: doc.lastAutoTable.finalY + 18,
-        head: [['Title', 'Category', 'Your Share', 'Date', 'Status']],
-        body: expenses.map(e => [
-          e.title,
-          e.category,
-          `₱${Number(e.user_share || e.amount).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`,
-          e.expense_date,
-          e.status,
-        ]),
-        styles: { font: 'helvetica', fontSize: 9 },
-        headStyles: { fillColor: [59, 42, 171] },
-      });
-
-      doc.save(`HomeSync-Report-${statement?.period || 'Full-Year'}.pdf`);
+      let st = statement;
+      if (!st) {
+        const problem = reportFormProblem();
+        if (problem) { showToast(problem, 'error'); return; }
+        setLoading(true);
+        const built = await buildReportFromForm();
+        setLoading(false);
+        if (built.count === 0) { showToast('No expenses match these filters.', 'error'); return; }
+        st = {
+          period: periodLabel(reportForm.from, reportForm.to),
+          memberLabel: memberLabelOf(built.memberId, built.names),
+          categories: reportForm.category_filter || [],
+          includeSplits: reportForm.include_split_details,
+          total: built.total, paid: built.paid, pending: built.pending,
+          rows: built.rows,
+        };
+      }
+      exportReportPdf({ statement: st, householdName: selectedHousehold?.name, generatedBy: profile?.full_name });
 
       try {
         await supabase.from('report_activity').insert({
           user_id: currentUser.id,
           household_id: selectedHousehold?.id,
           action: 'exported',
-          description: `${profile?.full_name} exported "${selectedHousehold?.name}" Statement for ${memberName}`,
+          description: `${profile?.full_name} exported "${selectedHousehold?.name}" statement (${st.period}) for ${st.memberLabel}`,
         });
       } catch (_) { /* table may not exist */ }
 
       showToast('PDF exported! ✅');
     } catch (err) {
       console.error(err);
+      setLoading(false);
       showToast('Failed to export PDF.', 'error');
     }
   };
@@ -584,13 +741,17 @@ export default function ReportsScreen() {
   };
 
   const handleSaveSchedule = async () => {
+    if (scheduleForm.category_filter !== null && scheduleForm.category_filter.length === 0) {
+      showToast('Pick at least one category.', 'error');
+      return;
+    }
     setLoading(true);
     try {
       const payload = {
         frequency: scheduleForm.frequency,
         day_of_month: scheduleForm.day_of_month,
         custom_interval_days: scheduleForm.custom_interval_days,
-        category_filter: scheduleForm.category_filter,
+        category_filter: scheduleForm.category_filter || [],
         next_scheduled_at: computeNextReportDate().toISOString(),
         is_active: true,
       };
@@ -628,10 +789,27 @@ export default function ReportsScreen() {
   const yoyTotal = getYoYChange(yearlyTotal, lastYearTotal);
   const yoyPending = getYoYChange(pendingBalances, lastYearPending);
 
-  const filteredStatements = statementHistory.filter(s => {
-    if (searchQuery && !s.period.toLowerCase().includes(searchQuery.toLowerCase())) return false;
-    if (filterFrom && s.id < filterFrom.substring(0, 7)) return false;
-    if (filterTo && s.id > filterTo.substring(0, 7)) return false;
+  const names = memberNameMap();
+  const viewedMemberLabel = names[selectedMemberId || currentUser?.id] || profile?.full_name || 'Me';
+  const historyItems = [
+    ...savedReports.map((rep) => ({
+      key: rep.id,
+      kind: rep.kind,
+      statement: statementFromReport(rep, names),
+      monthKey: String(rep.period_to).slice(0, 7),
+      createdDate: rep.created_at,
+    })),
+    ...statementHistory.map((s) => ({
+      key: `auto-${s.id}`,
+      kind: 'auto',
+      statement: statementFromMonthly(s, viewedMemberLabel),
+      monthKey: s.id,
+      createdDate: s.createdDate,
+    })),
+  ].filter((item) => {
+    if (searchQuery && !item.statement.period.toLowerCase().includes(searchQuery.toLowerCase())) return false;
+    if (filterFrom && item.monthKey < filterFrom.substring(0, 7)) return false;
+    if (filterTo && item.monthKey > filterTo.substring(0, 7)) return false;
     return true;
   });
 
@@ -640,7 +818,7 @@ export default function ReportsScreen() {
     return true;
   });
 
-  const CATEGORIES = ['Rent', 'Water', 'Food', 'Internet', 'Electricity', 'Gas', 'Grocery'];
+  const categoryOptions = Array.from(new Set([...REPORT_CATEGORIES, ...categoryData.map((c) => c.name)]));
 
   return (
     <div className="reports-screen">
@@ -904,7 +1082,7 @@ export default function ReportsScreen() {
         </div>
 
         {/* Statement History */}
-        <div className="report-section">
+        <div className="report-section" ref={statementRef}>
           <p className="report-section-title">Statement History</p>
           <div className="statement-table">
             <div className="statement-header-row">
@@ -915,22 +1093,27 @@ export default function ReportsScreen() {
               <span>Status</span>
               <span></span>
             </div>
-            {filteredStatements.length === 0 ? (
+            {historyItems.length === 0 ? (
               <p className="no-data">No statements yet</p>
             ) : (
-              filteredStatements.map((s, i) => (
-                <div key={s.id} className="statement-row">
-                  <span className="statement-id">ID {i + 501}</span>
-                  <span className="statement-period">{s.period}</span>
-                  <span className="statement-total">₱{s.total.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span>
-                  <span className="statement-date">{new Date(s.createdDate).toLocaleDateString()}</span>
-                  <span className="statement-status finalized">Finalized</span>
-                  <div className="statement-actions">
-                    <button className="icon-btn-report" onClick={() => { setSelectedStatement(s); setShowStatementDetail(true); }}><Eye size={14}/></button>
-                    <button className="icon-btn-report" onClick={() => handleExportPDF(s)}><Download size={14}/></button>
+              historyItems.map((item) => {
+                const st = item.statement;
+                const statusClass = item.kind === 'scheduled' ? 'scheduled' : item.kind === 'auto' ? 'auto' : 'finalized';
+                const statusText = item.kind === 'scheduled' ? 'Scheduled' : item.kind === 'auto' ? 'Auto' : 'Finalized';
+                return (
+                  <div key={item.key} className={`statement-row ${highlightId === item.key ? 'highlight' : ''}`}>
+                    <span className="statement-id">{item.kind === 'auto' ? 'AUTO' : `RPT-${String(st.id).slice(0, 4).toUpperCase()}`}</span>
+                    <span className="statement-period">{st.period}</span>
+                    <span className="statement-total">{peso(st.total)}</span>
+                    <span className="statement-date">{new Date(item.createdDate).toLocaleDateString()}</span>
+                    <span className={`statement-status ${statusClass}`}>{statusText}</span>
+                    <div className="statement-actions">
+                      <button className="icon-btn-report" onClick={() => { setSelectedStatement(st); setShowStatementDetail(true); }}><Eye size={14}/></button>
+                      <button className="icon-btn-report" onClick={() => handleExportPDF(st)}><Download size={14}/></button>
+                    </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>
@@ -974,40 +1157,55 @@ export default function ReportsScreen() {
               {activeTab === 'generate' ? (
                 <>
                   <div className="form-group">
-                    <label>Expense Range</label>
-                    <input type="date" value={reportForm.expense_range} onChange={e => setReportForm(prev => ({ ...prev, expense_range: e.target.value }))} />
-                  </div>
-
-                  <div className="form-group">
-                    <label>Category Filter</label>
-                    <div className="select-wrap">
-                      <select value={reportForm.category_filter} onChange={e => setReportForm(prev => ({ ...prev, category_filter: Array.from(e.target.selectedOptions, o => o.value) }))} multiple style={{ borderRadius: 16, height: 100 }}>
-                        {CATEGORIES.map(c => (<option key={c} value={c}>{c}</option>))}
-                      </select>
+                    <label>Date range</label>
+                    <div className="date-range-row">
+                      <input type="date" value={reportForm.from} max={reportForm.to || undefined} onChange={e => setReportForm(prev => ({ ...prev, from: e.target.value }))} />
+                      <span className="date-range-sep">to</span>
+                      <input type="date" value={reportForm.to} min={reportForm.from || undefined} onChange={e => setReportForm(prev => ({ ...prev, to: e.target.value }))} />
                     </div>
-                    <span style={{ fontSize: 10, color: '#9E8FCC', paddingLeft: 8 }}>Hold Ctrl/Cmd to select multiple</span>
-                  </div>
-
-                  <div className="form-group">
-                    <label>Member (for detailed splits)</label>
-                    <div className="select-wrap">
-                      <select value={reportForm.member_filter} onChange={e => setReportForm(prev => ({ ...prev, member_filter: e.target.value }))}>
-                        <option value="all">All Members (Household Total)</option>
-                        {householdMembers.map(m => (<option key={m.user_id} value={m.user_id}>{m.profiles?.full_name}</option>))}
-                      </select>
-                      <ChevronDown size={14} className="select-arrow"/>
+                    <div className="preset-row">
+                      <button type="button" className="preset-btn" onClick={() => setReportForm(prev => ({ ...prev, ...datePresets().thisMonth }))}>This month</button>
+                      <button type="button" className="preset-btn" onClick={() => setReportForm(prev => ({ ...prev, ...datePresets().lastMonth }))}>Last month</button>
+                      <button type="button" className="preset-btn" onClick={() => setReportForm(prev => ({ ...prev, ...datePresets().thisYear }))}>This year</button>
                     </div>
                   </div>
 
                   <div className="form-group">
-                    <label>
-                      <input type="checkbox" checked={reportForm.include_split_details} onChange={e => setReportForm(prev => ({ ...prev, include_split_details: e.target.checked }))} />
-                      {' '}Include per‑member split details
-                    </label>
+                    <label>Categories</label>
+                    <CategoryPicker
+                      options={categoryOptions}
+                      value={reportForm.category_filter}
+                      onChange={v => setReportForm(prev => ({ ...prev, category_filter: v }))}
+                    />
                   </div>
+
+                  {isAdmin ? (
+                    <div className="form-group">
+                      <label>Member</label>
+                      <div className="select-wrap">
+                        <select value={reportForm.member_filter} onChange={e => setReportForm(prev => ({ ...prev, member_filter: e.target.value }))}>
+                          <option value="all">All Members (Household Total)</option>
+                          {householdMembers.map(m => (<option key={m.user_id} value={m.user_id}>{m.profiles?.full_name}</option>))}
+                        </select>
+                        <ChevronDown size={14} className="select-arrow"/>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="report-for-note">Report for <strong>{profile?.full_name || 'you'}</strong></div>
+                  )}
+
+                  <SwitchRow
+                    checked={reportForm.include_split_details}
+                    onChange={v => setReportForm(prev => ({ ...prev, include_split_details: v }))}
+                    title="Include per-member split details"
+                    hint="Adds each member’s share and payment for every expense"
+                  />
 
                   <button className="generate-btn" onClick={handleGenerateReport} disabled={loading}>{loading ? 'Generating...' : 'Generate Report'}</button>
-                  <button className="export-pdf-btn" onClick={() => handleExportPDF(null)} disabled={loading}><Download size={16}/> Export to PDF (Current View)</button>
+                  <button className="export-pdf-btn" onClick={() => handleExportPDF(null)} disabled={loading}><Download size={16}/> Export PDF without saving</button>
+                  <p className="schedule-note" style={{ textAlign: 'center' }}>
+                    Generating saves the report in Statement History and sends you a notification.
+                  </p>
                 </>
               ) : (
                 <>
@@ -1036,6 +1234,15 @@ export default function ReportsScreen() {
                     </div>
                   )}
 
+                  <div className="form-group">
+                    <label>Categories to include</label>
+                    <CategoryPicker
+                      options={categoryOptions}
+                      value={scheduleForm.category_filter}
+                      onChange={v => setScheduleForm(prev => ({ ...prev, category_filter: v }))}
+                    />
+                  </div>
+
                   {reportSchedule && (
                     <div className="schedule-info">
                       <p>✅ Schedule active</p>
@@ -1044,7 +1251,7 @@ export default function ReportsScreen() {
                   )}
 
                   <p className="schedule-note">
-                    🔔 On each report date at 8:00 AM you'll get a summary notification (and a phone push if you allowed notifications). Turn this off with "Report Schedules" in Settings.
+                    🔔 On each report date at 8:00 AM your report is saved to Statement History and you’ll get a notification (and a phone push if you allowed notifications). Turn this off with “Report Schedules” in Settings.
                   </p>
 
                   <button className="generate-btn" onClick={handleSaveSchedule} disabled={loading}>{loading ? 'Saving...' : 'Save Schedule'}</button>
@@ -1056,43 +1263,88 @@ export default function ReportsScreen() {
       )}
 
       {/* Statement Detail Modal */}
-      {showStatementDetail && selectedStatement && (
-        <div className="modal-overlay-reports">
-          <div className="generate-modal">
-            <div className="modal-header">
-              <h2>{selectedStatement.period} Statement</h2>
-              <button className="modal-close" onClick={() => setShowStatementDetail(false)}><X size={18}/></button>
-            </div>
-            <div className="modal-scroll">
-              <div className="statement-detail-summary">
-                <div className="stat-detail-item">
-                  <span className="stat-detail-label">Total (Your Share)</span>
-                  <span className="stat-detail-value">₱{selectedStatement.total.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span>
-                </div>
-                <div className="stat-detail-item">
-                  <span className="stat-detail-label">Expenses</span>
-                  <span className="stat-detail-value">{selectedStatement.expenses.length}</span>
-                </div>
+      {showStatementDetail && selectedStatement && (() => {
+        const st = selectedStatement;
+        const hasPending = st.pending !== null && st.pending !== undefined;
+        const chip = (status) => ({
+          'paid': { color: '#065F46', background: '#D1FAE5' },
+          'partly paid': { color: '#c05621', background: '#FEEBC8' },
+          'verifying': { color: '#856404', background: '#FFF3CD' },
+        }[status] || { color: '#856404', background: '#FFF3CD' });
+        return (
+          <div className="modal-overlay-reports">
+            <div className="generate-modal">
+              <div className="modal-header">
+                <h2>{st.period}</h2>
+                <button className="modal-close" onClick={() => setShowStatementDetail(false)}><X size={18}/></button>
               </div>
-
-              {selectedStatement.expenses.map(e => (
-                <div key={e.id} className="detail-expense-row">
-                  <div className="detail-expense-info">
-                    <p className="detail-expense-title">{e.title}</p>
-                    <p className="detail-expense-meta">{e.category} | {e.expense_date}</p>
-                  </div>
-                  <div className="detail-expense-right">
-                    <p className="detail-expense-amount">₱{Number(e.user_share || e.amount).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
-                    <span className="detail-expense-status" style={{ color: e.status === 'paid' ? '#38a169' : '#856404', background: e.status === 'paid' ? '#f0fff4' : '#fff3cd' }}>{e.status}</span>
-                  </div>
+              <div className="modal-scroll">
+                <div className="detail-tags">
+                  <span className="detail-tag">{st.kind === 'scheduled' ? '🗓️ Scheduled' : st.kind === 'auto' ? '⚙️ Auto' : '📄 Custom'}</span>
+                  <span className="detail-tag">👤 {st.memberLabel}</span>
+                  <span className="detail-tag">{st.categories && st.categories.length ? st.categories.join(', ') : 'All categories'}</span>
                 </div>
-              ))}
 
-              <button className="export-pdf-btn" onClick={() => handleExportPDF(selectedStatement)}><Download size={16}/> Export to PDF</button>
+                <div className="statement-detail-summary">
+                  <div className="stat-detail-item">
+                    <span className="stat-detail-label">{hasPending ? 'Total' : 'Total paid'}</span>
+                    <span className="stat-detail-value">{peso(st.total)}</span>
+                  </div>
+                  {hasPending ? (
+                    <>
+                      <div className="stat-detail-item">
+                        <span className="stat-detail-label">Paid</span>
+                        <span className="stat-detail-value" style={{ color: '#38a169' }}>{peso(st.paid)}</span>
+                      </div>
+                      <div className="stat-detail-item">
+                        <span className="stat-detail-label">Pending</span>
+                        <span className="stat-detail-value" style={{ color: '#c05621' }}>{peso(st.pending)}</span>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="stat-detail-item">
+                      <span className="stat-detail-label">Expenses</span>
+                      <span className="stat-detail-value">{st.rows.length}</span>
+                    </div>
+                  )}
+                </div>
+
+                {st.rows.length === 0 && <p className="no-data">No expenses in this report.</p>}
+                {st.rows.map(r => (
+                  <div key={r.id} className="detail-expense-block">
+                    <div className="detail-expense-row">
+                      <div className="detail-expense-info">
+                        <p className="detail-expense-title">{r.title}</p>
+                        <p className="detail-expense-meta">{r.category} | {r.expense_date}</p>
+                      </div>
+                      <div className="detail-expense-right">
+                        <p className="detail-expense-amount">{peso(r.share)}</p>
+                        <span className="detail-expense-status" style={chip(r.status)}>{r.status}</span>
+                        {hasPending && r.paid > 0 && r.paid < r.share && (
+                          <span className="detail-paid-note">paid {peso(r.paid)}</span>
+                        )}
+                      </div>
+                    </div>
+                    {r.splits && r.splits.length > 0 && (
+                      <div className="detail-splits">
+                        {r.splits.map(sp => (
+                          <div key={sp.user_id} className="detail-split-row">
+                            <span className="detail-split-name">{sp.name}</span>
+                            <span className="detail-split-amt">{peso(sp.share)}</span>
+                            <span className="detail-split-status" style={chip(sp.status)}>{sp.status}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+
+                <button className="export-pdf-btn" onClick={() => handleExportPDF(st)}><Download size={16}/> Export to PDF</button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Filter Modal */}
       {showFilter && (
