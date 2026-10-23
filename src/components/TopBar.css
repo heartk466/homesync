@@ -26,22 +26,77 @@
 .topbar-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
-/* Bell */
-.topbar-bell-btn {
+/* Bell + Chat buttons: round, change colour on hover, bell rings */
+.topbar-actions .topbar-bell-btn,
+.topbar-actions .topbar-chat-btn {
   position: relative;
-  background: none;
+  width: 38px;
+  height: 38px;
+  padding: 0;
   border: none;
-  cursor: pointer;
+  border-radius: 50%;
+  background: transparent;
   color: #3B2AAB;
-  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
+}
+
+.topbar-actions .topbar-bell-btn:hover,
+.topbar-actions .topbar-chat-btn:hover {
+  background: #3B2AAB;
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(59, 42, 171, 0.35);
+  transform: none;
+}
+
+.topbar-actions .topbar-bell-btn:active,
+.topbar-actions .topbar-chat-btn:active { transform: scale(0.93); }
+
+.topbar-actions .topbar-bell-btn:focus-visible,
+.topbar-actions .topbar-chat-btn:focus-visible { outline: 2px solid #AE96FF; outline-offset: 2px; }
+
+/* The bell swings from its top, like a real one */
+.bell-icon { transform-origin: 50% 8%; transition: fill 0.2s ease; }
+.topbar-bell-btn:hover .bell-icon { fill: currentColor; animation: bell-ring 0.9s ease-in-out; }
+.topbar-bell-btn.ringing .bell-icon { animation: bell-ring 1.1s ease-in-out; }
+
+@keyframes bell-ring {
+  0%   { transform: rotate(0deg); }
+  10%  { transform: rotate(20deg); }
+  22%  { transform: rotate(-18deg); }
+  34%  { transform: rotate(14deg); }
+  46%  { transform: rotate(-11deg); }
+  58%  { transform: rotate(7deg); }
+  70%  { transform: rotate(-4deg); }
+  82%  { transform: rotate(2deg); }
+  100% { transform: rotate(0deg); }
+}
+
+/* Chat bubble does a small pop */
+.topbar-chat-btn:hover .chat-icon { animation: chat-pop 0.5s ease; }
+@keyframes chat-pop {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(1.18) rotate(-6deg); }
+  70%  { transform: scale(0.96) rotate(3deg); }
+  100% { transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .topbar-bell-btn:hover .bell-icon,
+  .topbar-bell-btn.ringing .bell-icon,
+  .topbar-chat-btn:hover .chat-icon { animation: none; }
 }
 
 .topbar-bell-badge {
   position: absolute;
   top: -2px; right: -2px;
+  box-shadow: 0 0 0 2px #fff;
   background: #e53e3e;
   color: white;
   font-size: 9px;
@@ -483,4 +538,11 @@
 
 .notification-item.unread.notification-clickable:hover {
   background: #E8E3FF;
+}
+
+/* Chat badge matches the bell badge */
+.topbar-actions .topbar-chat-btn .topbar-chat-badge {
+  top: -2px;
+  right: -3px;
+  box-shadow: 0 0 0 2px #fff;
 }

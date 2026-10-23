@@ -10,7 +10,6 @@ import {
 import './DashboardScreen.css';
 import TopBar from '../components/TopBar';
 import BottomNav from '../components/BottomNav';
-import ChatDrawer from '../components/ChatDrawer';       
 import { fetchAllHouseholdExpenses, UTILITY_CATEGORIES } from '../utils/expenseUtils';
 import { dropDeletedExpenses } from '../utils/expenseEditUtils';
 import { useAppContext } from '../AppContext';
@@ -136,9 +135,9 @@ export default function DashboardScreen() {
   const [showHouseholdCode, setShowHouseholdCode] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  // ── Chat state ─────────────────────────────────────────────────────────────
-  const [showChat, setShowChat] = useState(false);
-  const [chatUnread, setChatUnread] = useState(0);
+  // ── Notifications (bell in the top bar) ───────────────────────────────────
+  const [notifications, setNotifications] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
   // ──────────────────────────────────────────────────────────────────────────
 
   // ── Utility Forecast state ─────────────────────────────────────────────────
@@ -202,11 +201,47 @@ export default function DashboardScreen() {
   };
 
   // ── Initial load: profile + all households ────────────────────────────────
+  const fetchNotifications = async (userId) => {
+    const { data } = await supabase
+      .from('notifications')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(30);
+    setNotifications(data || []);
+    setUnreadCount((data || []).filter(n => !n.is_read).length);
+  };
+
+  const markNotificationsRead = async () => {
+    if (!currentUser?.id) return;
+    await supabase
+      .from('notifications')
+      .update({ is_read: true })
+      .eq('user_id', currentUser.id)
+      .eq('is_read', false);
+    setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
+    setUnreadCount(0);
+  };
+
+  // New notifications arrive live (the bell rings and the badge goes up)
+  useEffect(() => {
+    if (!currentUser?.id) return undefined;
+    const channel = supabase
+      .channel(`dashboard-notifications-${currentUser.id}-${Math.random().toString(36).slice(2, 7)}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${currentUser.id}` }, (payload) => {
+        setNotifications(prev => [payload.new, ...prev]);
+        setUnreadCount(prev => prev + 1);
+      })
+      .subscribe();
+    return () => supabase.removeChannel(channel);
+  }, [currentUser?.id]);
+
   const fetchProfile = async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { navigate('/login'); return; }
       setCurrentUser(user);
+      fetchNotifications(user.id);
 
       const { data: profileData } = await supabase
         .from('profiles')
@@ -467,26 +502,11 @@ export default function DashboardScreen() {
         setProfile={setProfile}
         household={household}
         currentUser={currentUser}
-        notifications={[]}
-        unreadCount={0}
+        notifications={notifications}
+        unreadCount={unreadCount}
+        onMarkAllRead={markNotificationsRead}
         title="Dashboard"
-        showBell={false}
-        onChatOpen={() => setShowChat(v => !v)}
-        chatUnreadCount={chatUnread}
-      />
-
-      {/*
-        ── Chat Panel ────────────────────────────────────────────────────────
-        Rendered here (outside TopBar) so it can be absolute-positioned
-        relative to .dashboard. The trigger button floats beside the avatar.
-      */}
-      <ChatDrawer
-        profile={profile}
-        currentUser={currentUser}
-        allHouseholds={allHouseholds}
-        isOpen={showChat}
-        onClose={() => setShowChat(false)}
-        onUnreadChange={setChatUnread}
+        showBell={true}
       />
 
       {/* ── Household Pill Switcher ── */}

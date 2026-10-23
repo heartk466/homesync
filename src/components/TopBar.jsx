@@ -1,9 +1,10 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import { Bell, X, LogOut, Camera, Edit, MessageCircle } from 'lucide-react';
 import './TopBar.css';
 import logo from '../assets/Homesync.svg';
+import useChatLauncher from './useChatLauncher';
 
 export default function TopBar({
   profile,
@@ -15,8 +16,9 @@ export default function TopBar({
   onMarkAllRead,
   title = 'HomeSync',
   showBell = true,
-  onChatOpen,
+  onChatOpen,            // legacy: a screen can still supply its own chat handling
   chatUnreadCount = 0,
+  hideChat = false,      // set true on a screen that should NOT show the chat button
 }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -30,6 +32,28 @@ export default function TopBar({
   const [editForm, setEditForm] = useState({ full_name: '', gcash_number: '', bank_name: '', bank_account_number: '', bank_account_name: '' });
   const [editLoading, setEditLoading] = useState(false);
   const [editSuccess, setEditSuccess] = useState(false);
+
+  // Chat button + drawer on every screen (works with just `profile`, so screens
+  // that don't pass `currentUser` get it too)
+  const chatUser = currentUser || (profile?.id ? { id: profile.id } : null);
+  const internalChat = !hideChat && !onChatOpen;
+  const chat = useChatLauncher({ chatUser, profile, enabled: internalChat });
+  const chatBadge = onChatOpen ? chatUnreadCount : chat.unread;
+  const showChatButton = !hideChat && (!!onChatOpen || !!chatUser);
+
+  // Ring the bell once whenever a new notification arrives
+  const prevUnread = useRef(unreadCount);
+  const [ringing, setRinging] = useState(false);
+  useEffect(() => {
+    if (unreadCount > prevUnread.current) {
+      setRinging(true);
+      const t = setTimeout(() => setRinging(false), 1400);
+      prevUnread.current = unreadCount;
+      return () => clearTimeout(t);
+    }
+    prevUnread.current = unreadCount;
+    return undefined;
+  }, [unreadCount]);
 
   const getInitials = () => {
     if (!profile?.full_name) return 'U';
@@ -230,6 +254,17 @@ export default function TopBar({
       case 'approval':           return '✅';
       case 'rejection':          return '❌';
       case 'kicked':             return '🚪';
+      case 'expense_updated':    return '✏️';
+      case 'expense_added':      return '➕';
+      case 'expense_removed':    return '➖';
+      case 'expense_deleted':    return '🗑️';
+      case 'followup_submitted': return '📸';
+      case 'followup_confirmed': return '✅';
+      case 'followup_rejected':  return '❌';
+      case 'refund_sent':        return '💸';
+      case 'refund_confirmed':   return '✅';
+      case 'report_generated':   return '📄';
+      case 'report_schedule':    return '🗓️';
       default:                   return '🔔';
     }
   };
@@ -253,38 +288,40 @@ export default function TopBar({
         </div>
 
         <div className="topbar-actions">
+          {/* Chat — sits beside the bell on every screen */}
+          {showChatButton && (
+            <button
+              className="topbar-chat-btn"
+              aria-label="Messages"
+              title="Messages"
+              onClick={() => {
+                setShowProfileCard(false);
+                setShowNotifications(false);
+                if (onChatOpen) onChatOpen();
+                else chat.toggle();
+              }}
+            >
+              <MessageCircle size={20} className="chat-icon" />
+              {chatBadge > 0 && (
+                <span className="topbar-chat-badge">{chatBadge > 99 ? '99+' : chatBadge}</span>
+              )}
+            </button>
+          )}
+
           {/* Bell / Notifications */}
           {showBell && (
             <button
-              className="topbar-bell-btn"
+              className={`topbar-bell-btn ${ringing ? 'ringing' : ''} ${unreadCount > 0 ? 'has-unread' : ''}`}
+              aria-label="Notifications"
+              title="Notifications"
               onClick={() => {
                 setShowNotifications(!showNotifications);
                 setShowProfileCard(false);
               }}
             >
-              <Bell size={20}/>
+              <Bell size={20} className="bell-icon" />
               {unreadCount > 0 && (
                 <span className="topbar-bell-badge">{unreadCount > 99 ? '99+' : unreadCount}</span>
-              )}
-            </button>
-          )}
-
-          {/* Chat button — only shown on Dashboard (when onChatOpen is passed) */}
-          {onChatOpen && (
-            <button
-              className="topbar-chat-btn"
-              onClick={() => {
-                onChatOpen();
-                setShowProfileCard(false);
-                setShowNotifications(false);
-              }}
-              title="Messages"
-            >
-              <MessageCircle size={22} />
-              {chatUnreadCount > 0 && (
-                <span className="topbar-chat-badge">
-                  {chatUnreadCount > 99 ? '99+' : chatUnreadCount}
-                </span>
               )}
             </button>
           )}
@@ -302,6 +339,9 @@ export default function TopBar({
           </button>
         </div>
       </div>
+
+      {/* Chat drawer (covers the whole screen) */}
+      {chat.drawer}
 
       {/* Notifications Panel */}
       {showNotifications && (
