@@ -6,7 +6,7 @@ import {
   Database, Info, LogOut, ChevronRight,
   Copy, Share2, UserMinus, Crown, Trash2,
   Download, X, Check, AlertCircle, QrCode, ImagePlus,
-  LifeBuoy, Bug, MessageSquare
+  LifeBuoy, Bug, MessageSquare, Plus
 } from 'lucide-react';
 
 // ─── Support inbox — bug reports & feedback land here ─────────────────────────
@@ -18,6 +18,10 @@ import autoTable from 'jspdf-autotable';
 import { usePushNotifications } from '../hooks/usePushNotifications';
 import { uploadPaymentQr } from '../utils/paymentUtils';
 import './SettingsScreen.css';
+
+// Custom due-date reminders: how many a user can have, and the furthest-ahead day allowed
+const MAX_REMINDERS = 5;
+const MAX_REMINDER_DAYS = 60;
 import { useAppContext } from '../AppContext';
 
 // ─── VAPID helper (must match usePushNotifications.js) ────────────────────────
@@ -50,6 +54,8 @@ export default function SettingsScreen() {
   });
   // Which days before a due date this user wants a reminder (0 = on the due date)
   const [reminderDays, setReminderDays] = useState([3]);
+  const [showCustomReminder, setShowCustomReminder] = useState(false);
+  const [customDayInput, setCustomDayInput] = useState('');
 
   const { currency, setCurrency: setContextCurrency, isDark, setIsDark: setContextDark } = useAppContext();
 
@@ -281,7 +287,13 @@ export default function SettingsScreen() {
 
   // Multi-select: tap a chip to add / remove that reminder day
   const handleToggleReminderDay = async (day) => {
-    const next = reminderDays.includes(day)
+    const removing = reminderDays.includes(day);
+    if (!removing && reminderDays.length >= MAX_REMINDERS) {
+      showToast(`You can have up to ${MAX_REMINDERS} reminders`, 'error');
+      return false;
+    }
+    const prev = reminderDays;
+    const next = removing
       ? reminderDays.filter(d => d !== day)
       : [...reminderDays, day].sort((a, b) => a - b);
     setReminderDays(next);
@@ -289,8 +301,22 @@ export default function SettingsScreen() {
       .from('profiles')
       .update({ reminder_days: next })
       .eq('id', currentUser.id);
-    if (error) { showToast('Could not save reminder preference', 'error'); return; }
+    if (error) { setReminderDays(prev); showToast('Could not save reminder preference', 'error'); return false; }
     showToast(next.length ? 'Reminder preference saved!' : 'Due date reminders are off');
+    return true;
+  };
+
+  // Add a reminder day that isn't one of the preset chips
+  const handleAddCustomReminder = async () => {
+    const raw = customDayInput.trim();
+    const day = Number(raw);
+    if (raw === '' || !Number.isInteger(day) || day < 0 || day > MAX_REMINDER_DAYS) {
+      showToast(`Enter a whole number from 0 to ${MAX_REMINDER_DAYS}`, 'error');
+      return;
+    }
+    if (reminderDays.includes(day)) { showToast('You already have that reminder', 'error'); return; }
+    const added = await handleToggleReminderDay(day);
+    if (added) { setCustomDayInput(''); setShowCustomReminder(false); }
   };
 
   const handleSaveCurrency = async (curr) => {
@@ -681,6 +707,9 @@ export default function SettingsScreen() {
     { value: 14, label: '14d before' },
   ];
 
+  // Saved days that aren't one of the preset chips (shown as removable chips)
+  const customReminderDays = reminderDays.filter(d => !REMINDER_OPTIONS.some(o => o.value === d));
+
   const reminderSummary = () => {
     if (reminderDays.length === 0) return 'No due date reminders. Pick at least one to get notified.';
     const parts = reminderDays.map(d => (d === 0 ? 'on the due date' : `${d} day${d > 1 ? 's' : ''} before`));
@@ -952,7 +981,43 @@ export default function SettingsScreen() {
                 {opt.label}
               </button>
             ))}
+            {customReminderDays.map(day => (
+              <button
+                key={`custom-${day}`}
+                className="reminder-chip active"
+                title="Tap to remove"
+                onClick={() => handleToggleReminderDay(day)}
+              >
+                {day}d before <X size={11} style={{ marginLeft: 4, verticalAlign: '-1px' }} />
+              </button>
+            ))}
+            <button
+              className={`reminder-chip reminder-chip-add${showCustomReminder ? ' open' : ''}`}
+              onClick={() => setShowCustomReminder(v => !v)}
+            >
+              <Plus size={11} style={{ marginRight: 3, verticalAlign: '-1px' }} />Custom
+            </button>
           </div>
+          {showCustomReminder && (
+            <div className="reminder-custom-row">
+              <input
+                type="number"
+                inputMode="numeric"
+                min="0"
+                max={MAX_REMINDER_DAYS}
+                className="reminder-custom-input"
+                placeholder="e.g. 10"
+                value={customDayInput}
+                onChange={e => setCustomDayInput(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') handleAddCustomReminder(); }}
+              />
+              <span className="reminder-custom-unit">days before</span>
+              <button className="reminder-custom-add" onClick={handleAddCustomReminder}>Add</button>
+            </div>
+          )}
+          {showCustomReminder && (
+            <p className="reminder-hint">Any number from 0 to {MAX_REMINDER_DAYS} days. You can have up to {MAX_REMINDERS} reminders.</p>
+          )}
           <p className="reminder-hint">{reminderSummary()}</p>
         </div>
 

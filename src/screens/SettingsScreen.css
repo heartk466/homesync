@@ -823,3 +823,44 @@
   line-height: 1.5;
   margin: 6px 0 0;
 }
+/* Custom reminder day */
+.reminder-chip-add {
+  border-style: dashed;
+  border-color: #AE96FF;
+  color: #3B2AAB;
+  background: #fff;
+}
+.reminder-chip-add.open { background: #F0EDFF; }
+
+.reminder-custom-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0 2px;
+}
+.reminder-custom-input {
+  width: 84px;
+  box-sizing: border-box;
+  padding: 8px 14px;
+  border-radius: 50px;
+  border: 1.5px solid #E0D9FF;
+  background: #fff;
+  font-family: 'Poppins', sans-serif;
+  font-size: 16px; /* 16px stops iOS from zooming the page on focus */
+  color: #2D1A7A;
+  outline: none;
+  text-align: center;
+}
+.reminder-custom-input:focus { border-color: #3B2AAB; }
+.reminder-custom-unit { font-size: 12px; color: #5A4AAA; flex: 1; }
+.reminder-custom-add {
+  border: none;
+  border-radius: 50px;
+  padding: 8px 18px;
+  background: #3B2AAB;
+  color: #fff;
+  font-family: 'Poppins', sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
