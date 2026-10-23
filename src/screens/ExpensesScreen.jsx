@@ -14,6 +14,7 @@ import DeleteExpenseModal from '../components/DeleteExpenseModal';
 import FollowupPaymentModal from '../components/FollowupPaymentModal';
 import RefundModal from '../components/RefundModal';
 import ExpenseProofsModal from '../components/ExpenseProofsModal';
+import DatePickerField from '../components/DatePickerField';
 import {
   fetchExpenseExtras, softDeleteExpense, submitFollowupProof, reviewFollowupProof,
   sendRefund, confirmRefund, dropDeletedExpenses, followupDueOf, overpaidOf,
@@ -1282,12 +1283,12 @@ export default function ExpensesScreen() {
               </div>
               <div className="form-group">
                 <label>Date</label>
-                <input type="date" value={getTodayStr()} readOnly disabled className="input-readonly" />
+                <DatePickerField value={getTodayStr()} onChange={() => {}} disabled />
                 <span className="form-hint">Set automatically to today</span>
               </div>
               <div className="form-group">
                 <label>Due Date (optional)</label>
-                <input type="date" value={expenseForm.due_date} min={getTodayStr()} onChange={e => setExpenseForm({ ...expenseForm, due_date: e.target.value })} className={expenseErrors.due_date ? 'input-error' : ''} />
+                <DatePickerField value={expenseForm.due_date} min={getTodayStr()} placeholder="Select due date" hasError={!!expenseErrors.due_date} onChange={v => setExpenseForm({ ...expenseForm, due_date: v && v < getTodayStr() ? '' : v })} />
                 {expenseErrors.due_date && <span className="form-error">{expenseErrors.due_date}</span>}
                 {expenseForm.due_date && (() => {
                   const preview = getReminderPreview(expenseForm.due_date, getMyReminderDays(profile));

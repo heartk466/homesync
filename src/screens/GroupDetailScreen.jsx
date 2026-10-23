@@ -11,6 +11,7 @@ import PayOnlineModal from '../components/PayOnlineModal';
 import EditExpenseModal from '../components/EditExpenseModal';
 import DeleteExpenseModal from '../components/DeleteExpenseModal';
 import ReviewExpenseModal from '../components/ReviewExpenseModal';
+import DatePickerField from '../components/DatePickerField';
 import FollowupPaymentModal from '../components/FollowupPaymentModal';
 import RefundModal from '../components/RefundModal';
 import ExpenseProofsModal from '../components/ExpenseProofsModal';
@@ -1905,19 +1906,19 @@ export default function GroupDetailScreen() {
               {/* Date — set automatically, not editable */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                 <label style={{ fontSize: 12, fontWeight: 600, color: '#5A4AAA' }}>Date</label>
-                <input type="date" value={getTodayStr()} readOnly disabled className="detail-input detail-input-readonly" />
+                <DatePickerField value={getTodayStr()} onChange={() => {}} disabled />
                 <span className="detail-hint">Set automatically to today</span>
               </div>
 
               {/* Due date — optional, no past dates */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                 <label style={{ fontSize: 12, fontWeight: 600, color: '#5A4AAA' }}>Due Date (optional)</label>
-                <input
-                  type="date"
+                <DatePickerField
                   value={expenseForm.due_date}
                   min={getTodayStr()}
-                  onChange={e => setExpenseForm({ ...expenseForm, due_date: e.target.value })}
-                  className={`detail-input${expenseErrors.due_date ? ' input-error' : ''}`}
+                  placeholder="Select due date"
+                  hasError={!!expenseErrors.due_date}
+                  onChange={v => setExpenseForm({ ...expenseForm, due_date: v && v < getTodayStr() ? '' : v })}
                 />
                 {expenseErrors.due_date && <span className="detail-hint" style={{ color: '#e53e3e' }}>{expenseErrors.due_date}</span>}
                 {expenseForm.due_date && (() => {
