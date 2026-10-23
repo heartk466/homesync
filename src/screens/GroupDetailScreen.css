@@ -1170,3 +1170,5 @@
 .rn-eye:focus-visible { outline: 2px solid #3B2AAB; }
 
 .rn-btn-danger { background: #C53030; box-shadow: 0 6px 16px rgba(197, 48, 48, 0.28); }
+/* Pending expense card: tapping the top area opens the review modal */
+.pa-top-tap { cursor: pointer; }

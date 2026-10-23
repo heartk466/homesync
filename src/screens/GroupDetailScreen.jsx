@@ -10,6 +10,7 @@ import { SUBSCRIPTION_PRESETS } from '../utils/expenseUtils';
 import PayOnlineModal from '../components/PayOnlineModal';
 import EditExpenseModal from '../components/EditExpenseModal';
 import DeleteExpenseModal from '../components/DeleteExpenseModal';
+import ReviewExpenseModal from '../components/ReviewExpenseModal';
 import FollowupPaymentModal from '../components/FollowupPaymentModal';
 import RefundModal from '../components/RefundModal';
 import ExpenseProofsModal from '../components/ExpenseProofsModal';
@@ -109,6 +110,7 @@ export default function GroupDetailScreen() {
   const [showRejectExpenseModal, setShowRejectExpenseModal] = useState(false);
   const [rejectExpenseReason, setRejectExpenseReason] = useState('');
   const [selectedPendingExpense, setSelectedPendingExpense] = useState(null);
+  const [reviewExpense, setReviewExpense] = useState(null); // pending expense being reviewed by the admin
   const [showUploadAfterAdd, setShowUploadAfterAdd] = useState(false);
   const [justAddedExpense, setJustAddedExpense] = useState(null);
   const [loadingAction, setLoadingAction] = useState(false);
@@ -1604,8 +1606,14 @@ export default function GroupDetailScreen() {
                 id={`expense-${expense.id}`}
                 className={`pa-card ${highlightedExpenseId === expense.id ? 'notif-highlight' : ''}`}
               >
-                <div className="pa-top">
-                  <div className="pa-icon pa-icon-expense">🧾</div>
+                <div
+                  className="pa-top pa-top-tap"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setReviewExpense(expense)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') setReviewExpense(expense); }}
+                >
+                  <div className="pa-icon pa-icon-expense">{CATEGORY_ICONS[expense.category] || '🧾'}</div>
                   <div className="pa-info">
                     <div className="pa-title-row">
                       <span className="pa-title">{expense.title}</span>
@@ -1616,17 +1624,8 @@ export default function GroupDetailScreen() {
                   </div>
                 </div>
                 <div className="pa-actions">
-                  <button className="pa-btn pa-btn-approve" onClick={() => handleApproveExpense(expense)}>
-                    <Check size={14} /> Approve
-                  </button>
-                  <button
-                    className="pa-btn pa-btn-reject"
-                    onClick={() => {
-                      setSelectedPendingExpense(expense);
-                      setShowRejectExpenseModal(true);
-                    }}
-                  >
-                    <X size={14} /> Reject
+                  <button className="pa-btn pa-btn-proof" onClick={() => setReviewExpense(expense)}>
+                    <Eye size={14} /> Review details
                   </button>
                 </div>
               </div>
@@ -2179,6 +2178,24 @@ export default function GroupDetailScreen() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Review a member's new expense before approving / rejecting it */}
+      {reviewExpense && isAdmin && (
+        <ReviewExpenseModal
+          expense={reviewExpense}
+          members={members}
+          icon={CATEGORY_ICONS[reviewExpense.category] || '📦'}
+          color={CATEGORY_COLORS[reviewExpense.category] || '#3B2AAB'}
+          loading={loadingAction}
+          onApprove={async (exp) => { await handleApproveExpense(exp); setReviewExpense(null); }}
+          onReject={(exp) => {
+            setReviewExpense(null);
+            setSelectedPendingExpense(exp);
+            setShowRejectExpenseModal(true);
+          }}
+          onClose={() => setReviewExpense(null)}
+        />
       )}
 
       {/* Delete Expense (shows what is being deleted; blocked until paid members are refunded) */}
