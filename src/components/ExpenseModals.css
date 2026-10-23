@@ -2,13 +2,16 @@
    All classes are prefixed xm- so they never clash with a screen's own CSS. */
 
 .xm-overlay {
-  position: absolute;
+  /* fixed (not absolute): the screen behind scrolls, and an absolute overlay
+     scrolls away with it, leaving the modal off-screen above the admin */
+  position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.5);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 300;
+  z-index: 1000;
+  overscroll-behavior: contain;
   font-family: 'Poppins', sans-serif;
 }
 
@@ -18,6 +21,7 @@
   width: calc(100% - 32px);
   max-width: 358px;
   max-height: 88%;
+  max-height: 88dvh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -47,6 +51,15 @@
 }
 .xm-body::-webkit-scrollbar { display: none; }
 
+/* pinned Save / Cancel under a scrolling body */
+.xm-footer {
+  flex-shrink: 0;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 12px 20px 16px;
+  border-top: 1px solid #F0EDFF;
+  background: #fff;
+}
+
 .xm-center { align-items: center; text-align: center; }
 .xm-title { margin: 0; font-size: 17px; font-weight: 700; color: #2D1A7A; }
 .xm-sub { margin: 0; font-size: 12px; color: #5A4AAA; line-height: 1.5; }
@@ -68,6 +81,20 @@
   outline: none;
   box-sizing: border-box;
 }
+.xm-input, .xm-select {
+  -webkit-appearance: none;
+  appearance: none;
+  min-width: 0;
+  min-height: 44px;
+  line-height: 20px;
+}
+.xm-select {
+  padding-right: 40px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%239E8FCC' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 16px center;
+  background-size: 14px;
+}
 .xm-textarea { border-radius: 16px; resize: none; height: 72px; }
 .xm-input:focus, .xm-select:focus, .xm-textarea:focus { border-color: #3B2AAB; }
 .xm-input.xm-error { border-color: #e53e3e; }
@@ -77,7 +104,7 @@
 
 .xm-amount-wrap {
   display: flex; align-items: center;
-  border: 1.5px solid #E0D9FF; border-radius: 50px; background: #fff; overflow: hidden;
+  border: 1.5px solid #E0D9FF; border-radius: 50px; background: #fff; overflow: hidden; min-height: 44px; box-sizing: border-box;
 }
 .xm-amount-wrap:focus-within { border-color: #3B2AAB; }
 .xm-amount-wrap.xm-error { border-color: #e53e3e; }

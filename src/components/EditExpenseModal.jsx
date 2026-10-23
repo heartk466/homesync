@@ -4,6 +4,7 @@ import {
   num, round2, money, getTodayStr, distributeEqual, isMoneyLocked, isShareLocked,
   splitStatusMeta, saveExpenseEdit,
 } from '../utils/expenseEditUtils';
+import DatePickerField from './DatePickerField';
 import './ExpenseModals.css';
 
 const initialsOf = (name) =>
@@ -195,12 +196,13 @@ export default function EditExpenseModal({
 
           <div className="xm-field">
             <label>Due date <span style={{ fontWeight: 400, color: '#9E8FCC' }}>(optional)</span></label>
-            <input
-              type="date"
-              className={`xm-input${errors.due ? ' xm-error' : ''}`}
+            {/* An existing past due date can be kept as-is; a NEW date can't be in the past */}
+            <DatePickerField
               value={dueDate}
-              min={dueDate && dueDate === expense.due_date ? undefined : getTodayStr()}
-              onChange={(e) => setDueDate(e.target.value)}
+              min={getTodayStr()}
+              placeholder="Select due date"
+              hasError={!!errors.due}
+              onChange={setDueDate}
             />
             {errors.due && <span className="xm-err-text">{errors.due}</span>}
           </div>
@@ -292,6 +294,9 @@ export default function EditExpenseModal({
 
           <div className="xm-box xm-yellow">📢 Everyone in this expense will be notified of the changes.</div>
 
+        </div>
+
+        <div className="xm-footer">
           <button className="xm-btn" onClick={handleSave} disabled={saving || hasErrors}>
             {saving ? 'Saving…' : 'Save Changes'}
           </button>

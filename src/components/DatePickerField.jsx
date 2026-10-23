@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Calendar, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Calendar, ChevronLeft, ChevronRight, ChevronDown } from 'lucide-react';
 import './DatePickerField.css';
 
 /**
@@ -9,6 +9,8 @@ import './DatePickerField.css';
  *
  * Dates are plain 'YYYY-MM-DD' strings and are never converted through UTC,
  * so there is no off-by-one-day problem in UTC+8.
+ *
+ * Tap the month/year title to jump by year and month.
  *
  * props:
  *   value       'YYYY-MM-DD' or ''
@@ -24,6 +26,7 @@ const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
+const SHORT_MONTHS = MONTHS.map((m) => m.slice(0, 3));
 const WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 
 const pad = (n) => String(n).padStart(2, '0');
@@ -45,6 +48,7 @@ export default function DatePickerField({
 }) {
   const [open, setOpen] = useState(false);
   const [view, setView] = useState(() => parse(value || min || localToday()));
+  const [mode, setMode] = useState('days'); // 'days' | 'months'
   const rootRef = useRef(null);
   const today = localToday();
 
@@ -65,7 +69,7 @@ export default function DatePickerField({
 
   const toggle = () => {
     if (disabled) return;
-    if (!open) setView(parse(value || min || today)); // always open on the relevant month
+    if (!open) { setView(parse(value || min || today)); setMode('days'); } // always open on the relevant month
     setOpen((o) => !o);
   };
 
@@ -73,6 +77,15 @@ export default function DatePickerField({
 
   const minParts = min ? parse(min) : null;
   const atFirstMonth = Boolean(minParts) && (view.y < minParts.y || (view.y === minParts.y && view.m <= minParts.m));
+
+  const atFirstYear = Boolean(minParts) && view.y <= minParts.y;
+  const monthBlocked = (y, m) => Boolean(minParts) && (y < minParts.y || (y === minParts.y && m < minParts.m));
+  const shiftYear = (delta) => setView((v) => ({ ...v, y: v.y + delta, d: 1 }));
+  const pickMonth = (m) => {
+    if (monthBlocked(view.y, m)) return;
+    setView((v) => ({ ...v, m, d: 1 }));
+    setMode('days');
+  };
 
   const shiftMonth = (delta) => {
     setView((v) => {
@@ -110,37 +123,72 @@ export default function DatePickerField({
 
       {open && (
         <div className="dpf-panel" role="dialog" aria-label="Choose a date">
-          <div className="dpf-head">
-            <button type="button" className="dpf-nav" onClick={() => shiftMonth(-1)} disabled={atFirstMonth} aria-label="Previous month">
-              <ChevronLeft size={16} />
-            </button>
-            <span className="dpf-title">{MONTHS[view.m]} {view.y}</span>
-            <button type="button" className="dpf-nav" onClick={() => shiftMonth(1)} aria-label="Next month">
-              <ChevronRight size={16} />
-            </button>
-          </div>
-
-          <div className="dpf-grid">
-            {WEEKDAYS.map((w) => <span key={w} className="dpf-wd">{w}</span>)}
-            {cells.map((d, i) => {
-              if (d === null) return <span key={`e${i}`} />;
-              const str = toStr(view.y, view.m, d);
-              const blocked = isBlocked(str);
-              const cls = ['dpf-day', str === value && 'dpf-selected', str === today && 'dpf-today'].filter(Boolean).join(' ');
-              return (
-                <button key={str} type="button" className={cls} disabled={blocked} onClick={() => pick(str)}>
-                  {d}
+          {mode === 'days' ? (
+            <>
+              <div className="dpf-head">
+                <button type="button" className="dpf-nav" onClick={() => shiftMonth(-1)} disabled={atFirstMonth} aria-label="Previous month">
+                  <ChevronLeft size={16} />
                 </button>
-              );
-            })}
-          </div>
+                <button type="button" className="dpf-title-btn" onClick={() => setMode('months')} aria-label="Choose month and year">
+                  {MONTHS[view.m]} {view.y} <ChevronDown size={14} />
+                </button>
+                <button type="button" className="dpf-nav" onClick={() => shiftMonth(1)} aria-label="Next month">
+                  <ChevronRight size={16} />
+                </button>
+              </div>
 
-          <div className="dpf-foot">
-            {allowClear && value ? (
-              <button type="button" className="dpf-link" onClick={() => { onChange?.(''); setOpen(false); }}>Clear</button>
-            ) : <span />}
-            <button type="button" className="dpf-link" disabled={isBlocked(today)} onClick={() => pick(today)}>Today</button>
-          </div>
+              <div className="dpf-grid">
+                {WEEKDAYS.map((w) => <span key={w} className="dpf-wd">{w}</span>)}
+                {cells.map((d, i) => {
+                  if (d === null) return <span key={`e${i}`} />;
+                  const str = toStr(view.y, view.m, d);
+                  const blocked = isBlocked(str);
+                  const cls = ['dpf-day', str === value && 'dpf-selected', str === today && 'dpf-today'].filter(Boolean).join(' ');
+                  return (
+                    <button key={str} type="button" className={cls} disabled={blocked} onClick={() => pick(str)}>
+                      {d}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="dpf-foot">
+                {allowClear && value ? (
+                  <button type="button" className="dpf-link" onClick={() => { onChange?.(''); setOpen(false); }}>Clear</button>
+                ) : <span />}
+                <button type="button" className="dpf-link" disabled={isBlocked(today)} onClick={() => pick(today)}>Today</button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="dpf-head">
+                <button type="button" className="dpf-nav" onClick={() => shiftYear(-1)} disabled={atFirstYear} aria-label="Previous year">
+                  <ChevronLeft size={16} />
+                </button>
+                <span className="dpf-title">{view.y}</span>
+                <button type="button" className="dpf-nav" onClick={() => shiftYear(1)} aria-label="Next year">
+                  <ChevronRight size={16} />
+                </button>
+              </div>
+
+              <div className="dpf-months">
+                {SHORT_MONTHS.map((name, m) => {
+                  const cls = ['dpf-month', m === view.m && 'dpf-selected', (view.y === parse(today).y && m === parse(today).m) && 'dpf-today']
+                    .filter(Boolean).join(' ');
+                  return (
+                    <button key={name} type="button" className={cls} disabled={monthBlocked(view.y, m)} onClick={() => pickMonth(m)}>
+                      {name}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="dpf-foot">
+                <button type="button" className="dpf-link" onClick={() => setMode('days')}>Back to days</button>
+                <span />
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>

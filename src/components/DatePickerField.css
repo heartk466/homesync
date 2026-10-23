@@ -71,3 +71,23 @@
   font-family: 'Poppins', sans-serif; font-size: 12px; font-weight: 600; color: #3B2AAB;
 }
 .dpf-link:disabled { color: #CFC8EE; cursor: not-allowed; }
+/* Month / year picker */
+.dpf-title-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: none; border: none; padding: 6px 10px; border-radius: 50px; cursor: pointer;
+  font-family: 'Poppins', sans-serif; font-size: 13px; font-weight: 700; color: #2D1A7A;
+  -webkit-tap-highlight-color: transparent;
+}
+.dpf-title-btn:hover { background: #F0EDFF; }
+.dpf-title-btn svg { color: #9E8FCC; }
+
+.dpf-months { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 4px 0; }
+.dpf-month {
+  height: 42px; border: none; border-radius: 14px; background: #F8F6FF; color: #2D1A7A;
+  font-family: 'Poppins', sans-serif; font-size: 12px; font-weight: 600; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.dpf-month:hover:not(:disabled) { background: #F0EDFF; }
+.dpf-month.dpf-today { box-shadow: inset 0 0 0 1.5px #AE96FF; }
+.dpf-month.dpf-selected { background: #3B2AAB; color: #fff; }
+.dpf-month:disabled { color: #CFC8EE; background: #FBFAFF; cursor: not-allowed; text-decoration: line-through; }
