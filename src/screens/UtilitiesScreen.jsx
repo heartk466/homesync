@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import {
@@ -11,9 +11,6 @@ import PayOnlineModal from '../components/PayOnlineModal';
 import { softDeleteExpense, overpaidOf, followupDueOf, num as toNum } from '../utils/expenseEditUtils';
 import './UtilitiesScreen.css';
 import {
-  fetchAllUtilityItems,
-  checkDuplicate,
-  mergeItems,
   markItemAsPaid,
   UTILITY_CATEGORIES,
 } from '../utils/expenseUtils';
@@ -39,9 +36,7 @@ export default function UtilitiesScreen() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [allHouseholds, setAllHouseholds] = useState([]);
   const [activeHousehold, setActiveHousehold] = useState(null);
-  const [householdMembers, setHouseholdMembers] = useState([]);
   const [utilities, setUtilities] = useState([]);
-  const [filteredUtilities, setFilteredUtilities] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
 
@@ -56,8 +51,6 @@ export default function UtilitiesScreen() {
   const [showAddUtility, setShowAddUtility] = useState(false);
   const [showFilter, setShowFilter] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [showDisputeModal, setShowDisputeModal] = useState(false);
-  const [showAdjustModal, setShowAdjustModal] = useState(false);
   const [selectedUtility, setSelectedUtility] = useState(null);
   const [activeTab, setActiveTab] = useState('add');
   const [searchQuery, setSearchQuery] = useState('');
@@ -70,30 +63,8 @@ export default function UtilitiesScreen() {
   const [filterFrom, setFilterFrom] = useState('');
   const [filterTo, setFilterTo] = useState('');
 
-  // Utility Form
-  const [utilityForm, setUtilityForm] = useState({
-    utility_type: 'Power',
-    provider_name: '',
-    amount: '',
-    billing_date: '',
-    reminder_days: 5,
-    split_method: 'Equal Split',
-    location: '',
-    selected_members: [],
-    custom_splits: {},
-  });
-  const [utilityErrors, setUtilityErrors] = useState({});
-
-  // Dispute / Adjust
-  const [disputeReason, setDisputeReason] = useState('');
-  const [adjustedSplits, setAdjustedSplits] = useState({});
-
   // Duplicate & Payment Proof
-  const [showDuplicateModal, setShowDuplicateModal] = useState(false);
-  const [duplicateItem, setDuplicateItem] = useState(null);
   const [showPaymentProofModal, setShowPaymentProofModal] = useState(false);
-  const [showViewProofModal, setShowViewProofModal] = useState(false);
-  const [selectedProof, setSelectedProof] = useState(null);
   const [showPayOnlineModal, setShowPayOnlineModal] = useState(false);
   const [proofForm, setProofForm] = useState({
     note: '',
@@ -102,92 +73,42 @@ export default function UtilitiesScreen() {
   });
   const proofInputRef = useRef(null);
 
-  const showToast = (message, type = 'success') => {
+  const showToast = useCallback((message, type = 'success') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3000);
-  };
+  }, []);
 
-  const fetchData = async () => {
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) { navigate('/login'); return; }
-      setCurrentUser(user);
-
-      const { data: profileData, error: profileError } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', user.id)
-        .single();
-      if (profileError) throw profileError;
-      setProfile(profileData);
-
-      const { data: memberData, error: memberError } = await supabase
-        .from('household_members')
-        .select('household_id, role, status')
-        .eq('user_id', user.id);
-
-      if (memberError) {
-        showToast('Error loading household memberships.', 'error');
-        return;
-      }
-
-      if (!memberData || memberData.length === 0) {
-        showToast('You are not a member of any household. Please join or create one.', 'error');
-        setAllHouseholds([]);
-        setActiveHousehold(null);
-        return;
-      }
-
-      const householdIds = memberData.map(m => m.household_id);
-      const { data: householdsData, error: housesError } = await supabase
-        .from('households')
-        .select('*')
-        .in('id', householdIds);
-
-      if (housesError) {
-        showToast('Error loading household details.', 'error');
-        return;
-      }
-
-      const householdsWithRole = householdsData.map(h => ({
-        ...h,
-        role: memberData.find(m => m.household_id === h.id)?.role || 'member'
-      }));
-
-      setAllHouseholds(householdsWithRole);
-      // Prefer the household where the user is owner; otherwise pick first
-      const primary = householdsWithRole.find(h => h.role === 'owner') || householdsWithRole[0];
-      console.log('[Utilities] Active household set to:', primary?.name, primary?.id);
-      setActiveHousehold(primary);
-
-      await fetchHouseholdData(primary, user);
-      await fetchNotifications(user.id);
-    } catch (err) {
-      console.error(err);
-      showToast('Failed to load data. Check your connection.', 'error');
-    }
-  };
-
-  const fetchHouseholdData = async (household, user) => {
+  const fetchHouseholdData = useCallback(async (household, user) => {
     if (!household) return;
 
     // Fetch members
     const { data: members, error: membersError } = await supabase
       .from('household_members')
-      .select('user_id, role, status, profiles(id, full_name, email, avatar_url)')
+      .select('user_id, role, status')
       .eq('household_id', household.id);
 
     if (membersError) {
       console.error('Members fetch error:', membersError);
     }
 
+    const userIds = (members || []).map(member => member.user_id);
+    const { data: profiles, error: profilesError } = userIds.length
+      ? await supabase
+        .from('profiles')
+        .select('id, full_name, email, avatar_url')
+        .in('id', userIds)
+      : { data: [], error: null };
+
+    if (profilesError) {
+      console.error('Member profiles fetch error:', profilesError);
+    }
+
     const membersList = (members || []).map(m => ({
       user_id: m.user_id,
       role: m.role,
       status: m.status,
-      profiles: m.profiles || { full_name: 'Unknown', email: '' }
+      profiles: profiles?.find(profileData => profileData.id === m.user_id) || { full_name: 'Unknown', email: '' }
     }));
-    setHouseholdMembers(membersList);
 
     const userMember = membersList.find(m => m.user_id === user.id);
     setIsAdmin(userMember?.role === 'owner');
@@ -213,7 +134,6 @@ export default function UtilitiesScreen() {
     if (!utilityExpenses || utilityExpenses.length === 0) {
       console.log('[Utilities] No utility expenses found for household', household.id);
       setUtilities([]);
-      setFilteredUtilities([]);
       setProviderCount(0);
       setPendingSplits(0);
       setActiveSubscriptions(0);
@@ -265,31 +185,22 @@ export default function UtilitiesScreen() {
     });
 
     setUtilities(utilityItems);
-    setFilteredUtilities(utilityItems);
 
     // Summary counts
-
-    // Connected Utility Providers = number of unique utility categories in this household
     const uniqueCategories = [...new Set(utilityItems.map(u => u.category))];
     setProviderCount(uniqueCategories.length);
 
-    // Active Utility Subscription (untouched for now)
     const activeCount = utilityItems.filter(u => u.status !== 'paid').length;
     setActiveSubscriptions(activeCount);
 
-    // Pending Splits = expenses not yet approved by owner
-    // Covers: approval_status 'pending_approval' (owner hasn't reviewed yet)
-    // AND splits with status 'pending_verification' (member submitted proof, awaiting owner approval)
     const pendingApprovalCount = utilityItems.filter(u =>
       u.approval_status === 'pending_approval' ||
       u.splits.some(s => s.status === 'pending_verification')
     ).length;
     setPendingSplits(pendingApprovalCount);
+  }, [showToast]);
 
-    setUtilityForm(prev => ({ ...prev, location: household.name }));
-  };
-
-  const fetchNotifications = async (userId) => {
+  async function fetchNotifications(userId) {
     const { data } = await supabase
       .from('notifications')
       .select('*')
@@ -298,7 +209,66 @@ export default function UtilitiesScreen() {
       .limit(20);
     setNotifications(data || []);
     setUnreadCount((data || []).filter(n => !n.is_read).length);
-  };
+  }
+
+  const fetchData = useCallback(async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) { navigate('/login'); return; }
+      setCurrentUser(user);
+
+      const { data: profileData, error: profileError } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .single();
+      if (profileError) throw profileError;
+      setProfile(profileData);
+
+      const { data: memberData, error: memberError } = await supabase
+        .from('household_members')
+        .select('household_id, role, status')
+        .eq('user_id', user.id);
+
+      if (memberError) {
+        showToast('Error loading household memberships.', 'error');
+        return;
+      }
+
+      if (!memberData || memberData.length === 0) {
+        showToast('You are not a member of any household. Please join or create one.', 'error');
+        setAllHouseholds([]);
+        setActiveHousehold(null);
+        return;
+      }
+
+      const householdIds = memberData.map(m => m.household_id);
+      const { data: householdsData, error: housesError } = await supabase
+        .from('households')
+        .select('*')
+        .in('id', householdIds);
+
+      if (housesError) {
+        showToast('Error loading household details.', 'error');
+        return;
+      }
+
+      const householdsWithRole = householdsData.map(h => ({
+        ...h,
+        role: memberData.find(m => m.household_id === h.id)?.role || 'member'
+      }));
+
+      setAllHouseholds(householdsWithRole);
+      const primary = householdsWithRole.find(h => h.role === 'owner') || householdsWithRole[0];
+      setActiveHousehold(primary);
+
+      await fetchHouseholdData(primary, user);
+      await fetchNotifications(user.id);
+    } catch (err) {
+      console.error(err);
+      showToast('Failed to load data. Check your connection.', 'error');
+    }
+  }, [navigate, showToast, fetchHouseholdData]);
 
   const markAllRead = async () => {
     await supabase
@@ -310,9 +280,11 @@ export default function UtilitiesScreen() {
     setUnreadCount(0);
   };
 
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
-    fetchData();
-  }, []);
+    void fetchData();
+  }, [fetchData]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
     if (!currentUser || !activeHousehold) return;
@@ -322,9 +294,9 @@ export default function UtilitiesScreen() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'expense_splits' }, () => fetchHouseholdData(activeHousehold, currentUser))
       .subscribe();
     return () => supabase.removeChannel(channel);
-  }, [currentUser, activeHousehold]);
+  }, [currentUser, activeHousehold, fetchHouseholdData]);
 
-  useEffect(() => {
+  const filteredUtilities = useMemo(() => {
     let result = [...utilities];
     if (searchQuery) {
       result = result.filter(u =>
@@ -336,7 +308,7 @@ export default function UtilitiesScreen() {
     if (filterType.length > 0) result = result.filter(u => filterType.includes(u.category));
     if (filterFrom) result = result.filter(u => u.expense_date >= filterFrom);
     if (filterTo) result = result.filter(u => u.expense_date <= filterTo);
-    setFilteredUtilities(result);
+    return result;
   }, [searchQuery, filterStatus, filterType, filterFrom, filterTo, utilities]);
 
   const handleSwitchHousehold = async (household) => {
@@ -347,13 +319,10 @@ export default function UtilitiesScreen() {
     showToast(`Switched to ${household.name}`);
   };
 
-  const proceedWithUtilitySave = async () => {};
-  const handleSaveUtility = async () => {
-    showToast('Add utility expenses from the Expenses screen instead.', 'info');
+  const handleSaveUtility = () => {
+    setShowAddUtility(false);
   };
-  const handleConfirmSplit = async (utility) => {};
-  const handleDisputeSplit = async () => {};
-  const handleAdjustSplit = async () => {};
+
   const handleDeleteUtility = async () => {
     if (!selectedUtility) return;
     try {
@@ -381,8 +350,6 @@ export default function UtilitiesScreen() {
     }
     fetchHouseholdData(activeHousehold, currentUser);
   };
-  const resetUtilityForm = () => {};
-
   const getUtilityConfig = (type) => {
     const map = {
       Electricity: UTILITY_CONFIG.Power,

@@ -8,7 +8,6 @@ import {
 import { Search, Filter, X, ChevronDown, FileText, Eye, Download, Users, Check } from 'lucide-react';
 import TopBar from '../components/TopBar';
 import BottomNav from '../components/BottomNav';
-import { fetchAllHouseholdExpenses } from '../utils/expenseUtils';
 import {
   computeReport, periodLabel, statementFromReport, statementFromMonthly,
   exportReportPdf, datePresets, REPORT_CATEGORIES, peso,
@@ -387,7 +386,7 @@ export default function ReportsScreen() {
       }
       if (!actError) setRecentActivity(activity || []);
       else setRecentActivity([]);
-    } catch (_) {
+    } catch {
       setRecentActivity([]);
     }
 
@@ -493,17 +492,19 @@ export default function ReportsScreen() {
             category_filter: schedule.category_filter && schedule.category_filter.length ? schedule.category_filter : null,
           });
         }
-      } catch (_) { /* table may not exist yet */ }
+      } catch { /* table may not exist yet */ }
     } catch (err) {
       console.error(err);
     }
   };
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  /* eslint-disable react-hooks/exhaustive-deps, react-hooks/set-state-in-effect */
   useEffect(() => {
     fetchData();
   }, []);
+  /* eslint-enable react-hooks/exhaustive-deps, react-hooks/set-state-in-effect */
 
+  /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => {
     if (!currentUser?.id || !selectedHousehold?.id) return;
     const channelName = `reports-rt-${selectedHousehold.id}-${currentUser.id}`;
@@ -526,11 +527,16 @@ export default function ReportsScreen() {
 
     return () => { supabase.removeChannel(channel); };
   }, [currentUser?.id, selectedHousehold?.id, selectedMemberId]);
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   // selectedMemberId changes are handled directly in handleMemberChange()
   // No useEffect here — avoids stale currentUser causing 0 values on initial load
 
+  const memberNameMap = () =>
+    Object.fromEntries(householdMembers.map((m) => [m.user_id, m.profiles?.full_name || 'Member']));
+
   // Tapping the "report ready" notification lands here with ?report=<id>
+  /* eslint-disable react-hooks/exhaustive-deps, react-hooks/set-state-in-effect */
   useEffect(() => {
     const id = new URLSearchParams(location.search).get('report') || location.state?.report;
     if (!id || openedFromLink.current) return;
@@ -540,8 +546,8 @@ export default function ReportsScreen() {
       setSelectedStatement(statementFromReport(rep, memberNameMap()));
       setShowStatementDetail(true);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [savedReports, householdMembers, location.search]);
+  /* eslint-enable react-hooks/exhaustive-deps, react-hooks/set-state-in-effect */
 
   const getYoYChange = (current, last) => {
     if (last === 0) return null;
@@ -568,9 +574,6 @@ export default function ReportsScreen() {
     fetchReportData(selectedHousehold, memberId, memberId);
     showToast(`Viewing report for ${householdMembers.find(m => m.user_id === memberId)?.profiles?.full_name}`);
   };
-
-  const memberNameMap = () =>
-    Object.fromEntries(householdMembers.map((m) => [m.user_id, m.profiles?.full_name || 'Member']));
 
   // Admins can pick a member (or the household total); everyone else gets their own report
   const effectiveMemberId = () => (isAdmin ? (reportForm.member_filter || 'all') : currentUser?.id);
@@ -655,7 +658,7 @@ export default function ReportsScreen() {
           action: 'generated',
           description: `${profile?.full_name} generated a report for ${selectedHousehold.name} (${label})`,
         });
-      } catch (_) { /* table may not exist */ }
+      } catch { /* table may not exist */ }
 
       // 3. bell notification for the person who generated it
       try {
@@ -667,7 +670,7 @@ export default function ReportsScreen() {
           link_path: '/reports',
           link_query: `report=${saved.id}`,
         });
-      } catch (_) { /* ignore – the report itself is saved */ }
+      } catch { /* ignore – the report itself is saved */ }
       await fetchNotifications(currentUser.id);
 
       // 4. refresh history and show the new report
@@ -713,7 +716,7 @@ export default function ReportsScreen() {
           action: 'exported',
           description: `${profile?.full_name} exported "${selectedHousehold?.name}" statement (${st.period}) for ${st.memberLabel}`,
         });
-      } catch (_) { /* table may not exist */ }
+      } catch { /* table may not exist */ }
 
       showToast('PDF exported! ✅');
     } catch (err) {
@@ -777,13 +780,9 @@ export default function ReportsScreen() {
   };
 
   const getTimeAgo = (dateStr) => {
-    const diff = Date.now() - new Date(dateStr).getTime();
-    const mins = Math.floor(diff / 60000);
-    const hours = Math.floor(mins / 60);
-    const days = Math.floor(hours / 24);
-    if (days > 0) return `${days}d ago`;
-    if (hours > 0) return `${hours}h ago`;
-    return `${mins}m ago`;
+    const date = new Date(dateStr);
+    if (Number.isNaN(date.getTime())) return 'Recently';
+    return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   };
 
   const yoyTotal = getYoYChange(yearlyTotal, lastYearTotal);

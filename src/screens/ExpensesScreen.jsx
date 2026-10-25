@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import {
@@ -75,7 +75,6 @@ const getMyReminderDays = (profile) =>
 
 export default function ExpensesScreen() {
   const navigate = useNavigate();
-  const fileInputRef = useRef(null);
   const proofInputRef = useRef(null);
   const initialHouseholdSet = useRef(false);
 
@@ -86,7 +85,6 @@ export default function ExpensesScreen() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [expenses, setExpenses] = useState([]);
   const [expenseSplits, setExpenseSplits] = useState({});
-  const [filteredExpenses, setFilteredExpenses] = useState([]);
   const [householdMembers, setHouseholdMembers] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -100,7 +98,6 @@ export default function ExpensesScreen() {
   const [reimburseDetails, setReimburseDetails] = useState([]);
 
   // UI State
-  const [showNotifications, setShowNotifications] = useState(false);
   const [showAddExpense, setShowAddExpense] = useState(false);
   const [showFilter, setShowFilter] = useState(false);
   const [showRejectModal, setShowRejectModal] = useState(false);
@@ -123,7 +120,6 @@ export default function ExpensesScreen() {
   const [xmLoading, setXmLoading] = useState(false);
   const [showDuplicateModal, setShowDuplicateModal] = useState(false);
   const [duplicateItem, setDuplicateItem] = useState(null);
-  const [pendingExpenseData, setPendingExpenseData] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [householdSearch, setHouseholdSearch] = useState('');
   const [loading, setLoading] = useState(false);
@@ -203,7 +199,6 @@ export default function ExpensesScreen() {
     // Only show approved expenses in the main list
     const approvedExpenses = expensesData.filter(e => e.approval_status === 'approved');
     setExpenses(approvedExpenses);
-    setFilteredExpenses(approvedExpenses);
     const groupedSplits = (await fetchExpenseSplits(expensesData.map(e => e.id))) || {};
 
     // follow-up proofs, refunds and every original proof (for the history modal)
@@ -289,9 +284,7 @@ export default function ExpensesScreen() {
     setUnreadCount((data || []).filter(n => !n.is_read).length);
   };
 
-  const handleHouseholdSelect = useCallback(async (household, user, profileData) => {
-    const activeUser = user || currentUser;
-    const activeProfile = profileData || profile;
+  const handleHouseholdSelect = useCallback(async (household, activeUser, activeProfile) => {
 
     setSelectedHousehold(household);
     setSearchQuery('');
@@ -342,7 +335,7 @@ export default function ExpensesScreen() {
     setCategoryAutoDetected(false);
 
     await fetchExpensesData(activeProfile, activeUser, adminStatus, membersList, household.id);
-  }, [currentUser, profile, fetchExpensesData]);
+  }, [fetchExpensesData]);
 
   const fetchData = useCallback(async () => {
     try {
@@ -383,7 +376,10 @@ export default function ExpensesScreen() {
     }
   }, [navigate, handleHouseholdSelect]);
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void fetchData();
+  }, [fetchData]);
   useEffect(() => {
     if (!currentUser || !selectedHousehold) return;
     const channel = supabase
@@ -401,16 +397,16 @@ export default function ExpensesScreen() {
       })
       .subscribe();
     return () => supabase.removeChannel(channel);
-  }, [currentUser?.id, selectedHousehold?.id, profile?.id, handleHouseholdSelect]);
+  }, [currentUser, selectedHousehold, profile, handleHouseholdSelect]);
 
-  useEffect(() => {
+  const filteredExpenses = useMemo(() => {
     let result = [...expenses];
     if (searchQuery) result = result.filter(e => e.title?.toLowerCase().includes(searchQuery.toLowerCase()));
     if (filterStatus.length > 0) result = result.filter(e => filterStatus.includes(e.status));
     if (filterCategory.length > 0) result = result.filter(e => filterCategory.includes(e.category));
     if (filterFrom) result = result.filter(e => e.expense_date >= filterFrom);
     if (filterTo) result = result.filter(e => e.expense_date <= filterTo);
-    setFilteredExpenses(result);
+    return result;
   }, [searchQuery, filterStatus, filterCategory, filterFrom, filterTo, expenses]);
 
   // Typing in Description picks a matching category — until the user chooses one by hand
@@ -1160,7 +1156,7 @@ export default function ExpensesScreen() {
           const ownerCanSubmitProof = isAdmin && isApprovedExpense && mySplit && !(mySplit.status === 'approved' && mySplit.proof_id) && expense.status !== 'paid';
           return (
             <div key={expense.id} className={`expense-item ${expense.approval_status === 'pending_approval' ? 'needs-approval' : ''}`} style={{ borderLeftColor: CATEGORY_COLORS[expense.category] || '#3B2AAB' }}>
-              <div className="expense-icon-circle" style={{ background: `${CATEGORY_COLORS[expense.category]}22` || '#F0EDFF' }}>
+              <div className="expense-icon-circle" style={{ background: CATEGORY_COLORS[expense.category] ? `${CATEGORY_COLORS[expense.category]}22` : '#F0EDFF' }}>
                 <span style={{ fontSize: 20 }}>{CATEGORY_ICONS[expense.category] || '📦'}</span>
               </div>
               <div className="expense-body">

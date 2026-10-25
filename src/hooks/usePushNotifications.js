@@ -1,6 +1,4 @@
-// src/hooks/usePushNotifications.js
-// Drop this file into your src/hooks/ folder
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 
 const VAPID_PUBLIC_KEY = 'BBcMhS6ZOXie4qlsAsjdMhgVqYVoS697eMkuiHI4J_PiB20t6J6vT4npuIFiHPO9kavudjoyg9w_VP4zHOnPNMA';
@@ -9,55 +7,125 @@ function urlBase64ToUint8Array(base64String) {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
   const rawData = atob(base64);
-  return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)));
+  return Uint8Array.from([...rawData].map((character) => character.charCodeAt(0)));
 }
 
-export function usePushNotifications(userId, notifPrefs) {
-  const subscribedRef = useRef(false);
+function supportsPush() {
+  return 'Notification' in window && 'serviceWorker' in navigator && 'PushManager' in window;
+}
+
+export function usePushNotifications(userId) {
+  const [pushStatus, setPushStatus] = useState(() => (
+    supportsPush() ? 'checking' : 'unsupported'
+  ));
 
   useEffect(() => {
-    if (!userId || subscribedRef.current) return;
-    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+    if (!userId || !supportsPush()) return undefined;
 
-    // Only subscribe if at least one notification type is enabled
-    const anyEnabled = notifPrefs && Object.values(notifPrefs).some(Boolean);
-    if (!anyEnabled) return;
-
-    async function subscribe() {
-      try {
-        // Register the service worker
-        const registration = await navigator.serviceWorker.register('/sw.js');
-        await navigator.serviceWorker.ready;
-
-        // Check existing subscription
-        let subscription = await registration.pushManager.getSubscription();
-
-        // If no subscription yet, ask browser permission and create one
-        if (!subscription) {
-          const permission = await Notification.requestPermission();
-          if (permission !== 'granted') return;
-
-          subscription = await registration.pushManager.subscribe({
-            userVisibleOnly: true,
-            applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
-          });
-        }
-
-        // Save subscription to Supabase (upsert so it's idempotent)
-        await supabase.from('push_subscriptions').upsert(
-          {
-            user_id: userId,
-            subscription: subscription.toJSON(),
-          },
-          { onConflict: 'user_id' }
-        );
-
-        subscribedRef.current = true;
-      } catch (err) {
-        console.error('Push subscription failed:', err);
+    let active = true;
+    const checkSubscription = async () => {
+      if (Notification.permission === 'denied') {
+        if (active) setPushStatus('denied');
+        return;
       }
+
+      try {
+        const registration = await navigator.serviceWorker.getRegistration();
+        const subscription = registration ? await registration.pushManager.getSubscription() : null;
+        if (active) setPushStatus(subscription ? 'enabled' : 'not-enabled');
+      } catch (error) {
+        console.error('Could not check browser push status:', error);
+        if (active) setPushStatus('unavailable');
+      }
+    };
+
+    void checkSubscription();
+    return () => { active = false; };
+  }, [userId]);
+
+  const requestPermission = useCallback(async () => {
+    if (!supportsPush()) {
+      setPushStatus('unsupported');
+      return 'unsupported';
+    }
+    if (Notification.permission !== 'default') return Notification.permission;
+
+    try {
+      const permission = await Notification.requestPermission();
+      setPushStatus(permission === 'granted' ? 'not-enabled' : 'denied');
+      return permission;
+    } catch (error) {
+      console.error('Notification permission request failed:', error);
+      setPushStatus('unavailable');
+      return 'unavailable';
+    }
+  }, []);
+
+  const subscribe = useCallback(async (userIdToSubscribe) => {
+    if (!supportsPush()) {
+      setPushStatus('unsupported');
+      return false;
+    }
+    if (Notification.permission !== 'granted') {
+      setPushStatus(Notification.permission === 'denied' ? 'denied' : 'not-enabled');
+      return false;
     }
 
-    subscribe();
-  }, [userId, notifPrefs]);
+    try {
+      const registration = await navigator.serviceWorker.register('/sw.js');
+      await navigator.serviceWorker.ready;
+      let subscription = await registration.pushManager.getSubscription();
+
+      if (!subscription) {
+        subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+        });
+      }
+
+      const { error } = await supabase.from('push_subscriptions').upsert(
+        {
+          user_id: userIdToSubscribe,
+          subscription: subscription.toJSON(),
+        },
+        { onConflict: 'user_id' }
+      );
+      if (error) throw error;
+
+      setPushStatus('enabled');
+      return true;
+    } catch (error) {
+      console.error('Push subscription setup failed:', error);
+      setPushStatus('unavailable');
+      return false;
+    }
+  }, []);
+
+  const unsubscribe = useCallback(async (userIdToUnsubscribe) => {
+    try {
+      if ('serviceWorker' in navigator && 'PushManager' in window) {
+        const registration = await navigator.serviceWorker.getRegistration();
+        const subscription = registration ? await registration.pushManager.getSubscription() : null;
+        if (subscription) {
+          const unsubscribed = await subscription.unsubscribe();
+          if (!unsubscribed) throw new Error('The browser did not remove its push subscription.');
+        }
+      }
+
+      const { error } = await supabase
+        .from('push_subscriptions')
+        .delete()
+        .eq('user_id', userIdToUnsubscribe);
+      if (error) throw error;
+
+      setPushStatus('not-enabled');
+      return true;
+    } catch (error) {
+      console.error('Could not remove browser push subscription:', error);
+      setPushStatus('unavailable');
+      return false;
+    }
+  }, []);
+
+  return { pushStatus, requestPermission, subscribe, unsubscribe };
 }

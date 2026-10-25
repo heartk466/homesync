@@ -72,7 +72,6 @@ export default function GroupDetailScreen() {
   const contextType = location.state?.type || new URLSearchParams(location.search).get('type') || 'group';
 
   const searchParams = new URLSearchParams(location.search);
-  const openProofExpenseId = searchParams.get('openProof');
   const openProofId = searchParams.get('proofId');
   const highlightExpenseId = searchParams.get('expenseId');
 
@@ -101,7 +100,6 @@ export default function GroupDetailScreen() {
   const [selectedExpense, setSelectedExpense] = useState(null);
   const [selectedSplit, setSelectedSplit] = useState(null);
   const [pendingApprovals, setPendingApprovals] = useState([]);
-  const [pendingPaymentProofs, setPendingPaymentProofs] = useState([]);
   const [allPaymentProofs, setAllPaymentProofs] = useState([]);
   const [selectedProof, setSelectedProof] = useState(null);
   const [highlightedExpenseId, setHighlightedExpenseId] = useState(null);
@@ -297,7 +295,7 @@ export default function GroupDetailScreen() {
       setExpenses(allExpenses.filter(e => e.approval_status === 'approved'));
 
       if (adminStatus) {
-        const { data: pendingExp, error: pendingErr } = await supabase
+        const { data: pendingExp } = await supabase
           .from('expenses')
           .select('*')
           .eq(contextType === 'household' ? 'household_id' : 'group_id', id)
@@ -373,37 +371,21 @@ export default function GroupDetailScreen() {
     loadSplitsAndProofs();
   }, [expenses, fetchExpenseSplits]);
 
-  // ── Auto-open the "View Proof" modal when arriving from a payment-proof
-  // notification (Payment Proof Submitted/Resubmitted/Confirmed/Rejected).
-  // Retries as allPaymentProofs/expenseSplits load in, then strips the query
-  // params so a refresh or closing the modal doesn't reopen it.
-  useEffect(() => {
-    if (!openProofId || loading) return;
-    const proof = allPaymentProofs.find(p => p.id === openProofId);
-    if (!proof) return; // proofs may not have loaded yet — effect retries below
-
-    const splits = expenseSplits[proof.expense_id] || [];
-    const split = splits.find(s => s.proof_id === proof.id)
-      || splits.find(s => s.user_id === proof.submitted_by);
-
-    openProofModal(proof, split);
-    navigate(`${location.pathname}?type=${contextType}`, { replace: true, state: location.state });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openProofId, loading, allPaymentProofs, expenseSplits]);
-
   // ── Scroll to + briefly highlight the specific expense when arriving from
   // a "New Expense Pending Approval" / "Expense Approved" / "Expense Amount
   // Updated" notification. Retries as pendingExpenseApprovals/expenses load.
   useEffect(() => {
     if (!highlightExpenseId || loading) return;
     const el = document.getElementById(`expense-${highlightExpenseId}`);
-    if (!el) return; // not rendered yet (data still loading, or wrong tab) — retries below
+    if (!el) return;
 
-    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    setHighlightedExpenseId(highlightExpenseId);
-    navigate(`${location.pathname}?type=${contextType}`, { replace: true, state: location.state });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [highlightExpenseId, loading, pendingExpenseApprovals, expenses]);
+    const timer = setTimeout(() => {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setHighlightedExpenseId(highlightExpenseId);
+      navigate(`${location.pathname}?type=${contextType}`, { replace: true, state: location.state });
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [highlightExpenseId, loading, contextType, location, navigate]);
 
   // Clears the highlight a few seconds after it's set. Kept as its own effect
   // (depending only on highlightedExpenseId, not the URL) so the query-string
@@ -415,6 +397,7 @@ export default function GroupDetailScreen() {
   }, [highlightedExpenseId]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchGroupAndData();
   }, [fetchGroupAndData]);
 
@@ -444,7 +427,7 @@ export default function GroupDetailScreen() {
       })
       .subscribe();
     return () => supabase.removeChannel(channel);
-  }, [currentUser, group, id, contextType, fetchGroupAndData, fetchExpenseSplits, expenses.length]);
+  }, [currentUser, group, id, contextType, fetchGroupAndData, fetchExpenseSplits, expenses]);
 
   // Separate channel so a missing table can never break the expense updates above
   useEffect(() => {
@@ -457,7 +440,7 @@ export default function GroupDetailScreen() {
       }, () => fetchGroupAndData())
       .subscribe();
     return () => supabase.removeChannel(channel);
-  }, [currentUser?.id, id, contextType, fetchGroupAndData]);
+  }, [currentUser, id, contextType, fetchGroupAndData]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -528,6 +511,22 @@ export default function GroupDetailScreen() {
     setSelectedSplit(split);
     setShowViewProofModal(true);
   };
+
+  useEffect(() => {
+    if (!openProofId || loading) return;
+    const proof = allPaymentProofs.find(p => p.id === openProofId);
+    if (!proof) return;
+
+    const splits = expenseSplits[proof.expense_id] || [];
+    const split = splits.find(s => s.proof_id === proof.id)
+      || splits.find(s => s.user_id === proof.submitted_by);
+
+    const timer = setTimeout(() => {
+      openProofModal(proof, split);
+      navigate(`${location.pathname}?type=${contextType}`, { replace: true, state: location.state });
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [openProofId, loading, allPaymentProofs, expenseSplits, contextType, location, navigate]);
 
   // Typing in Description picks a matching category — until the user chooses one by hand
   const handleTitleChange = (value) => {
@@ -1035,7 +1034,7 @@ export default function GroupDetailScreen() {
       setShowKickMemberModal(false);
       setSelectedMember(null);
       fetchGroupAndData();
-    } catch (err) {
+    } catch {
       showToast('Failed to remove member', 'error');
     }
     setLoadingAction(false);
@@ -1080,7 +1079,7 @@ export default function GroupDetailScreen() {
       return;
     }
 
-    const { data: existingSplit, error: fetchError } = await supabase
+    const { data: existingSplit } = await supabase
       .from('expense_splits')
       .select('id')
       .eq('expense_id', selectedExpense.id)
@@ -2378,12 +2377,12 @@ export default function GroupDetailScreen() {
                     .upload(fileName, proofForm.screenshot, { upsert: true });
                   if (uploadError) { showToast('Upload failed', 'error'); setLoadingAction(false); return; }
                   const { data: urlData } = supabase.storage.from('payment-proofs').getPublicUrl(fileName);
-                  const { data: insertedProof } = await supabase.from('payment_proofs').insert({
+                  await supabase.from('payment_proofs').insert({
                     expense_id: justAddedExpense.id,
                     submitted_by: currentUser.id,
                     screenshot_url: urlData.publicUrl,
                     status: 'pending_verification',
-                  }).select().single();
+                  });
                   showToast('Expense submitted with proof!');
                   setShowUploadAfterAdd(false);
                   setJustAddedExpense(null);

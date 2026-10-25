@@ -284,7 +284,10 @@ export default function GroupsScreen() {
   }, [navigate, fetchAllHouseholds, fetchGroupSpending]);
 
   useEffect(() => { fetchDataRef.current = fetchData; }, [fetchData]);
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void fetchData();
+  }, [fetchData]);
 
   useEffect(() => {
     if (!profile?.id) return;

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import {
@@ -24,16 +24,35 @@ const MAX_REMINDERS = 5;
 const MAX_REMINDER_DAYS = 60;
 import { useAppContext } from '../AppContext';
 
-// ─── VAPID helper (must match usePushNotifications.js) ────────────────────────
-const VAPID_PUBLIC_KEY = 'BBcMhS6ZOXie4qlsAsjdMhgVqYVoS697eMkuiHI4J_PiB20t6J6vT4npuIFiHPO9kavudjoyg9w_VP4zHOnPNMA';
-
-function urlBase64ToUint8Array(base64String) {
-  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
-  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
-  const rawData = atob(base64);
-  return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)));
+function Toggle({ value, onToggle }) {
+  return (
+    <div
+      className={`toggle-switch ${value ? 'on' : ''}`}
+      onClick={onToggle}
+    >
+      <div className="toggle-knob"/>
+    </div>
+  );
 }
-// ──────────────────────────────────────────────────────────────────────────────
+
+function PushStatusBadge({ pushStatus }) {
+  if (pushStatus === 'enabled') {
+    return <span style={{ fontSize: 10, background: '#f0fff4', color: '#38a169', fontWeight: 700, padding: '2px 8px', borderRadius: 50, marginLeft: 6 }}>✓ Enabled</span>;
+  }
+  if (pushStatus === 'denied') {
+    return <span style={{ fontSize: 10, background: '#ffe5e5', color: '#e53e3e', fontWeight: 700, padding: '2px 8px', borderRadius: 50, marginLeft: 6 }}>Blocked</span>;
+  }
+  if (pushStatus === 'unsupported') {
+    return <span style={{ fontSize: 10, background: '#F0EDFF', color: '#9E8FCC', fontWeight: 700, padding: '2px 8px', borderRadius: 50, marginLeft: 6 }}>Not supported</span>;
+  }
+  if (pushStatus === 'unavailable') {
+    return <span style={{ fontSize: 10, background: '#fffaf0', color: '#c05621', fontWeight: 700, padding: '2px 8px', borderRadius: 50, marginLeft: 6 }}>Unavailable</span>;
+  }
+  if (pushStatus === 'not-enabled') {
+    return <span style={{ fontSize: 10, background: '#F0EDFF', color: '#9E8FCC', fontWeight: 700, padding: '2px 8px', borderRadius: 50, marginLeft: 6 }}>Not set up</span>;
+  }
+  return null;
+}
 
 export default function SettingsScreen() {
   const navigate = useNavigate();
@@ -99,18 +118,14 @@ export default function SettingsScreen() {
   const gcashQrInputRef = React.useRef(null);
   const paymayaQrInputRef = React.useRef(null);
 
-  // Push notification status display
-  const [pushStatus, setPushStatus] = useState('unknown'); // 'granted' | 'denied' | 'default' | 'unsupported'
-
-  // ── Wire up push subscription whenever user + prefs are loaded ──────────────
-  usePushNotifications(currentUser?.id, notifPrefs);
+  const { pushStatus, requestPermission, subscribe, unsubscribe } = usePushNotifications(currentUser?.id);
 
   const showToast = (message, type = 'success') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3000);
   };
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { navigate('/login'); return; }
@@ -174,16 +189,7 @@ export default function SettingsScreen() {
     } catch (err) {
       console.error(err);
     }
-  };
-
-  // ── Check browser push permission status on mount ──────────────────────────
-  useEffect(() => {
-    if (!('Notification' in window)) {
-      setPushStatus('unsupported');
-    } else {
-      setPushStatus(Notification.permission); // 'granted' | 'denied' | 'default'
-    }
-  }, []);
+  }, [navigate, setContextCurrency, setContextDark]);
 
   const markAllRead = async () => {
     await supabase
@@ -195,11 +201,10 @@ export default function SettingsScreen() {
     setUnreadCount(0);
   };
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
-    fetchData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void fetchData();
+  }, [fetchData]);
 
   const handleToggleDark = async () => {
     const newTheme = isDark ? 'light' : 'dark';
@@ -216,72 +221,43 @@ export default function SettingsScreen() {
     const newPrefs = { ...notifPrefs, [key]: !notifPrefs[key] };
     setNotifPrefs(newPrefs);
 
-    // Persist to Supabase
-    await supabase
+    const anyEnabled = Object.values(newPrefs).some(Boolean);
+    const permission = anyEnabled ? await requestPermission() : 'unsupported';
+
+    const { error } = await supabase
       .from('profiles')
       .update({ notification_preferences: newPrefs })
       .eq('id', currentUser.id);
-
-    const anyEnabled = Object.values(newPrefs).some(Boolean);
-
-    // If browser permission not yet asked, ask now
-    if (anyEnabled && Notification.permission === 'default') {
-      const permission = await Notification.requestPermission();
-      setPushStatus(permission);
-
-      if (permission === 'granted') {
-        await subscribeUserToPush(currentUser.id);
-        showToast('🔔 Push notifications enabled!');
-      } else {
-        showToast('Push notifications blocked. Enable in browser settings.', 'error');
-      }
+    if (error) {
+      console.error('Could not save notification preferences:', error);
+      showToast('Could not save notification preferences.', 'error');
       return;
     }
 
-    if (anyEnabled && Notification.permission === 'granted') {
-      await subscribeUserToPush(currentUser.id);
-      showToast('🔔 Notification preference saved!');
-    } else if (!anyEnabled) {
-      await unsubscribeFromPush(currentUser.id);
-      showToast('🔕 All notifications turned off.');
-    }
-  };
-
-  // ── Subscribe this browser to Web Push ────────────────────────────────────
-  const subscribeUserToPush = async (userId) => {
-    try {
-      if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
-
-      const registration = await navigator.serviceWorker.ready;
-      let subscription = await registration.pushManager.getSubscription();
-
-      if (!subscription) {
-        subscription = await registration.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
-        });
-      }
-
-      await supabase.from('push_subscriptions').upsert(
-        { user_id: userId, subscription: subscription.toJSON() },
-        { onConflict: 'user_id' }
+    if (!anyEnabled) {
+      const removed = await unsubscribe(currentUser.id);
+      showToast(
+        removed ? '🔕 All notifications turned off.' : 'Preferences were saved, but browser push could not be disabled.',
+        removed ? 'success' : 'error'
       );
-    } catch (err) {
-      console.error('Subscribe failed:', err);
+      return;
     }
-  };
 
-  // ── Remove subscription from Supabase (user turned off all notifs) ─────────
-  const unsubscribeFromPush = async (userId) => {
-    try {
-      if ('serviceWorker' in navigator) {
-        const registration = await navigator.serviceWorker.ready;
-        const subscription = await registration.pushManager.getSubscription();
-        if (subscription) await subscription.unsubscribe();
-      }
-      await supabase.from('push_subscriptions').delete().eq('user_id', userId);
-    } catch (err) {
-      console.error('Unsubscribe failed:', err);
+    if (permission === 'unsupported') {
+      showToast('Your browser does not support push notifications. In-app preferences were saved.', 'error');
+      return;
+    }
+
+    if (permission !== 'granted') {
+      showToast('In-app preferences were saved, but browser push permission was not granted.', 'error');
+      return;
+    }
+
+    const subscribed = await subscribe(currentUser.id);
+    if (subscribed) {
+      showToast('🔔 Notification preferences and browser push are enabled!');
+    } else {
+      showToast('In-app preferences were saved, but browser push is unavailable in this browser.', 'error');
     }
   };
 
@@ -578,7 +554,7 @@ export default function SettingsScreen() {
         subject: feedbackSubject.trim() || null,
         message: feedbackMessage.trim(),
       });
-    } catch (_) { /* table may not exist yet — don't block the email */ }
+    } catch { /* table may not exist yet — don't block the email */ }
 
     const bodyLines = [
       feedbackMessage.trim(),
@@ -689,15 +665,6 @@ export default function SettingsScreen() {
     setPaymentLoading(false);
   };
 
-  const Toggle = ({ value, onToggle }) => (
-    <div
-      className={`toggle-switch ${value ? 'on' : ''}`}
-      onClick={onToggle}
-    >
-      <div className="toggle-knob"/>
-    </div>
-  );
-
   const REMINDER_OPTIONS = [
     { value: 0,  label: 'On the day' },
     { value: 1,  label: '1d before' },
@@ -714,24 +681,10 @@ export default function SettingsScreen() {
     if (reminderDays.length === 0) return 'No due date reminders. Pick at least one to get notified.';
     const parts = reminderDays.map(d => (d === 0 ? 'on the due date' : `${d} day${d > 1 ? 's' : ''} before`));
     const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0];
-    const phone = pushStatus === 'granted' ? '' : ' Allow notifications to get these on your phone too.';
+    const phone = pushStatus === 'enabled' ? '' : ' Enable browser push notifications to get these on your phone too.';
     return `You'll be reminded at 8:00 AM, ${list}, for approved expenses you still owe.${phone}`;
   };
   const CURRENCIES = ['PHP', 'USD', 'EUR', 'SGD', 'JPY'];
-
-  // Helper: push status badge shown next to "Notifications" section title
-  const PushStatusBadge = () => {
-    if (pushStatus === 'granted') {
-      return <span style={{ fontSize: 10, background: '#f0fff4', color: '#38a169', fontWeight: 700, padding: '2px 8px', borderRadius: 50, marginLeft: 6 }}>✓ Enabled</span>;
-    }
-    if (pushStatus === 'denied') {
-      return <span style={{ fontSize: 10, background: '#ffe5e5', color: '#e53e3e', fontWeight: 700, padding: '2px 8px', borderRadius: 50, marginLeft: 6 }}>Blocked</span>;
-    }
-    if (pushStatus === 'unsupported') {
-      return <span style={{ fontSize: 10, background: '#F0EDFF', color: '#9E8FCC', fontWeight: 700, padding: '2px 8px', borderRadius: 50, marginLeft: 6 }}>Not supported</span>;
-    }
-    return null;
-  };
 
   return (
     <div className={`settings-screen ${isDark ? 'dark' : ''}`}>
@@ -933,7 +886,7 @@ export default function SettingsScreen() {
         {/* Notifications */}
         <div className="settings-section">
           <p className="settings-section-title">
-            <Bell size={16}/> Notifications <PushStatusBadge/>
+            <Bell size={16}/> Notifications <PushStatusBadge pushStatus={pushStatus} />
           </p>
 
           {/* Show a warning if browser blocked push */}
@@ -943,6 +896,14 @@ export default function SettingsScreen() {
               fontSize: 11, color: '#e53e3e', marginBottom: 8, lineHeight: 1.5
             }}>
               ⚠️ Push notifications are blocked in your browser. Go to your browser settings → Site Settings → Notifications → Allow for this site.
+            </div>
+          )}
+          {pushStatus === 'unavailable' && (
+            <div style={{
+              background: '#fffaf0', borderRadius: 10, padding: '8px 12px',
+              fontSize: 11, color: '#c05621', marginBottom: 8, lineHeight: 1.5
+            }}>
+              ⚠️ Browser push could not be set up. In-app notifications still work; try again in a browser with an available push service.
             </div>
           )}
 

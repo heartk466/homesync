@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useCallback, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import {
@@ -127,7 +127,6 @@ export default function DashboardScreen() {
   const [utilitiesTotal, setUtilitiesTotal] = useState(0);
   const [lastMonthSpent, setLastMonthSpent] = useState(0);
   const [monthlyData, setMonthlyData] = useState([]);
-  const [categoryData, setCategoryData] = useState([]);
   const [pendingAmount, setPendingAmount] = useState(0);
   const [groupSpending, setGroupSpending] = useState([]);
   const [totalGroupPaid, setTotalGroupPaid] = useState(0);
@@ -201,7 +200,7 @@ export default function DashboardScreen() {
   };
 
   // ── Initial load: profile + all households ────────────────────────────────
-  const fetchNotifications = async (userId) => {
+  const fetchNotifications = useCallback(async (userId) => {
     const { data } = await supabase
       .from('notifications')
       .select('*')
@@ -210,7 +209,7 @@ export default function DashboardScreen() {
       .limit(30);
     setNotifications(data || []);
     setUnreadCount((data || []).filter(n => !n.is_read).length);
-  };
+  }, []);
 
   const markNotificationsRead = async () => {
     if (!currentUser?.id) return;
@@ -236,7 +235,7 @@ export default function DashboardScreen() {
     return () => supabase.removeChannel(channel);
   }, [currentUser?.id]);
 
-  const fetchProfile = async () => {
+  const fetchProfile = useCallback(async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { navigate('/login'); return; }
@@ -276,7 +275,7 @@ export default function DashboardScreen() {
     } catch (err) {
       console.error(err);
     }
-  };
+  }, [fetchNotifications, navigate]);
 
   // ── Fetch data scoped to the selected household ───────────────────────────
   const fetchHouseholdData = async (selectedHousehold, user) => {
@@ -333,21 +332,6 @@ export default function DashboardScreen() {
       setUtilitiesTotal(myUtilitiesTotal);
       setPendingAmount(myPendingTotal);
       setLastMonthSpent(lastMonthTotal);
-
-      // Category breakdown
-      const categories = {};
-      for (const expense of allExpenses) {
-        const splits = splitsByExpense[expense.id] || [];
-        const mySplit = splits.find(s => s.user_id === user.id);
-        if (mySplit && paidOf(mySplit) > 0 && expense.approval_status === 'approved') {
-          const expenseDate = expense.expense_date;
-          if (expenseDate >= firstDay && expenseDate <= lastDay) {
-            const cat = expense.category || 'Other';
-            categories[cat] = (categories[cat] || 0) + paidOf(mySplit);
-          }
-        }
-      }
-      setCategoryData(Object.entries(categories).map(([name, value]) => ({ name, value })));
 
       // Monthly chart
       const monthlyMap = {};
@@ -445,12 +429,14 @@ export default function DashboardScreen() {
   };
 
   // ── Effects ───────────────────────────────────────────────────────────────
-  useEffect(() => { fetchProfile(); }, []);
+  /* eslint-disable react-hooks/exhaustive-deps, react-hooks/set-state-in-effect */
+  useEffect(() => {
+    void fetchProfile();
+  }, []);
 
   useEffect(() => {
-    if (currentUser && household) {
-      fetchHouseholdData(household, currentUser);
-    }
+    if (!currentUser || !household) return;
+    void fetchHouseholdData(household, currentUser);
   }, [household?.id, currentUser?.id]);
 
   useEffect(() => {
@@ -462,6 +448,7 @@ export default function DashboardScreen() {
       .subscribe();
     return () => supabase.removeChannel(channel);
   }, [currentUser?.id, household?.id]);
+  /* eslint-enable react-hooks/exhaustive-deps, react-hooks/set-state-in-effect */
 
   const percentChange = getPercentChange();
 
