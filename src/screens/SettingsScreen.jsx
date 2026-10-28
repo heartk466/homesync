@@ -2,10 +2,10 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import {
-  User, Home, Bell, Palette, Shield,
+  User, Bell, Palette, Shield,
   Database, Info, LogOut, ChevronRight,
-  Copy, Share2, UserMinus, Crown, Trash2,
-  Download, X, Check, AlertCircle, QrCode, ImagePlus,
+  Trash2,
+  Download, X, AlertCircle, QrCode, ImagePlus,
   LifeBuoy, Bug, MessageSquare, Plus
 } from 'lucide-react';
 
@@ -13,8 +13,8 @@ import {
 const SUPPORT_EMAIL = 'homesync466@gmail.com';
 import TopBar from '../components/TopBar';
 import BottomNav from '../components/BottomNav';
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
+import HouseholdsSection from '../components/HouseholdsSection';
+import { exportMyMonthlyData } from '../utils/myDataExport';
 import { usePushNotifications } from '../hooks/usePushNotifications';
 import { uploadPaymentQr } from '../utils/paymentUtils';
 import './SettingsScreen.css';
@@ -22,7 +22,11 @@ import './SettingsScreen.css';
 // Custom due-date reminders: how many a user can have, and the furthest-ahead day allowed
 const MAX_REMINDERS = 5;
 const MAX_REMINDER_DAYS = 60;
-import { useAppContext } from '../AppContext';
+import { useAppContext } from '../appContextCore';
+import { Icon, InlineIcon, CategoryIcon, StatusIcon } from '../components/Icon';
+import { ICONS, CATEGORY_ICON, SUBSCRIPTION_ICON, NOTIF_ICON } from '../utils/iconMap';
+import { useCachedState, useScreenLoad } from '../utils/screenCache';
+import { LoadGate, SettingsSkeleton } from '../components/Skeleton';
 
 function Toggle({ value, onToggle }) {
   return (
@@ -57,14 +61,13 @@ function PushStatusBadge({ pushStatus }) {
 export default function SettingsScreen() {
   const navigate = useNavigate();
 
-  const [profile, setProfile] = useState(null);
-  const [currentUser, setCurrentUser] = useState(null);
-  const [household, setHousehold] = useState(null);
-  const [householdMembers, setHouseholdMembers] = useState([]);
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [notifications, setNotifications] = useState([]);
-  const [unreadCount, setUnreadCount] = useState(0);
-  const [notifPrefs, setNotifPrefs] = useState({
+  const [profile, setProfile] = useCachedState('settings', 'profile', null);
+  const [currentUser, setCurrentUser] = useCachedState('settings', 'currentUser', null);
+  const [household, setHousehold] = useCachedState('settings', 'household', null);
+  const [isAdmin, setIsAdmin] = useCachedState('settings', 'isAdmin', false);
+  const [notifications, setNotifications] = useCachedState('settings', 'notifications', []);
+  const [unreadCount, setUnreadCount] = useCachedState('settings', 'unreadCount', 0);
+  const [notifPrefs, setNotifPrefs] = useCachedState('settings', 'notifPrefs', {
     expense_approvals: true,
     payment_confirmations: true,
     utility_reminders: true,
@@ -72,7 +75,7 @@ export default function SettingsScreen() {
     group_invites: true,
   });
   // Which days before a due date this user wants a reminder (0 = on the due date)
-  const [reminderDays, setReminderDays] = useState([3]);
+  const [reminderDays, setReminderDays] = useCachedState('settings', 'reminderDays', [3]);
   const [showCustomReminder, setShowCustomReminder] = useState(false);
   const [customDayInput, setCustomDayInput] = useState('');
 
@@ -81,11 +84,6 @@ export default function SettingsScreen() {
   // UI State
   const [showSignOutModal, setShowSignOutModal] = useState(false);
   const [showDeleteAccountModal, setShowDeleteAccountModal] = useState(false);
-  const [showDeleteHouseholdModal, setShowDeleteHouseholdModal] = useState(false);
-  const [showTransferModal, setShowTransferModal] = useState(false);
-  const [showMembersModal, setShowMembersModal] = useState(false);
-  const [showEditHouseholdModal, setShowEditHouseholdModal] = useState(false);
-  const [showLeaveModal, setShowLeaveModal] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
   const [toast, setToast] = useState(null);
 
@@ -98,9 +96,8 @@ export default function SettingsScreen() {
   const [feedbackLoading, setFeedbackLoading] = useState(false);
 
   const [loading, setLoading] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const [transferTarget, setTransferTarget] = useState('');
-  const [newHouseholdName, setNewHouseholdName] = useState('');
+  const load = useScreenLoad('settings');
+  const { done: loadDone, fail: loadFail } = load;
   const [expandedSection, setExpandedSection] = useState(null);
 
   // Delete account password confirmation
@@ -165,16 +162,10 @@ export default function SettingsScreen() {
           .eq('id', profileData.household_id)
           .single();
         setHousehold(householdData);
-        setNewHouseholdName(householdData?.name || '');
-
-        const { data: members } = await supabase
-          .from('household_members')
-          .select('*, profiles(*)')
-          .eq('household_id', profileData.household_id);
-        setHouseholdMembers(members || []);
-
-        const userMember = members?.find(m => m.user_id === user.id);
-        setIsAdmin(userMember?.role === 'owner');
+        setIsAdmin(householdData?.created_by === user.id);
+      } else {
+        setHousehold(null);
+        setIsAdmin(false);
       }
 
       const { data: notifData } = await supabase
@@ -185,11 +176,11 @@ export default function SettingsScreen() {
         .limit(20);
       setNotifications(notifData || []);
       setUnreadCount((notifData || []).filter(n => !n.is_read).length);
-
+      loadDone();
     } catch (err) {
-      console.error(err);
+      loadFail(err);
     }
-  }, [navigate, setContextCurrency, setContextDark]);
+  }, [navigate, setContextCurrency, setContextDark, loadDone, loadFail, setCurrentUser, setHousehold, setIsAdmin, setNotifPrefs, setNotifications, setProfile, setReminderDays, setUnreadCount]);
 
   const markAllRead = async () => {
     await supabase
@@ -202,18 +193,20 @@ export default function SettingsScreen() {
   };
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     void fetchData();
   }, [fetchData]);
 
   const handleToggleDark = async () => {
-    const newTheme = isDark ? 'light' : 'dark';
-    setContextDark(!isDark);
-    await supabase
+    const next = !isDark;
+    const newTheme = next ? 'dark' : 'light';
+    setContextDark(next);
+    setProfile(p => (p ? { ...p, theme: newTheme } : p));
+    const { error } = await supabase
       .from('profiles')
       .update({ theme: newTheme })
       .eq('id', currentUser.id);
-    showToast(`${newTheme === 'dark' ? '🌙 Dark' : '☀️ Light'} mode enabled`);
+    if (error) { setContextDark(!next); showToast('Could not save theme', 'error'); return; }
+    showToast(`${next ? 'Dark' : 'Light'} mode enabled`);
   };
 
   // ── Toggle a notification preference + re-subscribe / unsubscribe if needed ─
@@ -237,7 +230,7 @@ export default function SettingsScreen() {
     if (!anyEnabled) {
       const removed = await unsubscribe(currentUser.id);
       showToast(
-        removed ? '🔕 All notifications turned off.' : 'Preferences were saved, but browser push could not be disabled.',
+        removed ? 'All notifications turned off.' : 'Preferences were saved, but browser push could not be disabled.',
         removed ? 'success' : 'error'
       );
       return;
@@ -255,7 +248,7 @@ export default function SettingsScreen() {
 
     const subscribed = await subscribe(currentUser.id);
     if (subscribed) {
-      showToast('🔔 Notification preferences and browser push are enabled!');
+      showToast('Notification preferences and browser push are enabled!');
     } else {
       showToast('In-app preferences were saved, but browser push is unavailable in this browser.', 'error');
     }
@@ -296,32 +289,16 @@ export default function SettingsScreen() {
   };
 
   const handleSaveCurrency = async (curr) => {
+    if (curr === currency) return;
+    const prev = currency;
     setContextCurrency(curr);
-    await supabase
+    setProfile(p => (p ? { ...p, currency: curr } : p));
+    const { error } = await supabase
       .from('profiles')
       .update({ currency: curr })
       .eq('id', currentUser.id);
+    if (error) { setContextCurrency(prev); showToast('Could not save currency', 'error'); return; }
     showToast('Currency updated!');
-  };
-
-  const handleCopyCode = () => {
-    navigator.clipboard.writeText(household?.code || '');
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-    showToast('Household code copied!');
-  };
-
-  const handleShareCode = async () => {
-    const shareData = {
-      title: 'Join my HomeSync Household!',
-      text: `Join "${household?.name}" on HomeSync! Code: ${household?.code}`,
-    };
-    if (navigator.share) {
-      try { await navigator.share(shareData); }
-      catch { handleCopyCode(); }
-    } else {
-      handleCopyCode();
-    }
   };
 
   const handleChangePassword = async () => {
@@ -332,117 +309,8 @@ export default function SettingsScreen() {
     if (error) {
       showToast('Failed to send reset email.', 'error');
     } else {
-      showToast('Password reset email sent! Check your inbox. ✅');
+      showToast('Password reset email sent! Check your inbox.');
     }
-  };
-
-  const handleEditHousehold = async () => {
-    if (!newHouseholdName.trim()) {
-      showToast('Household name cannot be empty.', 'error');
-      return;
-    }
-    setLoading(true);
-    await supabase
-      .from('households')
-      .update({ name: newHouseholdName.trim() })
-      .eq('id', household.id);
-    setHousehold(prev => ({ ...prev, name: newHouseholdName.trim() }));
-    setShowEditHouseholdModal(false);
-    showToast('Household name updated! ✅');
-    setLoading(false);
-  };
-
-  const handleKickMember = async (member) => {
-    await supabase
-      .from('household_members')
-      .update({ status: 'inactive' })
-      .eq('id', member.id);
-
-    await supabase.from('notifications').insert({
-      user_id: member.user_id,
-      title: 'Removed from Household',
-      message: `You have been removed from "${household?.name}".`,
-      type: 'kicked',
-    });
-
-    setHouseholdMembers(prev => prev.filter(m => m.id !== member.id));
-    showToast(`${member.profiles?.full_name} removed.`);
-  };
-
-  const handleTransferOwnership = async () => {
-    if (!transferTarget) {
-      showToast('Please select a member.', 'error');
-      return;
-    }
-    setLoading(true);
-
-    await supabase
-      .from('household_members')
-      .update({ role: 'member' })
-      .eq('user_id', currentUser.id)
-      .eq('household_id', household.id);
-
-    await supabase
-      .from('household_members')
-      .update({ role: 'owner' })
-      .eq('user_id', transferTarget)
-      .eq('household_id', household.id);
-
-    await supabase
-      .from('households')
-      .update({ created_by: transferTarget })
-      .eq('id', household.id);
-
-    await supabase.from('notifications').insert({
-      user_id: transferTarget,
-      title: 'You are now the Owner! 👑',
-      message: `${profile?.full_name} transferred ownership of "${household?.name}" to you!`,
-      type: 'ownership_transfer',
-    });
-
-    setShowTransferModal(false);
-    setIsAdmin(false);
-    showToast('Ownership transferred! ✅');
-    setLoading(false);
-  };
-
-  const handleDeleteHousehold = async () => {
-    setLoading(true);
-    await supabase.from('household_members').delete().eq('household_id', household.id);
-    await supabase.from('expenses').delete().eq('household_id', household.id);
-    await supabase.from('utilities').delete().eq('household_id', household.id);
-    await supabase.from('households').delete().eq('id', household.id);
-    await supabase
-      .from('profiles')
-      .update({ household_id: null })
-      .eq('id', currentUser.id);
-    setLoading(false);
-    navigate('/dashboard');
-    showToast('Household deleted.');
-  };
-
-  const handleLeaveHousehold = async () => {
-    setLoading(true);
-    await supabase
-      .from('household_members')
-      .update({ status: 'inactive' })
-      .eq('user_id', currentUser.id)
-      .eq('household_id', household.id);
-
-    await supabase
-      .from('profiles')
-      .update({ household_id: null })
-      .eq('id', currentUser.id);
-
-    await supabase.from('notifications').insert({
-      user_id: household.created_by,
-      title: 'Member Left Household',
-      message: `${profile?.full_name} left "${household?.name}".`,
-      type: 'member_left',
-    });
-
-    setLoading(false);
-    navigate('/dashboard');
   };
 
   const handleDeleteAccount = async () => {
@@ -465,58 +333,35 @@ export default function SettingsScreen() {
       return;
     }
 
+    // Leaving every household first: the backend refuses while you owe shares,
+    // have reviews pending, or still own a household with other members.
+    const { error: leaveError } = await supabase
+      .from('household_members')
+      .update({ status: 'inactive' })
+      .eq('user_id', currentUser.id)
+      .eq('status', 'active');
+    if (leaveError) {
+      setDeletePasswordError(`${leaveError.message}. Check "Leave Household" on each household for what to settle.`);
+      setLoading(false);
+      return;
+    }
+
     await supabase
       .from('profiles')
       .update({ deleted: true })
       .eq('id', currentUser.id);
 
-    await supabase
-      .from('household_members')
-      .update({ status: 'inactive' })
-      .eq('user_id', currentUser.id);
-
     await supabase.auth.signOut();
     navigate('/');
   };
 
+  // This month only, every household (see utils/myDataExport.js)
   const handleExportData = async () => {
     try {
-      const { data: expenses } = await supabase
-        .from('expenses')
-        .select('*')
-        .eq('household_id', profile?.household_id)
-        .order('expense_date', { ascending: false });
-
-      const doc = new jsPDF();
-
-      doc.setFontSize(20);
-      doc.setTextColor(59, 42, 171);
-      doc.text('HomeSync — My Data Export', 14, 20);
-
-      doc.setFontSize(12);
-      doc.setTextColor(100);
-      doc.text(`User: ${profile?.full_name}`, 14, 30);
-      doc.text(`Email: ${profile?.email}`, 14, 38);
-      doc.text(`Household: ${household?.name || 'N/A'}`, 14, 46);
-      doc.text(`Exported: ${new Date().toLocaleDateString()}`, 14, 54);
-
-      autoTable(doc, {
-        startY: 62,
-        head: [['Title', 'Category', 'Amount', 'Date', 'Status']],
-        body: (expenses || []).map(e => [
-          e.title,
-          e.category,
-          `₱${Number(e.amount).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`,
-          e.expense_date,
-          e.status,
-        ]),
-        styles: { font: 'helvetica', fontSize: 9 },
-        headStyles: { fillColor: [59, 42, 171] },
-      });
-
-      doc.save(`HomeSync-MyData-${profile?.full_name}.pdf`);
-      showToast('Data exported! ✅');
-    } catch {
+      await exportMyMonthlyData({ userId: currentUser?.id || profile?.id, fullName: profile?.full_name, email: profile?.email });
+      showToast('Data exported!');
+    } catch (err) {
+      console.error('Export failed:', err);
       showToast('Export failed.', 'error');
     }
   };
@@ -715,6 +560,7 @@ export default function SettingsScreen() {
 
       {/* Scrollable Content */}
       <div className="settings-content">
+        <LoadGate load={load} skeleton={<SettingsSkeleton />} onRetry={fetchData}>
 
         {/* Profile Section */}
         <div className="settings-section">
@@ -730,7 +576,7 @@ export default function SettingsScreen() {
               <p className="settings-profile-name">{profile?.full_name}</p>
               <p className="settings-profile-email">{profile?.email}</p>
               <span className="settings-role-badge">
-                {isAdmin ? '👑 Owner' : '👤 Member'}
+                {isAdmin ? <><InlineIcon as={ICONS.owner} /> Owner</> : <><InlineIcon as={ICONS.member} /> Member</>}
               </span>
             </div>
           </div>
@@ -741,7 +587,7 @@ export default function SettingsScreen() {
             onClick={() => toggleSection('payment')}
           >
             <div className="settings-row-left">
-              <div className="settings-icon-wrap purple">💳</div>
+              <div className="settings-icon-wrap purple"><Icon as={ICONS.payment} /></div>
               <span>Payment Details</span>
             </div>
             <ChevronRight
@@ -812,75 +658,15 @@ export default function SettingsScreen() {
                   gap: 6,
                 }}
               >
-                ✏️ Edit Payment Details
+                <InlineIcon as={ICONS.edit} /> Edit Payment Details
               </button>
             </div>
           )}
         </div>
 
-        {/* Household Section */}
-        {household && (
-          <div className="settings-section">
-            <p className="settings-section-title"><Home size={16}/> Household</p>
-
-            <div className="settings-household-info">
-              <p className="household-name-display">🏠 {household.name}</p>
-              <div className="household-code-row">
-                <span className="household-code-label">Code:</span>
-                <span className="household-code-value">{household.code}</span>
-                <button className="code-action-btn" onClick={handleCopyCode} title="Copy code">
-                  {copied ? <Check size={14}/> : <Copy size={14}/>}
-                </button>
-                <button className="code-action-btn" onClick={handleShareCode} title="Share code">
-                  <Share2 size={14}/>
-                </button>
-              </div>
-            </div>
-
-            {isAdmin ? (
-              <>
-                <button className="settings-row" onClick={() => setShowEditHouseholdModal(true)}>
-                  <div className="settings-row-left">
-                    <div className="settings-icon-wrap purple">✏️</div>
-                    <span>Edit Household Name</span>
-                  </div>
-                  <ChevronRight size={16}/>
-                </button>
-
-                <button className="settings-row" onClick={() => setShowMembersModal(true)}>
-                  <div className="settings-row-left">
-                    <div className="settings-icon-wrap purple">👥</div>
-                    <span>Manage Members</span>
-                  </div>
-                  <ChevronRight size={16}/>
-                </button>
-
-                <button className="settings-row" onClick={() => setShowTransferModal(true)}>
-                  <div className="settings-row-left">
-                    <div className="settings-icon-wrap yellow">👑</div>
-                    <span>Transfer Ownership</span>
-                  </div>
-                  <ChevronRight size={16}/>
-                </button>
-
-                <button className="settings-row danger" onClick={() => setShowDeleteHouseholdModal(true)}>
-                  <div className="settings-row-left">
-                    <div className="settings-icon-wrap red">🗑️</div>
-                    <span>Delete Household</span>
-                  </div>
-                  <ChevronRight size={16}/>
-                </button>
-              </>
-            ) : (
-              <button className="settings-row danger" onClick={() => setShowLeaveModal(true)}>
-                <div className="settings-row-left">
-                  <div className="settings-icon-wrap red">🚪</div>
-                  <span>Leave Household</span>
-                </div>
-                <ChevronRight size={16}/>
-              </button>
-            )}
-          </div>
+        {/* Households — one card per household, each with its own role badge and Leave */}
+        {currentUser && (
+          <HouseholdsSection currentUser={currentUser} showToast={showToast} onChanged={fetchData} />
         )}
 
         {/* Notifications */}
@@ -895,7 +681,7 @@ export default function SettingsScreen() {
               background: '#ffe5e5', borderRadius: 10, padding: '8px 12px',
               fontSize: 11, color: '#e53e3e', marginBottom: 8, lineHeight: 1.5
             }}>
-              ⚠️ Push notifications are blocked in your browser. Go to your browser settings → Site Settings → Notifications → Allow for this site.
+              <InlineIcon as={ICONS.warning} /> Push notifications are blocked in your browser. Go to your browser settings → Site Settings → Notifications → Allow for this site.
             </div>
           )}
           {pushStatus === 'unavailable' && (
@@ -903,20 +689,20 @@ export default function SettingsScreen() {
               background: '#fffaf0', borderRadius: 10, padding: '8px 12px',
               fontSize: 11, color: '#c05621', marginBottom: 8, lineHeight: 1.5
             }}>
-              ⚠️ Browser push could not be set up. In-app notifications still work; try again in a browser with an available push service.
+              <InlineIcon as={ICONS.warning} /> Browser push could not be set up. In-app notifications still work; try again in a browser with an available push service.
             </div>
           )}
 
           {[
-            { key: 'expense_approvals',     label: 'Expense Approvals',     icon: '💸' },
-            { key: 'payment_confirmations', label: 'Payment Confirmations', icon: '✅' },
-            { key: 'utility_reminders',     label: 'Due Date Reminders',    icon: '🏠' },
-            { key: 'report_schedules',      label: 'Report Schedules',      icon: '📊' },
-            { key: 'group_invites',         label: 'Group Invites',         icon: '👥' },
+            { key: 'expense_approvals',     label: 'Expense Approvals',     icon: ICONS.refund },
+            { key: 'payment_confirmations', label: 'Payment Confirmations', icon: ICONS.approved },
+            { key: 'utility_reminders',     label: 'Due Date Reminders',    icon: ICONS.reminder },
+            { key: 'report_schedules',      label: 'Report Schedules',      icon: ICONS.report },
+            { key: 'group_invites',         label: 'Group Invites',         icon: ICONS.members },
           ].map(item => (
             <div key={item.key} className="settings-row">
               <div className="settings-row-left">
-                <div className="settings-icon-wrap purple">{item.icon}</div>
+                <div className="settings-icon-wrap purple"><Icon as={item.icon} /></div>
                 <span>{item.label}</span>
               </div>
               <Toggle
@@ -928,7 +714,7 @@ export default function SettingsScreen() {
 
           <div className="settings-row no-border reminder-label-row">
             <div className="settings-row-left">
-              <div className="settings-icon-wrap purple">⏰</div>
+              <div className="settings-icon-wrap purple"><Icon as={ICONS.reminder} /></div>
               <span>Remind me before due date</span>
             </div>
           </div>
@@ -991,7 +777,7 @@ export default function SettingsScreen() {
           <div className="settings-row">
             <div className="settings-row-left">
               <div className="settings-icon-wrap purple">
-                {isDark ? '🌙' : '☀️'}
+                <Icon as={isDark ? ICONS.moon : ICONS.sun} />
               </div>
               <span>Dark Mode</span>
             </div>
@@ -1000,7 +786,7 @@ export default function SettingsScreen() {
 
           <div className="settings-row no-border">
             <div className="settings-row-left">
-              <div className="settings-icon-wrap purple">💱</div>
+              <div className="settings-icon-wrap purple"><Icon as={ICONS.coins} /></div>
               <span>Currency</span>
             </div>
             <div className="currency-options">
@@ -1025,7 +811,7 @@ export default function SettingsScreen() {
 
           <button className="settings-row" onClick={handleChangePassword}>
             <div className="settings-row-left">
-              <div className="settings-icon-wrap purple">🔑</div>
+              <div className="settings-icon-wrap purple"><Icon as={ICONS.key} /></div>
               <span>Change Password</span>
             </div>
             <ChevronRight size={16}/>
@@ -1033,7 +819,7 @@ export default function SettingsScreen() {
 
           <button className="settings-row no-border" onClick={() => toggleSection('sessions')}>
             <div className="settings-row-left">
-              <div className="settings-icon-wrap purple">📱</div>
+              <div className="settings-icon-wrap purple"><Icon as={ICONS.device} /></div>
               <span>Active Sessions</span>
             </div>
             <ChevronRight
@@ -1045,7 +831,7 @@ export default function SettingsScreen() {
           {expandedSection === 'sessions' && (
             <div className="settings-expanded">
               <div className="session-item">
-                <span className="session-device">🌐 Web Browser</span>
+                <span className="session-device"><InlineIcon as={ICONS.web} /> Web Browser</span>
                 <span className="session-active">Active now</span>
               </div>
             </div>
@@ -1073,7 +859,7 @@ export default function SettingsScreen() {
             onClick={() => setShowDeleteAccountModal(true)}
           >
             <div className="settings-row-left">
-              <div className="settings-icon-wrap red">⚠️</div>
+              <div className="settings-icon-wrap red"><Icon as={ICONS.warning} /></div>
               <span>Delete My Account</span>
             </div>
             <ChevronRight size={16}/>
@@ -1111,7 +897,7 @@ export default function SettingsScreen() {
 
           <div className="settings-row">
             <div className="settings-row-left">
-              <div className="settings-icon-wrap purple">📱</div>
+              <div className="settings-icon-wrap purple"><Icon as={ICONS.device} /></div>
               <span>Version</span>
             </div>
             <span className="settings-value">v1.0.0</span>
@@ -1119,7 +905,7 @@ export default function SettingsScreen() {
 
           <div className="settings-row">
             <div className="settings-row-left">
-              <div className="settings-icon-wrap purple">❤️</div>
+              <div className="settings-icon-wrap purple"><Icon as={ICONS.heart} /></div>
               <span>Made with love</span>
             </div>
             <span className="settings-value">HomeSync Team</span>
@@ -1127,7 +913,7 @@ export default function SettingsScreen() {
 
           <button className="settings-row no-border" onClick={() => setShowTermsModal(true)}>
             <div className="settings-row-left">
-              <div className="settings-icon-wrap purple">📄</div>
+              <div className="settings-icon-wrap purple"><Icon as={ICONS.report} /></div>
               <span>Terms of Service</span>
             </div>
             <ChevronRight size={16}/>
@@ -1143,6 +929,7 @@ export default function SettingsScreen() {
           <span>Sign Out</span>
         </button>
 
+        </LoadGate>
       </div>
 
       {/* Payment Details Modal */}
@@ -1150,15 +937,15 @@ export default function SettingsScreen() {
         <div className="settings-modal-overlay">
           <div className="settings-modal">
             <div className="modal-top-row">
-              <h2>💳 Payment Details</h2>
-              <button className="modal-x-btn" onClick={() => setShowPaymentModal(false)}>
+              <h2><InlineIcon as={ICONS.payment} /> Payment Details</h2>
+              <button aria-label="Close" className="modal-x-btn" onClick={() => setShowPaymentModal(false)}>
                 <X size={18}/>
               </button>
             </div>
 
             {paymentSuccess ? (
               <div style={{ textAlign: 'center', padding: '16px 0', fontSize: 14, color: '#38a169', fontWeight: 600, fontFamily: 'Poppins, sans-serif' }}>
-                ✅ Payment details updated!
+                <InlineIcon as={ICONS.approved} /> Payment details updated!
               </div>
             ) : (
               <>
@@ -1203,7 +990,7 @@ export default function SettingsScreen() {
                         <button type="button" className="qr-replace-btn" onClick={() => gcashQrInputRef.current?.click()} disabled={qrUploading.gcash}>
                           {qrUploading.gcash ? 'Uploading…' : 'Replace'}
                         </button>
-                        <button type="button" className="qr-remove-btn" onClick={() => handleRemoveQr('gcash')}>
+                        <button aria-label="Remove" type="button" className="qr-remove-btn" onClick={() => handleRemoveQr('gcash')}>
                           <Trash2 size={13} />
                         </button>
                       </div>
@@ -1253,7 +1040,7 @@ export default function SettingsScreen() {
                         <button type="button" className="qr-replace-btn" onClick={() => paymayaQrInputRef.current?.click()} disabled={qrUploading.paymaya}>
                           {qrUploading.paymaya ? 'Uploading…' : 'Replace'}
                         </button>
-                        <button type="button" className="qr-remove-btn" onClick={() => handleRemoveQr('paymaya')}>
+                        <button aria-label="Remove" type="button" className="qr-remove-btn" onClick={() => handleRemoveQr('paymaya')}>
                           <Trash2 size={13} />
                         </button>
                       </div>
@@ -1309,7 +1096,7 @@ export default function SettingsScreen() {
       {showSignOutModal && (
         <div className="settings-modal-overlay">
           <div className="settings-modal">
-            <p className="modal-emoji">🥺</p>
+            <p className="modal-emoji"><Icon as={ICONS.sad} size={40} /></p>
             <h2>DON'T GO YET!</h2>
             <p className="modal-msg">
               Your expenses might get lonely without you!<br/>
@@ -1317,7 +1104,7 @@ export default function SettingsScreen() {
             </p>
             <p className="modal-sub">We'd love for you to stick around!</p>
             <button className="modal-primary-btn" onClick={() => setShowSignOutModal(false)}>STAY</button>
-            <button className="modal-ghost-btn" onClick={handleSignOut}>Log out 😢</button>
+            <button className="modal-ghost-btn" onClick={handleSignOut}>Log out</button>
           </div>
         </div>
       )}
@@ -1360,135 +1147,13 @@ export default function SettingsScreen() {
         </div>
       )}
 
-      {/* Delete Household Modal */}
-      {showDeleteHouseholdModal && (
-        <div className="settings-modal-overlay">
-          <div className="settings-modal">
-            <AlertCircle size={40} color="#e53e3e"/>
-            <h2>Delete Household?</h2>
-            <p className="modal-msg">
-              This will permanently delete "{household?.name}" and all its expenses. This cannot be undone.
-            </p>
-            <button className="modal-danger-btn" onClick={handleDeleteHousehold} disabled={loading}>
-              {loading ? 'Deleting...' : 'Yes, Delete Household'}
-            </button>
-            <button className="modal-ghost-btn" onClick={() => setShowDeleteHouseholdModal(false)}>Cancel</button>
-          </div>
-        </div>
-      )}
-
-      {/* Leave Household Modal */}
-      {showLeaveModal && (
-        <div className="settings-modal-overlay">
-          <div className="settings-modal">
-            <AlertCircle size={40} color="#e53e3e"/>
-            <h2>Leave Household?</h2>
-            <p className="modal-msg">You will no longer have access to "{household?.name}".</p>
-            <button className="modal-danger-btn" onClick={handleLeaveHousehold} disabled={loading}>
-              {loading ? 'Leaving...' : 'Yes, Leave'}
-            </button>
-            <button className="modal-ghost-btn" onClick={() => setShowLeaveModal(false)}>Cancel</button>
-          </div>
-        </div>
-      )}
-
-      {/* Edit Household Modal */}
-      {showEditHouseholdModal && (
-        <div className="settings-modal-overlay">
-          <div className="settings-modal">
-            <h2>Edit Household Name</h2>
-            <input
-              type="text"
-              className="settings-modal-input"
-              value={newHouseholdName}
-              onChange={e => setNewHouseholdName(e.target.value)}
-              placeholder="Household name"
-            />
-            <button className="modal-primary-btn" onClick={handleEditHousehold} disabled={loading}>
-              {loading ? 'Saving...' : 'Save'}
-            </button>
-            <button className="modal-ghost-btn" onClick={() => setShowEditHouseholdModal(false)}>Cancel</button>
-          </div>
-        </div>
-      )}
-
-      {/* Manage Members Modal */}
-      {showMembersModal && (
-        <div className="settings-modal-overlay">
-          <div className="settings-modal wide">
-            <div className="modal-top-row">
-              <h2>Manage Members</h2>
-              <button className="modal-x-btn" onClick={() => setShowMembersModal(false)}>
-                <X size={18}/>
-              </button>
-            </div>
-            {householdMembers
-              .filter(m => m.status !== 'inactive')
-              .map(m => (
-                <div key={m.id} className="member-manage-row">
-                  <div className="member-manage-avatar">
-                    {m.profiles?.avatar_url ? (
-                      <img src={m.profiles.avatar_url} alt="" className="member-manage-img"/>
-                    ) : (
-                      m.profiles?.full_name?.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()
-                    )}
-                  </div>
-                  <div className="member-manage-info">
-                    <p className="member-manage-name">{m.profiles?.full_name}</p>
-                    <p className="member-manage-role">{m.role === 'owner' ? '👑 Owner' : '👤 Member'}</p>
-                  </div>
-                  {m.user_id !== currentUser?.id && (
-                    <button className="kick-member-btn" onClick={() => handleKickMember(m)}>
-                      <UserMinus size={14}/>
-                    </button>
-                  )}
-                </div>
-              ))
-            }
-          </div>
-        </div>
-      )}
-
-      {/* Transfer Ownership Modal */}
-      {showTransferModal && (
-        <div className="settings-modal-overlay">
-          <div className="settings-modal">
-            <h2>Transfer Ownership</h2>
-            <p className="modal-msg">Select a member to become the new owner</p>
-            <div className="transfer-members">
-              {householdMembers
-                .filter(m => m.user_id !== currentUser?.id && m.status !== 'inactive')
-                .map(m => (
-                  <button
-                    key={m.user_id}
-                    className={`transfer-member-btn ${transferTarget === m.user_id ? 'active' : ''}`}
-                    onClick={() => setTransferTarget(m.user_id)}
-                  >
-                    <Crown size={14}/>
-                    {m.profiles?.full_name}
-                  </button>
-                ))
-              }
-            </div>
-            <button
-              className="modal-primary-btn"
-              onClick={handleTransferOwnership}
-              disabled={loading || !transferTarget}
-            >
-              {loading ? 'Transferring...' : 'Confirm Transfer'}
-            </button>
-            <button className="modal-ghost-btn" onClick={() => setShowTransferModal(false)}>Cancel</button>
-          </div>
-        </div>
-      )}
-
       {/* Report a Bug / Send Feedback Modal */}
       {showFeedbackModal && (
         <div className="settings-modal-overlay">
           <div className="settings-modal wide">
             <div className="modal-top-row">
-              <h2>{feedbackType === 'bug' ? '🐞 Report a Bug' : '💬 Send Feedback'}</h2>
-              <button className="modal-x-btn" onClick={() => setShowFeedbackModal(false)}><X size={18}/></button>
+              <h2>{feedbackType === 'bug' ? <><InlineIcon as={ICONS.bug} size={18} /> Report a Bug</> : <><InlineIcon as={ICONS.chat} size={18} /> Send Feedback</>}</h2>
+              <button aria-label="Close" className="modal-x-btn" onClick={() => setShowFeedbackModal(false)}><X size={18}/></button>
             </div>
 
             <div className="feedback-type-toggle">
@@ -1545,8 +1210,8 @@ export default function SettingsScreen() {
         <div className="settings-modal-overlay">
           <div className="settings-modal wide" style={{ maxHeight: '80vh', overflowY: 'auto' }}>
             <div className="modal-top-row">
-              <h2>📄 Terms of Service</h2>
-              <button className="modal-x-btn" onClick={() => setShowTermsModal(false)}><X size={18}/></button>
+              <h2><InlineIcon as={ICONS.report} size={18} /> Terms of Service</h2>
+              <button aria-label="Close" className="modal-x-btn" onClick={() => setShowTermsModal(false)}><X size={18}/></button>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12, fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6, fontFamily: 'Poppins, sans-serif' }}>
               <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>Last updated: January 2025</p>

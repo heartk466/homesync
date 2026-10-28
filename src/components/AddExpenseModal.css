@@ -1,0 +1,102 @@
+/* Shared Add Expense modal (ExpensesScreen, GroupDetailScreen, UtilitiesScreen) */
+.aem-overlay {
+  position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.5); animation: aem-fade 0.18s ease;
+}
+.aem-card {
+  width: 320px; max-width: 85%; max-height: 85vh; display: flex; flex-direction: column; overflow: hidden;
+  background: #fff; border-radius: 28px; box-shadow: 0 12px 36px rgba(45, 26, 122, 0.22);
+  font-family: 'Poppins', sans-serif; animation: aem-slide 0.2s ease;
+}
+.aem-header {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 16px 18px 12px; border-bottom: 1px solid #F0EDFF;
+}
+.aem-header h2 { margin: 0; font-size: 15px; font-weight: 700; color: #2D1A7A; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.aem-close {
+  flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px;
+  border: none; border-radius: 50%; background: #F0EDFF; color: #3B2AAB; cursor: pointer;
+  transition: transform 0.15s ease;
+}
+.aem-close:active, .aem-submit:active, .aem-secondary:active, .aem-toggle button:active, .aem-preset:active { transform: scale(0.97); }
+.aem-body { display: flex; flex-direction: column; gap: 10px; padding: 12px 18px 18px; overflow-y: auto; scrollbar-width: none; }
+.aem-field { display: flex; flex-direction: column; gap: 4px; }
+.aem-field > label { font-size: 11px; font-weight: 600; color: #5A4AAA; }
+.aem-input, .aem-amount {
+  width: 100%; box-sizing: border-box; min-height: 40px; padding: 9px 14px; border-radius: 50px;
+  border: 1.5px solid #E0D9FF; background: #fff; color: #2D1A7A;
+  font-family: 'Poppins', sans-serif; font-size: 12px; outline: none; transition: border-color 0.15s ease;
+}
+.aem-input:focus, .aem-amount:focus-within { border-color: #3B2AAB; }
+.aem-input--error { border-color: #e53e3e; }
+.aem-amount { display: flex; align-items: center; gap: 8px; }
+.aem-amount span { font-weight: 700; color: #3B2AAB; }
+.aem-amount input { flex: 1; min-width: 0; border: none; outline: none; background: transparent; font-family: inherit; font-size: 12px; color: #2D1A7A; }
+.aem-amount--small { min-height: 36px; padding: 6px 12px; }
+.aem-error { font-size: 11px; color: #e53e3e; padding-left: 8px; }
+.aem-hint { font-size: 10px; color: #9E8FCC; padding-left: 8px; }
+
+.aem-presets { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; max-height: 180px; overflow-y: auto; }
+.aem-preset {
+  display: flex; align-items: center; gap: 5px; padding: 6px 8px; border-radius: 10px;
+  border: 1.5px solid #E0D9FF; background: #fff; font-family: inherit; cursor: pointer; min-width: 0;
+  transition: border-color 0.15s ease, background-color 0.15s ease, transform 0.15s ease;
+}
+.aem-preset.active { border-color: #3B2AAB; background: #F0EDFF; }
+.aem-preset-name { flex: 1; min-width: 0; text-align: left; font-size: 11px; font-weight: 600; color: #2D1A7A; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.aem-preset-amt { font-size: 11px; font-weight: 700; color: #9B2C87; }
+
+.aem-members { display: flex; flex-direction: column; gap: 0; padding: 6px 12px; border-radius: 14px; background: #F8F6FF; }
+.aem-member { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #2D1A7A; padding: 5px 0; cursor: pointer; }
+.aem-member input { accent-color: #3B2AAB; width: 15px; height: 15px; margin: 0; }
+
+.aem-toggle { display: flex; gap: 8px; }
+.aem-toggle button {
+  flex: 1; padding: 8px 0; border-radius: 50px; border: 1.5px solid #E0D9FF; background: #fff;
+  color: #9E8FCC; font-family: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease, transform 0.15s ease;
+}
+.aem-toggle button.active { background: #3B2AAB; border-color: #3B2AAB; color: #fff; }
+
+.aem-custom { display: flex; flex-direction: column; gap: 4px; }
+.aem-custom-head { display: flex; justify-content: space-between; align-items: center; font-size: 12px; font-weight: 600; color: #2D1A7A; }
+.aem-split-status { padding: 8px 12px; border-radius: 10px; font-size: 12px; font-weight: 700; }
+.aem-split-status.ok { background: #D1FAE5; color: #065F46; }
+.aem-split-status.off { background: #FEE2E2; color: #e53e3e; }
+
+.aem-submit {
+  width: 100%; margin-top: 2px; padding: 12px 0; border: none; border-radius: 50px; background: #3B2AAB; color: #fff;
+  font-family: inherit; font-size: 13px; font-weight: 700; cursor: pointer; transition: transform 0.15s ease, opacity 0.15s ease;
+}
+.aem-submit:disabled { opacity: 0.6; cursor: not-allowed; }
+.aem-secondary {
+  width: 100%; padding: 10px 0; border: 1.5px solid #E0D9FF; border-radius: 50px; background: #fff;
+  color: #3B2AAB; font-family: inherit; font-size: 12px; font-weight: 600; cursor: pointer; transition: transform 0.15s ease;
+}
+.aem-dup { align-items: center; text-align: center; }
+.aem-dup-icon { font-size: 32px; margin: 0; }
+.aem-dup h3 { margin: 0; font-size: 16px; color: #2D1A7A; }
+.aem-dup p { margin: 0; font-size: 12px; color: #5A4AAA; line-height: 1.5; }
+
+@keyframes aem-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes aem-slide { from { opacity: 0; transform: scale(0.97) translateY(8px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+@media (prefers-reduced-motion: reduce) {
+  .aem-overlay, .aem-card { animation: none; }
+  .aem-close, .aem-submit, .aem-secondary, .aem-toggle button, .aem-preset, .aem-input, .aem-amount { transition: none; }
+}
+
+/* The ₱ field's inner input must not pick up the screens' global input styles
+   (padding / border / height), which made the pill twice as tall */
+.aem-card .aem-amount input {
+  height: auto; min-height: 0; margin: 0; padding: 0; border: none; border-radius: 0;
+  box-shadow: none; background: transparent; line-height: 20px;
+  -moz-appearance: textfield; appearance: textfield;
+}
+.aem-card .aem-amount input::-webkit-outer-spin-button,
+.aem-card .aem-amount input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.aem-card .aem-amount { height: 40px; }
+.aem-card .aem-amount--small { height: 36px; }
+
+/* Shared fields inside this modal get the same compact size */
+.aem-card .dpf-field, .aem-card .cf-trigger { min-height: 40px; padding: 9px 14px; font-size: 12px; }
+.aem-card .cf-list { top: calc(40px + 6px); }

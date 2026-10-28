@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import { Eye, EyeOff } from 'lucide-react';
 import './RegisterScreen.css';
+import { generateInviteCode } from '../utils/generateInviteCode';
 
 export default function RegisterScreen() {
   const navigate = useNavigate();
@@ -48,14 +49,10 @@ export default function RegisterScreen() {
 
     if (formData.householdType !== 'none' && !formData.householdCode.trim())
       newErrors.householdCode = formData.householdType === 'join'
-        ? 'Household code or name is required'
+        ? 'Household invite code is required'
         : 'Household name is required';
 
     return newErrors;
-  };
-
-  const generateCode = () => {
-    return Math.random().toString(36).substring(2, 8).toUpperCase();
   };
 
   const handleRegister = async () => {
@@ -122,7 +119,7 @@ export default function RegisterScreen() {
 
       } else if (formData.householdType === 'create') {
         // Create new household
-        const code = generateCode();
+        const code = generateInviteCode();
         const { data: household, error: householdError } = await supabase
           .from('households')
           .insert({
@@ -140,14 +137,14 @@ export default function RegisterScreen() {
           return;
         }
 
-        // Create profile with household_id
+        // Create the profile before adding the owner membership
         const { error: profileError } = await supabase
           .from('profiles')
           .insert({
             id: userId,
             full_name: formData.fullName.trim(),
             email: formData.email,
-            household_id: household.id,
+            household_id: null,
           });
 
         if (profileError) {
@@ -169,16 +166,28 @@ export default function RegisterScreen() {
 
         if (memberError) {
           console.error('Member insertion error:', memberError);
-          // Non-fatal, but log it
+          setErrors({ general: `Failed to add you to the household: ${memberError.message}` });
+          setLoading(false);
+          return;
+        }
+
+        const { error: profileUpdateError } = await supabase
+          .from('profiles')
+          .update({ household_id: household.id })
+          .eq('id', userId);
+
+        if (profileUpdateError) {
+          console.error('Profile household update error:', profileUpdateError);
+          setErrors({ general: `Household created, but profile update failed: ${profileUpdateError.message}` });
+          setLoading(false);
+          return;
         }
 
       } else {
         // Join existing household
-        const { data: household, error: findError } = await supabase
-          .from('households')
-          .select('id, name, created_by')
-          .or(`code.eq.${formData.householdCode.trim()},name.eq.${formData.householdCode.trim()}`)
-          .maybeSingle(); // Use maybeSingle to avoid 0 rows error
+        const { data: household, error: findError } = await supabase.rpc('lookup_household_by_code', {
+          p_code: formData.householdCode.trim().toUpperCase(),
+        });
 
         if (findError) {
           console.error('Find household error:', findError);
@@ -188,19 +197,19 @@ export default function RegisterScreen() {
         }
 
         if (!household) {
-          setErrors({ householdCode: 'Household not found. Check the code or name.' });
+          setErrors({ householdCode: 'Household not found. Check the invite code.' });
           setLoading(false);
           return;
         }
 
-        // Create profile with household_id
+        // Create the profile before joining through the invite RPC
         const { error: profileError } = await supabase
           .from('profiles')
           .insert({
             id: userId,
             full_name: formData.fullName.trim(),
             email: formData.email,
-            household_id: household.id,
+            household_id: null,
           });
 
         if (profileError) {
@@ -210,19 +219,27 @@ export default function RegisterScreen() {
           return;
         }
 
-        // Add to household_members as member
-        const { error: memberError } = await supabase
-          .from('household_members')
-          .insert({
-            household_id: household.id,
-            user_id: userId,
-            role: 'member',
-            status: 'active',
-          });
+        const { error: memberError } = await supabase.rpc('join_household_by_code', {
+          p_code: formData.householdCode.trim().toUpperCase(),
+        });
 
         if (memberError) {
           console.error('Member insertion error:', memberError);
-          // Non-fatal, but log it
+          setErrors({ general: `Failed to join household: ${memberError.message}` });
+          setLoading(false);
+          return;
+        }
+
+        const { error: profileUpdateError } = await supabase
+          .from('profiles')
+          .update({ household_id: household.id })
+          .eq('id', userId);
+
+        if (profileUpdateError) {
+          console.error('Profile household update error:', profileUpdateError);
+          setErrors({ general: `Joined household, but profile update failed: ${profileUpdateError.message}` });
+          setLoading(false);
+          return;
         }
       }
 
@@ -365,7 +382,7 @@ export default function RegisterScreen() {
               name="householdCode"
               placeholder={
                 formData.householdType === 'join'
-                  ? 'Household Code / Name'
+                  ? 'Household Invite Code'
                   : 'Create a Household Name'
               }
               value={formData.householdCode}

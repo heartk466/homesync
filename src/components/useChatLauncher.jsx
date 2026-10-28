@@ -17,8 +17,9 @@ export default function useChatLauncher({ chatUser, profile, enabled = true }) {
   const [unread, setUnread] = useState(0);
   const [allHouseholds, setAllHouseholds] = useState([]);
   const roomIdsRef = useRef(new Set());
+  // Lets the realtime handler (subscribed once) see whether the drawer is open.
   const openRef = useRef(false);
-  openRef.current = open;
+  useEffect(() => { openRef.current = open; }, [open]);
 
   // Households the user belongs to (the drawer's "Household" tab)
   useEffect(() => {
@@ -80,7 +81,7 @@ export default function useChatLauncher({ chatUser, profile, enabled = true }) {
   // First count, then keep it fresh: new messages, tab focus, and a slow poll as a fallback
   useEffect(() => {
     if (!enabled || !userId) return undefined;
-    refreshUnread();
+    const firstCount = setTimeout(refreshUnread, 0);
 
     const channel = supabase
       .channel(`chat-unread-${userId}-${Math.random().toString(36).slice(2, 8)}`)
@@ -100,6 +101,7 @@ export default function useChatLauncher({ chatUser, profile, enabled = true }) {
     const timer = setInterval(refreshUnread, 60000);
 
     return () => {
+      clearTimeout(firstCount);
       supabase.removeChannel(channel);
       document.removeEventListener('visibilitychange', onVisible);
       clearInterval(timer);
@@ -112,9 +114,9 @@ export default function useChatLauncher({ chatUser, profile, enabled = true }) {
   }, [refreshUnread]);
 
   const toggle = useCallback(() => {
-    if (openRef.current) close();
+    if (open) close();
     else setOpen(true);
-  }, [close]);
+  }, [open, close]);
 
   const drawer = enabled && userId ? (
     <ChatDrawer

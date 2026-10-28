@@ -351,6 +351,10 @@
   font-weight: 600;
   color: #9E8FCC;
   cursor: pointer;
+  min-width: 40px;
+  text-align: center;
+  box-sizing: border-box;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
 
 .currency-chip.active {

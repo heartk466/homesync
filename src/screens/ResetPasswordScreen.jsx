@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import './ResetPasswordScreen.css';
+import { Icon, InlineIcon, CategoryIcon, StatusIcon } from '../components/Icon';
+import { ICONS, CATEGORY_ICON, SUBSCRIPTION_ICON, NOTIF_ICON } from '../utils/iconMap';
 
 const LockIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -190,8 +192,9 @@ export default function ResetPasswordScreen() {
                     className="rp-eye"
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
                   >
-                    {showPassword ? '🙈' : '👁️'}
+                    <Icon as={showPassword ? ICONS.eyeOff : ICONS.eye} size={18} />
                   </button>
                 </div>
                 {errors.password && <span className="rp-error-text">{errors.password}</span>}
@@ -211,8 +214,9 @@ export default function ResetPasswordScreen() {
                     className="rp-eye"
                     type="button"
                     onClick={() => setShowConfirm(!showConfirm)}
+                    aria-label={showConfirm ? 'Hide password' : 'Show password'}
                   >
-                    {showConfirm ? '🙈' : '👁️'}
+                    <Icon as={showConfirm ? ICONS.eyeOff : ICONS.eye} size={18} />
                   </button>
                 </div>
                 {errors.confirmPassword && (

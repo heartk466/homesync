@@ -33,7 +33,7 @@
 }
 
 /* Household Switcher */
-.household-switcher-wrap {
+.utilities-screen .household-switcher-wrap {
   padding: 0 24px 8px;
   position: relative;
   z-index: 50;
@@ -938,4 +938,189 @@
   font-weight: 700;
   color: white;
   cursor: pointer;
+}
+/* Filter: "Select all" per section */
+.filter-group-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.filter-group-head label { margin: 0; }
+.filter-select-all {
+  font-family: inherit; font-size: 11px; font-weight: 700;
+  color: #3B2AAB; background: #F0EDFF; border: none;
+  padding: 4px 10px; border-radius: 50px; cursor: pointer;
+}
+.filter-select-all:hover { background: #E4DCFF; }
+
+.utilities-month-pill {
+  display: inline-block; margin-top: 8px; padding: 4px 12px; border-radius: 50px;
+  background: #EDE9FF; color: #3B2AAB; font-family: 'Poppins', sans-serif; font-size: 11px; font-weight: 600;
+}
+
+/* ── Utilities redesign: month nav, summary, providers, cards, ⋮ menu ── */
+/* children of the scrolling column must not shrink (the chip row collapsed to a line) */
+.utilities-content > * { flex-shrink: 0; }
+
+/* Month + household switchers: one row, open on hover (mouse) / tap (touch) */
+.ut-switch-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.ut-switch { position: relative; z-index: 50; flex-shrink: 0; }
+.ut-switch--grow { flex: 0 1 auto; min-width: 0; }
+.ut-switch.is-open { z-index: 80; }
+.ut-month-pill {
+  display: inline-flex; align-items: center; height: 34px; padding: 0 2px; border-radius: 50px;
+  background: #fff; box-shadow: 0 2px 8px rgba(59,42,171,0.1);
+}
+.ut-month-arrow {
+  display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px;
+  border: none; border-radius: 50%; background: none; color: #3B2AAB; cursor: pointer;
+  transition: background-color 0.15s ease, transform 0.15s ease, opacity 0.15s ease;
+}
+.ut-month-arrow:hover:not(:disabled) { background: #F0EDFF; }
+.ut-month-arrow:active:not(:disabled) { transform: scale(0.9); }
+.ut-month-arrow:disabled { opacity: 0.25; cursor: default; }
+.ut-month-label {
+  display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 6px; border: none; border-radius: 50px;
+  background: none; color: #2D1A7A; font-family: 'Poppins', sans-serif; font-size: 12px; font-weight: 700;
+  white-space: nowrap; cursor: pointer;
+}
+.ut-month-label svg { color: #6B46C1; }
+.ut-household-switch { height: 34px; max-width: 100%; padding: 0 14px; }
+.ut-household-switch .pill-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pill-chevron { flex-shrink: 0; transition: transform 0.18s ease; }
+.pill-chevron.open { transform: rotate(180deg); }
+
+/* dropdowns hang from their pill; the 6px top padding keeps hover alive across the gap */
+.ut-dropdown { position: absolute; top: 100%; margin-top: 0; animation: ut-pop 0.16s ease; }
+.ut-switch::after { content: ''; position: absolute; left: 0; right: 0; top: 100%; height: 6px; }
+.ut-dropdown.household-dropdown { margin-top: 6px; }
+.ut-dropdown.household-dropdown.align-right { left: auto; right: 0; }
+.ut-month-panel {
+  left: 0; margin-top: 6px; width: 264px; padding: 12px;
+  background: #fff; border: 1.5px solid #E0D9FF; border-radius: 18px; box-shadow: 0 12px 30px rgba(59,42,171,0.18);
+  transform-origin: top left;
+}
+.ut-month-today {
+  width: 100%; margin-bottom: 8px; padding: 8px 0; border: none; border-radius: 50px; background: #F0EDFF;
+  color: #3B2AAB; font-family: 'Poppins', sans-serif; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.ut-month-year + .ut-month-year { margin-top: 8px; }
+.ut-month-year-label { margin: 0 0 6px 2px; font-size: 11px; font-weight: 700; color: #9E8FCC; }
+.ut-month-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.ut-month-chip {
+  padding: 8px 0; border: 1.5px solid #E0D9FF; border-radius: 12px; background: #fff; color: #2D1A7A;
+  font-family: 'Poppins', sans-serif; font-size: 12px; font-weight: 600; cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.ut-month-chip:hover { background: #F0EDFF; }
+.ut-month-chip.current { border-color: #6B46C1; }
+.ut-month-chip.active { background: #3B2AAB; border-color: #3B2AAB; color: #fff; }
+.ut-month-hint { margin: 10px 0 0; font-size: 10px; color: #9E8FCC; text-align: center; }
+
+.ut-summary-sub { margin: 2px 0 0; font-size: 10px; color: #9E8FCC; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ut-due { transition: background-color 0.15s ease, color 0.15s ease; }
+.ut-due--amber { background: #FFF3CD; }
+.ut-due--amber .summary-card-count, .ut-due--amber .summary-card-label { color: #856404; }
+.ut-due--red { background: #FEE2E2; }
+.ut-due--red .summary-card-count, .ut-due--red .summary-card-label { color: #c53030; }
+.ut-due--clear .summary-card-count { color: #065F46; }
+
+.ut-pending-banner {
+  padding: 9px 14px; border-radius: 14px; background: #F0EDFF; color: #3B2AAB;
+  font-size: 12px; box-shadow: 0 2px 8px rgba(59,42,171,0.06); animation: ut-fade 0.18s ease;
+}
+
+/* Providers: a labelled card so the chips read as tappable filters */
+.ut-providers { background: #fff; border-radius: 16px; padding: 12px 14px; box-shadow: 0 2px 12px rgba(59,42,171,0.08); }
+.ut-providers-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.ut-providers-title { margin: 0; font-size: 12px; font-weight: 700; color: #2D1A7A; }
+.ut-count-line { margin: 0; font-size: 11px; font-weight: 600; color: #9E8FCC; }
+.ut-providers-empty { margin: 0; font-size: 11px; color: #9E8FCC; }
+.ut-chips { display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 4px; scrollbar-width: none; }
+.ut-chips::-webkit-scrollbar { display: none; }
+.ut-chip {
+  flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 6px 12px;
+  border: 1.5px solid #E0D9FF; border-radius: 50px; background: #F8F6FF; color: #3B2AAB;
+  font-family: 'Poppins', sans-serif; font-size: 12px; font-weight: 600; white-space: nowrap; cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+.ut-chip:hover { border-color: #6B46C1; }
+.ut-chip:active { transform: scale(0.96); }
+.ut-chip.active { background: #3B2AAB; border-color: #3B2AAB; color: #fff; }
+.ut-chip-icon { font-size: 14px; }
+.ut-chip-count {
+  min-width: 18px; padding: 0 6px; border-radius: 50px; background: #EDE9FF; color: #3B2AAB;
+  font-size: 10px; font-weight: 700; line-height: 18px; text-align: center;
+}
+.ut-chip.active .ut-chip-count { background: rgba(255,255,255,0.22); color: #fff; }
+
+/* Cards */
+.ut-card { position: relative; animation: ut-fade 0.18s ease; padding: 14px; }
+.ut-card .utility-details { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.ut-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.ut-card-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; margin-top: -2px; }
+.ut-provider { font-size: 14px; font-weight: 700; margin: 0; }
+.ut-status--paid { background: #D1FAE5; color: #065F46; }
+.ut-status--partly { background: #FEEBC8; color: #c05621; }
+.ut-status--verifying { background: #FFFAF0; color: #c05621; }
+.ut-status--approval { background: #EDE9FE; color: #6D28D9; }
+.ut-status--pending { background: #FFF3CD; color: #856404; }
+.ut-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ut-tag {
+  display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 9px; border-radius: 50px;
+  background: #F0EDFF; color: #5A4AAA; font-size: 10px; font-weight: 600; white-space: nowrap; box-sizing: border-box;
+}
+.ut-tag--due { background: #F8F6FF; }
+.ut-tag--due.soon { background: #FFF3CD; color: #856404; }
+.ut-tag--due.overdue { background: #FEE2E2; color: #c53030; }
+.ut-household-line { margin: 0; font-size: 11px; font-weight: 600; color: #9E8FCC; }
+.ut-tag--cat { background: #EDE9FF; color: #3B2AAB; }
+.ut-tag--split { background: #fff; border: 1px solid #E0D9FF; }
+.ut-meta { display: flex; flex-wrap: wrap; gap: 6px; }
+.ut-meta-pill {
+  display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 50px;
+  font-size: 10px; font-weight: 600; background: #F8F6FF; color: #5A4AAA;
+}
+.ut-due-pill.soon { background: #FFF3CD; color: #856404; }
+.ut-due-pill.overdue { background: #FEE2E2; color: #c53030; }
+.ut-household-pill { color: #9E8FCC; }
+.ut-footer {
+  display: flex; align-items: flex-end; justify-content: space-between; gap: 10px;
+  margin-top: 2px; padding-top: 10px; border-top: 1px dashed #E0D9FF;
+}
+.ut-share { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.ut-share-label { font-size: 10px; color: #9E8FCC; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; }
+.ut-share-amount { font-size: 20px; font-weight: 800; color: #2D1A7A; line-height: 1.2; }
+.ut-share-of { font-size: 10px; color: #9E8FCC; }
+.ut-pay { flex-shrink: 0; padding: 9px 22px; border-radius: 50px; transition: transform 0.15s ease; }
+.ut-pay:active { transform: scale(0.95); }
+.ut-note { margin: 0; font-size: 11px; font-weight: 600; color: #c05621; }
+.ut-note--warn { color: #c05621; }
+
+.ut-menu { position: relative; }
+.ut-menu-btn {
+  display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px;
+  border: none; border-radius: 50%; background: transparent; color: #9E8FCC; cursor: pointer;
+  transition: background-color 0.15s ease, transform 0.15s ease;
+}
+.ut-menu-btn:hover, .ut-menu-btn[aria-expanded="true"] { background: #F0EDFF; color: #3B2AAB; }
+.ut-menu-btn:active { transform: scale(0.92); }
+.ut-menu-list {
+  position: absolute; top: 32px; right: 0; z-index: 30; min-width: 170px; padding: 6px;
+  background: #fff; border: 1.5px solid #E0D9FF; border-radius: 14px; box-shadow: 0 10px 28px rgba(59,42,171,0.16);
+  transform-origin: top right; animation: ut-pop 0.16s ease;
+}
+.ut-menu-list button {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 9px 10px; border: none; border-radius: 10px;
+  background: none; color: #2D1A7A; font-family: 'Poppins', sans-serif; font-size: 12px; font-weight: 600;
+  text-align: left; cursor: pointer; transition: background-color 0.15s ease;
+}
+.ut-menu-list button:hover { background: #F0EDFF; }
+.ut-menu-list button.danger { color: #e53e3e; }
+.ut-menu-list button.danger:hover { background: #FEE2E2; }
+
+.ut-fab { transition: transform 0.15s ease; }
+.ut-fab:active { transform: scale(0.94); }
+
+@keyframes ut-fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes ut-pop { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) {
+  .ut-card, .ut-pending-banner, .ut-menu-list, .ut-month-panel { animation: none; }
+  .ut-chip, .ut-due, .ut-month-btn, .ut-month-label, .ut-month-caret, .ut-month-chip, .ut-menu-btn, .ut-fab, .ut-pay { transition: none; }
 }

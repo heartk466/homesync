@@ -1,0 +1,73 @@
+/* Settings → per-household cards (builds on the Settings screen's own styles) */
+.hs-title-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.hs-title-row .settings-section-title { margin: 0; }
+.hs-role { font-size: 10px; font-weight: 700; padding: 3px 10px; border-radius: 50px; }
+.hs-role--owner { background: #FFF3CD; color: #856404; }
+.hs-role--member { background: #F0EDFF; color: #3B2AAB; }
+.hs-owner-line { margin: 6px 0 0; font-size: 11px; color: var(--text-secondary, #9E8FCC); }
+
+.hs-card { transition: box-shadow 0.2s ease; }
+.hs-highlight { box-shadow: 0 0 0 2px #6B46C1, 0 2px 12px rgba(59,42,171,0.12); }
+
+.hs-request {
+  margin: 10px 0 4px; padding: 10px 12px; border-radius: 14px; background: #F0EDFF; color: #3B2AAB;
+  font-size: 12px; line-height: 1.5;
+}
+.hs-request p { margin: 0; }
+.hs-request-actions { display: flex; gap: 8px; margin-top: 8px; }
+.hs-request-actions .modal-primary-btn, .hs-request-actions .modal-ghost-btn { flex: 1; margin: 0; padding: 8px 0; font-size: 12px; }
+.hs-request-meta { margin-top: 6px !important; font-size: 10px; color: #9E8FCC; }
+.hs-voted { outline: 2px solid #6B46C1; outline-offset: 1px; }
+
+.settings-row.hs-disabled { cursor: not-allowed; opacity: 0.7; }
+.hs-row-hint { display: block; margin-top: 2px; font-size: 10px; font-weight: 500; color: #9E8FCC; }
+
+.hs-blockers { list-style: none; margin: 0; padding: 0; width: 100%; display: flex; flex-direction: column; gap: 6px; }
+.hs-blockers li {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 12px;
+  background: #FFF5F5; font-size: 12px; color: #2D1A7A; text-align: left;
+}
+.hs-blocker-dot { flex-shrink: 0; width: 8px; height: 8px; border-radius: 50%; background: #e53e3e; }
+.hs-blocker-text { flex: 1; min-width: 0; line-height: 1.4; }
+.hs-blocker-link {
+  flex-shrink: 0; display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border: none; border-radius: 50px;
+  background: #3B2AAB; color: #fff; font-family: 'Poppins', sans-serif; font-size: 11px; font-weight: 600; cursor: pointer;
+}
+
+/* 2+ households: each card is a dropdown */
+.hs-group-title {
+  display: flex; align-items: center; gap: 6px; margin: 4px 4px -4px; font-size: 13px; font-weight: 700; color: var(--text-primary);
+}
+.hs-group-title span { color: #9E8FCC; font-weight: 600; }
+/* never let the scrolling Settings column squash a card (overflow:hidden made it shrinkable) */
+.hs-card, .hs-group-title { flex-shrink: 0; }
+.hs-collapsible { padding: 0; overflow: hidden; }
+.hs-head {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 14px 16px; border: none; background: none;
+  font-family: 'Poppins', sans-serif; text-align: left; cursor: pointer;
+}
+.hs-head-name { flex: 1; min-width: 0; font-size: 14px; font-weight: 700; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hs-head-dot { flex-shrink: 0; width: 8px; height: 8px; border-radius: 50%; background: #e53e3e; }
+.hs-head-chevron { flex-shrink: 0; color: #9E8FCC; transition: transform 0.18s ease; }
+.hs-head-chevron.open { transform: rotate(180deg); }
+.hs-body { padding: 0 16px 12px; animation: hs-open 0.18s ease; }
+@keyframes hs-open { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+
+/* password / name confirmation */
+.hs-verify { display: flex; flex-direction: column; gap: 4px; width: 100%; margin: 4px 0 2px; text-align: left; }
+.hs-verify-row { position: relative; }
+.hs-verify-row .rn-input { width: 100%; box-sizing: border-box; padding-right: 40px; }
+.hs-verify-eye {
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%); display: inline-flex; padding: 4px;
+  border: none; background: none; color: #9E8FCC; cursor: pointer;
+}
+@media (prefers-reduced-motion: reduce) { .hs-body { animation: none; } .hs-head-chevron { transition: none; } }
+
+/* Ownership notification jump: ring + pulse on the request box / household card */
+.hs-pulse { outline: 2px solid #3B2AAB; outline-offset: 2px; animation: hs-pulse 1.2s ease-out 3; }
+@keyframes hs-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(59, 42, 171, 0.45); }
+  70%  { box-shadow: 0 0 0 12px rgba(59, 42, 171, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(59, 42, 171, 0); }
+}
+@media (prefers-reduced-motion: reduce) { .hs-pulse { animation: none; } }

@@ -1,3 +1,4 @@
+import { Wallet } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 
 // ── Payment method config ────────────────────────────────────────────────────
@@ -6,16 +7,18 @@ export const PAYMENT_METHODS = {
     key: 'gcash',
     label: 'GCash',
     color: '#3B2AAB',
-    icon: '💙',
+    icon: Wallet,
     scheme: 'gcash://',
+    androidPackage: 'com.globe.gcash.android',
     storeUrl: 'https://www.gcash.com/app',
   },
   paymaya: {
     key: 'paymaya',
     label: 'PayMaya',
     color: '#5A4AAA',
-    icon: '💚',
+    icon: Wallet,
     scheme: 'paymaya://',
+    androidPackage: 'com.paymaya',
     storeUrl: 'https://www.maya.ph/app',
   },
 };
@@ -50,22 +53,46 @@ export async function uploadPaymentQr(userId, methodKey, file) {
   return urlData?.publicUrl || null;
 }
 
-// ── Attempt to open the native app via URL scheme, falling back to the
-//    app/web store if the app isn't installed (detected via page blur/focus). ──
-export function openPaymentApp(methodKey) {
+// ── Open the GCash / PayMaya app. The recipient's number (if given) is copied
+//    to the clipboard first so it can be pasted into "Send Money" — the apps
+//    don't accept a prefilled recipient via deep link.
+//    • Android: intent:// URL — Chrome opens the app, or the fallback page if
+//      it isn't installed (a bare gcash:// is silently ignored by Chrome).
+//    • iOS: URL scheme, falling back to the store page if the page never hides.
+//    • Desktop: no app exists, so open the provider's site in a new tab
+//      instead of navigating HomeSync away. ──
+export function openPaymentApp(methodKey, number) {
   const config = PAYMENT_METHODS[methodKey];
   if (!config) return;
 
-  let didBlur = false;
-  const onBlur = () => { didBlur = true; };
-  window.addEventListener('blur', onBlur, { once: true });
+  if (number) navigator.clipboard?.writeText(number).catch(() => {});
+
+  const ua = navigator.userAgent || '';
+  const isAndroid = /Android/i.test(ua);
+  const isIOS = /iPhone|iPad|iPod/i.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+  if (isAndroid) {
+    const scheme = config.scheme.replace('://', '');
+    window.location.href = `intent://#Intent;scheme=${scheme};package=${config.androidPackage};`
+      + `S.browser_fallback_url=${encodeURIComponent(config.storeUrl)};end`;
+    return;
+  }
+
+  if (!isIOS) {
+    window.open(config.storeUrl, '_blank', 'noopener');
+    return;
+  }
+
+  let left = false;
+  const onHide = () => { if (document.hidden) left = true; };
+  document.addEventListener('visibilitychange', onHide);
+  window.addEventListener('pagehide', onHide);
 
   window.location.href = config.scheme;
 
   setTimeout(() => {
-    window.removeEventListener('blur', onBlur);
-    if (!didBlur) {
-      window.location.href = config.storeUrl;
-    }
-  }, 1200);
+    document.removeEventListener('visibilitychange', onHide);
+    window.removeEventListener('pagehide', onHide);
+    if (!left && !document.hidden) window.location.href = config.storeUrl;
+  }, 1500);
 }

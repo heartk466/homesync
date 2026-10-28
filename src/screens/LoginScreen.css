@@ -74,7 +74,7 @@
   width: 100%;
 }
 
-.input-wrapper input {
+.login .input-wrapper input {
   width: 100%;
   padding-right: 46px;
 }
@@ -100,7 +100,7 @@
 .eye-btn:hover { background: #F0EDFF; color: #3B2AAB; }
 .eye-btn:focus-visible { outline: 2px solid #3B2AAB; }
 
-input {
+.login input {
   width: 100%;
   padding: 14px 18px;
   border-radius: 50px;
@@ -114,15 +114,15 @@ input {
   transition: border 0.2s;
 }
 
-input::placeholder {
+.login input::placeholder {
   color: #9E8FCC;
 }
 
-input:focus {
+.login input:focus {
   border: 1.5px solid #3B2AAB;
 }
 
-input.input-error {
+.login input.input-error {
   border: 1.5px solid #e53e3e;
 }
 

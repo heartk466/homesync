@@ -5,6 +5,8 @@ import { Bell, X, LogOut, Camera, Edit, MessageCircle } from 'lucide-react';
 import './TopBar.css';
 import logo from '../assets/Homesync.svg';
 import useChatLauncher from './useChatLauncher';
+import { Icon, InlineIcon, CategoryIcon, StatusIcon } from './Icon';
+import { ICONS, CATEGORY_ICON, SUBSCRIPTION_ICON, NOTIF_ICON, stripEmoji } from '../utils/iconMap';
 
 export default function TopBar({
   profile,
@@ -185,6 +187,10 @@ export default function TopBar({
    * "/groups/<id>" matches no route, so React Router rendered nothing → blank gray page.
    * We now rewrite the path here, so it also fixes OLD notifications already in the DB.
    */
+  // Information-only notifications (e.g. "Member Left") never open a screen,
+  // even old ones that were saved with a link.
+  const linkOf = (n) => (n.type === 'member_left' ? null : n.link_path);
+
   const handleNotificationClick = async (notification) => {
     // Mark this notification as read
     if (!notification.is_read) {
@@ -195,10 +201,10 @@ export default function TopBar({
       if (onMarkAllRead) onMarkAllRead();
     }
 
+    if (!linkOf(notification)) return;   // nothing to open — keep the panel up
+
     // Close notification panel
     setShowNotifications(false);
-
-    if (!notification.link_path) return;
 
     // 1) Split link_path into "path" + its own query string, then merge link_query
     //    (expenseId / openProof / proofId) in as proper separate params.
@@ -212,7 +218,7 @@ export default function TopBar({
     let state = {};
     try {
       if (notification.link_state) state = JSON.parse(notification.link_state);
-    } catch (_) {}
+    } catch { /* malformed link_state — fall back to no router state */ }
 
     // 3) Pull the group/household id out of the path. Accepts both the old
     //    "/groups/<id>" and the correct "/group-detail/<id>" formats.
@@ -245,29 +251,8 @@ export default function TopBar({
     }, onGroupsScreen || onSameDetail ? 100 : 150);
   };
 
-  const getNotificationIcon = (type) => {
-    switch (type) {
-      case 'payment_proof':      return '📸';
-      case 'payment_confirmed':  return '✅';
-      case 'payment_rejected':   return '❌';
-      case 'approval_request':   return '⏳';
-      case 'approval':           return '✅';
-      case 'rejection':          return '❌';
-      case 'kicked':             return '🚪';
-      case 'expense_updated':    return '✏️';
-      case 'expense_added':      return '➕';
-      case 'expense_removed':    return '➖';
-      case 'expense_deleted':    return '🗑️';
-      case 'followup_submitted': return '📸';
-      case 'followup_confirmed': return '✅';
-      case 'followup_rejected':  return '❌';
-      case 'refund_sent':        return '💸';
-      case 'refund_confirmed':   return '✅';
-      case 'report_generated':   return '📄';
-      case 'report_schedule':    return '🗓️';
-      default:                   return '🔔';
-    }
-  };
+  // type → icon (components/Icon.jsx); unknown types get the bell
+  const getNotificationIcon = (type) => <Icon as={NOTIF_ICON[type] || ICONS.bell} size={20} />;
 
   return (
     <>
@@ -301,7 +286,7 @@ export default function TopBar({
                 else chat.toggle();
               }}
             >
-              <MessageCircle size={20} className="chat-icon" />
+              <MessageCircle size={24} strokeWidth={1.75} className="chat-icon" aria-hidden="true" />
               {chatBadge > 0 && (
                 <span className="topbar-chat-badge">{chatBadge > 99 ? '99+' : chatBadge}</span>
               )}
@@ -319,7 +304,7 @@ export default function TopBar({
                 setShowProfileCard(false);
               }}
             >
-              <Bell size={20} className="bell-icon" />
+              <Bell size={24} strokeWidth={1.75} className="bell-icon" aria-hidden="true" />
               {unreadCount > 0 && (
                 <span className="topbar-bell-badge">{unreadCount > 99 ? '99+' : unreadCount}</span>
               )}
@@ -359,23 +344,23 @@ export default function TopBar({
               notifications.map(n => (
                 <div
                   key={n.id}
-                  className={`notification-item ${!n.is_read ? 'unread' : ''} ${n.link_path ? 'notification-clickable' : ''}`}
+                  className={`notification-item ${!n.is_read ? 'unread' : ''} ${linkOf(n) ? 'notification-clickable' : ''}`}
                   onClick={() => handleNotificationClick(n)}
-                  role={n.link_path ? 'button' : undefined}
-                  style={n.link_path ? { cursor: 'pointer' } : {}}
+                  role={linkOf(n) ? 'button' : undefined}
+                  style={linkOf(n) ? { cursor: 'pointer' } : {}}
                 >
                   <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-                    <span style={{ fontSize: 18, flexShrink: 0, lineHeight: 1.3 }}>
+                    <span className="notification-icon" style={{ flexShrink: 0, color: '#6B46C1', marginTop: 1 }}>
                       {getNotificationIcon(n.type)}
                     </span>
                     <div style={{ flex: 1 }}>
-                      <p className="notification-title">{n.title}</p>
+                      <p className="notification-title">{stripEmoji(n.title)}</p>
                       <p className="notification-msg">{n.message}</p>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                         <p className="notification-time">
                           {new Date(n.created_at).toLocaleString()}
                         </p>
-                        {n.link_path && (
+                        {linkOf(n) && (
                           <span style={{ fontSize: 10, color: '#3B2AAB', fontWeight: 600, fontFamily: 'Poppins, sans-serif' }}>
                             Tap to view →
                           </span>
@@ -394,7 +379,7 @@ export default function TopBar({
       {showProfileCard && (
         <div className="topbar-overlay" onClick={() => setShowProfileCard(false)}>
           <div className="topbar-profile-card" onClick={e => e.stopPropagation()}>
-            <button
+            <button aria-label="Close"
               className="topbar-profile-close"
               onClick={() => setShowProfileCard(false)}
             >
@@ -418,7 +403,7 @@ export default function TopBar({
             <p className="topbar-profile-name">{profile?.full_name}</p>
             <p className="topbar-profile-email">{profile?.email}</p>
             <div className="topbar-household-badge">
-              🏠 {household?.name || 'No Household'} · {household?.created_by === profile?.id ? 'Owner' : 'Member'}
+              <InlineIcon as={ICONS.household} /> {household?.name || 'No Household'} · {household?.created_by === profile?.id ? 'Owner' : 'Member'}
             </div>
             <button className="topbar-edit-btn" onClick={handleEditProfile}>
               <Edit size={14}/> Edit Profile
@@ -437,7 +422,7 @@ export default function TopBar({
       {showEditModal && (
         <div className="topbar-modal-overlay">
           <div className="topbar-edit-modal">
-            <button
+            <button aria-label="Close"
               className="topbar-modal-close"
               onClick={() => setShowEditModal(false)}
             >
@@ -454,7 +439,7 @@ export default function TopBar({
 
             {editSuccess ? (
               <div className="topbar-edit-success">
-                ✅ Profile updated successfully!
+                <InlineIcon as={ICONS.approved} /> Profile updated successfully!
               </div>
             ) : (
               <>
@@ -536,7 +521,7 @@ export default function TopBar({
       {showSignOutModal && (
         <div className="topbar-modal-overlay">
           <div className="topbar-signout-modal">
-            <p className="topbar-modal-emoji">🥺</p>
+            <p className="topbar-modal-emoji"><Icon as={ICONS.sad} size={40} /></p>
             <h2>DON'T GO YET!</h2>
             <p className="topbar-modal-msg">
               Your expenses might get lonely without you!<br/>
@@ -552,7 +537,7 @@ export default function TopBar({
               STAY
             </button>
             <button className="topbar-logout-btn" onClick={handleSignOut}>
-              Log out 😢
+              Log out
             </button>
           </div>
         </div>

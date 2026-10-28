@@ -5,7 +5,11 @@ import {
   splitStatusMeta, saveExpenseEdit,
 } from '../utils/expenseEditUtils';
 import DatePickerField from './DatePickerField';
+import CategoryField from './CategoryField';
+import { categoryLockReason, isBillingCategory, billingPeriodOf } from '../utils/expenseUtils';
 import './ExpenseModals.css';
+import { Icon, InlineIcon, CategoryIcon, StatusIcon } from './Icon';
+import { ICONS, CATEGORY_ICON, SUBSCRIPTION_ICON, NOTIF_ICON } from '../utils/iconMap';
 
 const initialsOf = (name) =>
   (name || '?').split(' ').map((n) => n[0]).slice(0, 2).join('').toUpperCase();
@@ -27,9 +31,10 @@ const Avatar = ({ profile }) => (
  *  actor     – { id, name }  (the admin)
  *  linkFor   – (expenseId) => { link_path, link_state, link_query }
  *  categories– selectable category names ('Other' included)
+ *  onOpenExpense – (expense) => void   jump to an existing Electricity/Water expense
  */
 export default function EditExpenseModal({
-  expense, splits, members, actor, linkFor, categories, onClose, onSaved, showToast,
+  expense, splits, members, actor, linkFor, categories, onClose, onSaved, showToast, onOpenExpense,
 }) {
   const known = categories.includes(expense.category);
   const [title, setTitle] = useState(expense.title || '');
@@ -37,6 +42,10 @@ export default function EditExpenseModal({
   const [category, setCategory] = useState(known ? expense.category : 'Other');
   const [otherType, setOtherType] = useState(known ? '' : expense.category || '');
   const [dueDate, setDueDate] = useState(expense.due_date || '');
+  const [billingMonth, setBillingMonth] = useState((expense.billing_period || expense.expense_date || getTodayStr()).slice(0, 7));
+  const [slotConflict, setSlotConflict] = useState(null);
+  const categoryLock = categoryLockReason(expense, splits, actor?.id);
+  const categoryChanged = (category === 'Other' && otherType.trim() ? otherType.trim() : category) !== expense.category;
   const [splitType, setSplitType] = useState(expense.split_type === 'custom' ? 'custom' : 'equal');
   const [included, setIncluded] = useState(splits.map((s) => s.user_id));
   const [custom, setCustom] = useState(() =>
@@ -71,6 +80,7 @@ export default function EditExpenseModal({
   if (dueDate && dueDate !== (expense.due_date || '') && dueDate < getTodayStr()) {
     errors.due = 'Due date cannot be in the past';
   }
+  if (slotConflict) errors.category = `${slotConflict.category} already exists for this month. Edit that expense instead.`;
   if (included.length === 0) errors.members = 'Keep at least one member in this expense';
   if (Object.values(shares).some((v) => v < 0)) errors.split = 'Locked shares are more than the new amount';
   if (splitType === 'custom' && Math.abs(remaining) > 0.01 && !errors.split) {
@@ -83,7 +93,7 @@ export default function EditExpenseModal({
     const old = splitsById[uid];
     const nw = round2(shares[uid]);
     if (!old) return { text: 'New member · starts unpaid', cls: 'xm-info' };
-    if (isShareLocked(old)) return { text: '🔒 Proof awaiting approval — share locked', cls: 'xm-warn' };
+    if (isShareLocked(old)) return { text: 'Proof awaiting approval — share locked', cls: 'xm-warn' };
     const paid = num(old.paid_amount);
     if (uid !== expense.paid_by && paid > 0) {
       if (nw > paid + 0.005) return { text: `Paid ${money(paid)} → follow-up ${money(nw - paid)} needed`, cls: 'xm-warn' };
@@ -135,6 +145,7 @@ export default function EditExpenseModal({
           title: title.trim(),
           amount: total,
           category: category === 'Other' && otherType.trim() ? otherType.trim() : category,
+          billing_period: isBillingCategory(category) ? billingPeriodOf(billingMonth) : null,
           due_date: dueDate,
           split_type: splitType === 'equal' && looksEqual ? 'equal' : 'custom',
           shares,
@@ -142,7 +153,7 @@ export default function EditExpenseModal({
         actor,
         linkFor,
       });
-      showToast?.('Expense updated and members notified! ✅');
+      showToast?.('Expense updated and members notified!');
       onSaved?.();
     } catch (err) {
       console.error(err);
@@ -155,8 +166,8 @@ export default function EditExpenseModal({
     <div className="xm-overlay">
       <div className="xm-card">
         <div className="xm-header">
-          <h2>✏️ Edit Expense</h2>
-          <button className="xm-close" onClick={onClose}><X size={18} /></button>
+          <h2><InlineIcon as={ICONS.edit} size={20} /> Edit Expense</h2>
+          <button aria-label="Close" className="xm-close" onClick={onClose}><X size={18} /></button>
         </div>
 
         <div className="xm-body">
@@ -168,6 +179,12 @@ export default function EditExpenseModal({
               onChange={(e) => setTitle(e.target.value)}
             />
             {errors.title && <span className="xm-err-text">{errors.title}</span>}
+            {/* Soft reminder only — the description may still fit the new category */}
+            {!errors.title && categoryChanged && title.trim() === (expense.title || '').trim() && (
+              <span className="xm-soft-hint" role="status">
+                <InlineIcon as={ICONS.tip} /> You changed the category to {category === 'Other' && otherType.trim() ? otherType.trim() : category} — you might want to update the description too.
+              </span>
+            )}
           </div>
 
           <div className="xm-field">
@@ -181,12 +198,23 @@ export default function EditExpenseModal({
 
           <div className="xm-field">
             <label>Category</label>
-            <select className="xm-select" value={category} onChange={(e) => { setCategory(e.target.value); if (e.target.value !== 'Other') setOtherType(''); }}>
-              {categories.map((c) => <option key={c}>{c}</option>)}
-            </select>
+            <CategoryField
+              categories={categories}
+              value={category}
+              onChange={(c) => { setCategory(c); if (c !== 'Other') setOtherType(''); }}
+              lockReason={categoryLock}
+              householdId={expense.household_id}
+              groupId={expense.group_id}
+              excludeId={expense.id}
+              billingMonth={billingMonth}
+              onBillingMonthChange={setBillingMonth}
+              onConflictChange={setSlotConflict}
+              onOpenExpense={onOpenExpense}
+            />
             {category === 'Other' && (
               <input
                 className="xm-input"
+                disabled={!!categoryLock}
                 placeholder="Type of expense (optional)"
                 value={otherType}
                 onChange={(e) => setOtherType(e.target.value)}
@@ -228,7 +256,7 @@ export default function EditExpenseModal({
                   {eff.text && <p className={`xm-member-note ${eff.cls}`}>{eff.text}</p>}
                   {meta && (
                     <span className="xm-badge" style={{ color: meta.color, background: meta.bg, display: 'inline-block', marginTop: 3 }}>
-                      {meta.label}
+                      <StatusIcon status={meta.label} />{meta.label}
                     </span>
                   )}
                 </div>
@@ -275,7 +303,7 @@ export default function EditExpenseModal({
             <>
               <div className={`xm-box ${Math.abs(remaining) <= 0.01 ? 'xm-green' : 'xm-red'}`}>
                 {Math.abs(remaining) <= 0.01
-                  ? '✅ Split total matches!'
+                  ? <><InlineIcon as={ICONS.approved} /> Split total matches!</>
                   : `${money(Math.abs(remaining))} ${remaining > 0 ? 'still unassigned' : 'over the amount'}`}
               </div>
               <button className="xm-btn xm-soft" style={{ padding: '9px 0', fontSize: 12 }} onClick={fillEqually}>
@@ -287,12 +315,12 @@ export default function EditExpenseModal({
 
           {included.some((uid) => removeReason(uid) === 'Refund this member before removing') && (
             <div className="xm-box xm-purple">
-              🔒 Members who already paid can’t be removed until you refund them. You can still change their share —
+              <InlineIcon as={ICONS.lock} /> Members who already paid can’t be removed until you refund them. You can still change their share —
               they’ll get a follow-up payment request (higher) or an overpayment refund (lower).
             </div>
           )}
 
-          <div className="xm-box xm-yellow">📢 Everyone in this expense will be notified of the changes.</div>
+          <div className="xm-box xm-yellow"><InlineIcon as={ICONS.notify} /> Everyone in this expense will be notified of the changes.</div>
 
         </div>
 

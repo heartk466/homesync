@@ -1,0 +1,56 @@
+/* Shared icon styles (see components/Icon.jsx). Colour always comes from
+   currentColor; tiles use the theme variables so dark mode follows. */
+
+.ic-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  vertical-align: middle;
+}
+.ic-text > svg { flex-shrink: 0; }
+
+/* Rounded tinted tile for a category icon */
+.cat-tile {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: 12px;
+  background: var(--accent-light, #F0EDFF);
+  color: var(--accent, #3B2AAB);
+}
+
+/* Icon next to the text inside a status pill */
+.status-ic {
+  flex-shrink: 0;
+  margin-right: 3px;
+  vertical-align: -2px;
+}
+
+/* Icons inside existing emoji slots: centre them like the emoji were */
+.pa-icon > svg,
+.settings-icon-wrap > svg,
+.utility-icon-wrap > svg,
+.xc-icon svg,
+.stat-card-emoji > svg,
+.chat-room-avatar > svg,
+.chat-fwd-avatar > svg,
+.xm-cat-icon > svg,
+.notification-icon > svg {
+  display: block;
+  margin: auto;
+}
+.stat-card-emoji { display: inline-flex; align-items: center; }
+
+/* Icon in front of a line of text */
+.inline-ic {
+  display: inline-block;
+  vertical-align: -0.17em;
+  margin-right: 4px;
+  flex-shrink: 0;
+}
+
+/* Category icons on the coloured category tiles stay white */
+.xc-icon, .expense-icon { color: #fff; }

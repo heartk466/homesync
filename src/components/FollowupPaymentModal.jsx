@@ -2,6 +2,8 @@ import React, { useRef, useState } from 'react';
 import { X, Camera } from 'lucide-react';
 import { money, num, followupDueOf } from '../utils/expenseEditUtils';
 import './ExpenseModals.css';
+import { Icon, InlineIcon, CategoryIcon, StatusIcon } from './Icon';
+import { ICONS, CATEGORY_ICON, SUBSCRIPTION_ICON, NOTIF_ICON } from '../utils/iconMap';
 
 /**
  * Member side: the admin raised their share after they paid, so they send a
@@ -30,7 +32,7 @@ export default function FollowupPaymentModal({ expense, split, loading, onSubmit
       <div className="xm-card">
         <div className="xm-header">
           <h2>Follow-up Payment</h2>
-          <button className="xm-close" onClick={onClose}><X size={18} /></button>
+          <button aria-label="Close" className="xm-close" onClick={onClose}><X size={18} /></button>
         </div>
 
         <div className="xm-body">
@@ -56,7 +58,7 @@ export default function FollowupPaymentModal({ expense, split, loading, onSubmit
           </button>
           {onPayOnline && (
             <button className="xm-btn xm-outline" style={{ padding: '10px 0', fontSize: 13 }} onClick={onPayOnline}>
-              💳 Pay Online
+              <InlineIcon as={ICONS.payment} /> Pay Online
             </button>
           )}
           <textarea

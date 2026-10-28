@@ -16,6 +16,7 @@ import './DatePickerField.css';
  *   value       'YYYY-MM-DD' or ''
  *   onChange    (value: string) => void   ('' when cleared)
  *   min         'YYYY-MM-DD' – every earlier day is greyed out and unclickable
+ *   max         'YYYY-MM-DD' – every later day is greyed out and unclickable
  *   placeholder text shown when empty
  *   disabled    read-only look (e.g. the auto-set "Date" field)
  *   hasError    red border
@@ -43,7 +44,7 @@ const pretty = (s) =>
   new Date(`${s}T00:00:00`).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' });
 
 export default function DatePickerField({
-  value = '', onChange, min, placeholder = 'Select date',
+  value = '', onChange, min, max, placeholder = 'Select date',
   disabled = false, hasError = false, allowClear = true,
 }) {
   const [open, setOpen] = useState(false);
@@ -73,13 +74,18 @@ export default function DatePickerField({
     setOpen((o) => !o);
   };
 
-  const isBlocked = (str) => Boolean(min) && str < min;
+  const isBlocked = (str) => (Boolean(min) && str < min) || (Boolean(max) && str > max);
 
   const minParts = min ? parse(min) : null;
   const atFirstMonth = Boolean(minParts) && (view.y < minParts.y || (view.y === minParts.y && view.m <= minParts.m));
 
+  const maxParts = max ? parse(max) : null;
+  const atLastMonth = Boolean(maxParts) && (view.y > maxParts.y || (view.y === maxParts.y && view.m >= maxParts.m));
+
   const atFirstYear = Boolean(minParts) && view.y <= minParts.y;
-  const monthBlocked = (y, m) => Boolean(minParts) && (y < minParts.y || (y === minParts.y && m < minParts.m));
+  const atLastYear = Boolean(maxParts) && view.y >= maxParts.y;
+  const monthBlocked = (y, m) => (Boolean(minParts) && (y < minParts.y || (y === minParts.y && m < minParts.m)))
+    || (Boolean(maxParts) && (y > maxParts.y || (y === maxParts.y && m > maxParts.m)));
   const shiftYear = (delta) => setView((v) => ({ ...v, y: v.y + delta, d: 1 }));
   const pickMonth = (m) => {
     if (monthBlocked(view.y, m)) return;
@@ -132,7 +138,7 @@ export default function DatePickerField({
                 <button type="button" className="dpf-title-btn" onClick={() => setMode('months')} aria-label="Choose month and year">
                   {MONTHS[view.m]} {view.y} <ChevronDown size={14} />
                 </button>
-                <button type="button" className="dpf-nav" onClick={() => shiftMonth(1)} aria-label="Next month">
+                <button type="button" className="dpf-nav" onClick={() => shiftMonth(1)} disabled={atLastMonth} aria-label="Next month">
                   <ChevronRight size={16} />
                 </button>
               </div>
@@ -166,7 +172,7 @@ export default function DatePickerField({
                   <ChevronLeft size={16} />
                 </button>
                 <span className="dpf-title">{view.y}</span>
-                <button type="button" className="dpf-nav" onClick={() => shiftYear(1)} aria-label="Next year">
+                <button type="button" className="dpf-nav" onClick={() => shiftYear(1)} disabled={atLastYear} aria-label="Next year">
                   <ChevronRight size={16} />
                 </button>
               </div>

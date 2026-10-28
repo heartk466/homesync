@@ -12,7 +12,12 @@ import TopBar from '../components/TopBar';
 import BottomNav from '../components/BottomNav';
 import { fetchAllHouseholdExpenses, UTILITY_CATEGORIES } from '../utils/expenseUtils';
 import { dropDeletedExpenses } from '../utils/expenseEditUtils';
-import { useAppContext } from '../AppContext';
+import { fetchDeletionRefundsMap, deletionStateOf } from '../utils/refundsOwed';
+import { useAppContext } from '../appContextCore';
+import { Icon, InlineIcon, CategoryIcon, StatusIcon } from '../components/Icon';
+import { ICONS, CATEGORY_ICON, SUBSCRIPTION_ICON, NOTIF_ICON } from '../utils/iconMap';
+import { useCachedState, useScreenLoad } from '../utils/screenCache';
+import { LoadGate, DashboardSkeleton } from '../components/Skeleton';
 
 // ── Reusable Forecast Card ────────────────────────────────────────────────────
 function ForecastCard({ icon, title, barColor, history, showDetail, onToggleDetail, currencySymbol }) {
@@ -68,9 +73,9 @@ function ForecastCard({ icon, title, barColor, history, showDetail, onToggleDeta
           <span className="fc-pill-amt">{currencySymbol} {forecast.amount.toLocaleString()}</span>
         </div>
 
-        {/* 💡 Savings banner */}
+        {/* Savings banner */}
         <div className="fc-save-banner">
-          <span className="fc-save-icon">💡</span>
+          <span className="fc-save-icon"><Icon as={ICONS.tip} size={18} /></span>
           <p className="fc-save-text">
             You must save for a possible upcoming payment — estimated{' '}
             <strong>{currencySymbol}{forecast.amount.toLocaleString()}</strong> for {forecast.label} based on previous payments.
@@ -115,42 +120,43 @@ export default function DashboardScreen() {
   const navigate = useNavigate();
   const { currencySymbol } = useAppContext();
 
-  const [profile, setProfile] = useState(null);
-  const [currentUser, setCurrentUser] = useState(null);
+  const [profile, setProfile] = useCachedState('dashboard', 'profile', null);
+  const [currentUser, setCurrentUser] = useCachedState('dashboard', 'currentUser', null);
 
   // ── Multi-household state ──────────────────────────────────────────────────
-  const [allHouseholds, setAllHouseholds] = useState([]);
-  const [household, setHousehold] = useState(null);
+  const [allHouseholds, setAllHouseholds] = useCachedState('dashboard', 'allHouseholds', []);
+  const [household, setHousehold] = useCachedState('dashboard', 'household', null);
   // ──────────────────────────────────────────────────────────────────────────
 
-  const [totalSpent, setTotalSpent] = useState(0);
-  const [utilitiesTotal, setUtilitiesTotal] = useState(0);
-  const [lastMonthSpent, setLastMonthSpent] = useState(0);
-  const [monthlyData, setMonthlyData] = useState([]);
-  const [pendingAmount, setPendingAmount] = useState(0);
-  const [groupSpending, setGroupSpending] = useState([]);
-  const [totalGroupPaid, setTotalGroupPaid] = useState(0);
+  const [totalSpent, setTotalSpent] = useCachedState('dashboard', 'totalSpent', 0);
+  const [utilitiesTotal, setUtilitiesTotal] = useCachedState('dashboard', 'utilitiesTotal', 0);
+  const [lastMonthSpent, setLastMonthSpent] = useCachedState('dashboard', 'lastMonthSpent', 0);
+  const [monthlyData, setMonthlyData] = useCachedState('dashboard', 'monthlyData', []);
+  const [pendingAmount, setPendingAmount] = useCachedState('dashboard', 'pendingAmount', 0);
+  const [groupSpending, setGroupSpending] = useCachedState('dashboard', 'groupSpending', []);
+  const [totalGroupPaid, setTotalGroupPaid] = useCachedState('dashboard', 'totalGroupPaid', 0);
   const [showGroupModal, setShowGroupModal] = useState(false);
   const [showHouseholdCode, setShowHouseholdCode] = useState(false);
   const [copied, setCopied] = useState(false);
 
   // ── Notifications (bell in the top bar) ───────────────────────────────────
-  const [notifications, setNotifications] = useState([]);
-  const [unreadCount, setUnreadCount] = useState(0);
+  const [notifications, setNotifications] = useCachedState('dashboard', 'notifications', []);
+  const [unreadCount, setUnreadCount] = useCachedState('dashboard', 'unreadCount', 0);
   // ──────────────────────────────────────────────────────────────────────────
 
   // ── Utility Forecast state ─────────────────────────────────────────────────
-  const [elecHistory, setElecHistory] = useState([]);
-  const [waterHistory, setWaterHistory] = useState([]);
+  const load = useScreenLoad('dashboard');
+  const [elecHistory, setElecHistory] = useCachedState('dashboard', 'elecHistory', []);
+  const [waterHistory, setWaterHistory] = useCachedState('dashboard', 'waterHistory', []);
   const [showElecDetail, setShowElecDetail] = useState(false);
   const [showWaterDetail, setShowWaterDetail] = useState(false);
   // ──────────────────────────────────────────────────────────────────────────
 
   const getGreeting = () => {
     const hour = new Date().getHours();
-    if (hour >= 5 && hour < 12) return '☀️ Good Morning';
-    if (hour >= 12 && hour < 17) return '👋 Good Afternoon';
-    return '🌙 Good Evening';
+    if (hour >= 5 && hour < 12) return 'Good Morning';
+    if (hour >= 12 && hour < 17) return 'Good Afternoon';
+    return 'Good Evening';
   };
 
   const getFirstName = () => {
@@ -209,7 +215,7 @@ export default function DashboardScreen() {
       .limit(30);
     setNotifications(data || []);
     setUnreadCount((data || []).filter(n => !n.is_read).length);
-  }, []);
+  }, [setNotifications, setUnreadCount]);
 
   const markNotificationsRead = async () => {
     if (!currentUser?.id) return;
@@ -233,7 +239,7 @@ export default function DashboardScreen() {
       })
       .subscribe();
     return () => supabase.removeChannel(channel);
-  }, [currentUser?.id]);
+  }, [currentUser?.id, setNotifications, setUnreadCount]);
 
   const fetchProfile = useCallback(async () => {
     try {
@@ -255,7 +261,7 @@ export default function DashboardScreen() {
         .eq('user_id', user.id)
         .eq('status', 'active');
 
-      if (!memberRows || memberRows.length === 0) return;
+      if (!memberRows || memberRows.length === 0) { load.done(); return; }   // no household → empty state
 
       const hhIds = memberRows.map(r => r.household_id);
       const { data: hhData } = await supabase
@@ -273,8 +279,9 @@ export default function DashboardScreen() {
         });
       }
     } catch (err) {
-      console.error(err);
+      load.fail(err);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchNotifications, navigate]);
 
   // ── Fetch data scoped to the selected household ───────────────────────────
@@ -292,6 +299,8 @@ export default function DashboardScreen() {
       const allExpenses = await dropDeletedExpenses(await fetchAllHouseholdExpenses(selectedHousehold.id));
       const expenseIds = allExpenses.map(e => e.id);
       const splitsByExpense = await fetchExpenseSplits(expenseIds);
+      // deletion refunds: sent → still paid ('verifying for deletion'); confirmed → settled
+      const deletionMap = await fetchDeletionRefundsMap(expenseIds);
 
       // What the member has actually paid (admin-approved). Overpaid members only
       // count their real share; partly paid members count what is approved so far.
@@ -309,7 +318,9 @@ export default function DashboardScreen() {
         const splits = splitsByExpense[expense.id] || [];
         const mySplit = splits.find(s => s.user_id === user.id);
         if (mySplit) {
-          const amount = paidOf(mySplit);
+          const deletion = deletionStateOf(mySplit, deletionMap[expense.id]);
+          // refunded for deletion: the money went back — neither spent nor pending
+          const amount = deletion === 'refunded' ? 0 : deletion === 'verifying' ? Number(mySplit.share_amount) || 0 : paidOf(mySplit);
           const expenseDate = expense.expense_date;
           if (amount > 0 && expense.approval_status === 'approved') {
             if (expenseDate >= firstDay && expenseDate <= lastDay) {
@@ -322,7 +333,7 @@ export default function DashboardScreen() {
               lastMonthTotal += amount;
             }
           }
-          if (mySplit.status !== 'approved' && expenseDate >= firstDay && expenseDate <= lastDay) {
+          if (mySplit.status !== 'approved' && !deletion && expenseDate >= firstDay && expenseDate <= lastDay) {
             myPendingTotal += owedOf(mySplit);
           }
         }
@@ -423,13 +434,14 @@ export default function DashboardScreen() {
       );
       setGroupSpending(groupsWithPaidTotals);
       setTotalGroupPaid(groupsWithPaidTotals.reduce((sum, g) => sum + g.currentMonthPaid, 0));
+      load.done();
     } catch (err) {
-      console.error(err);
+      load.fail(err);
     }
   };
 
   // ── Effects ───────────────────────────────────────────────────────────────
-  /* eslint-disable react-hooks/exhaustive-deps, react-hooks/set-state-in-effect */
+  /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => {
     void fetchProfile();
   }, []);
@@ -448,7 +460,7 @@ export default function DashboardScreen() {
       .subscribe();
     return () => supabase.removeChannel(channel);
   }, [currentUser?.id, household?.id]);
-  /* eslint-enable react-hooks/exhaustive-deps, react-hooks/set-state-in-effect */
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   const percentChange = getPercentChange();
 
@@ -505,13 +517,14 @@ export default function DashboardScreen() {
               className={`household-pill ${household?.id === hh.id ? 'active' : ''}`}
               onClick={() => setHousehold(hh)}
             >
-              🏠 {hh.name}
+              <InlineIcon as={ICONS.household} /> {hh.name}
             </button>
           ))}
         </div>
       )}
 
       <div className="dash-content">
+        <LoadGate load={load} skeleton={<DashboardSkeleton />} onRetry={() => { void fetchProfile(); if (household && currentUser) void fetchHouseholdData(household, currentUser); }}>
         <div className="dash-card">
           <div className="card-left">
             <p className="card-greeting">{getGreeting()}, {getFirstName()}!</p>
@@ -546,9 +559,9 @@ export default function DashboardScreen() {
           <div className="card-chart"><Zap size={32} color="#3B2AAB" /></div>
         </div>
 
-        {/* ── ⚡ Electricity Payment Forecast ── */}
+        {/* ── Electricity Payment Forecast ── */}
         <ForecastCard
-          icon="⚡"
+          icon={<Icon as={CATEGORY_ICON.Electricity} size={18} />}
           title="Electricity"
           barColor="#3B2AAB"
           history={elecHistory}
@@ -557,9 +570,9 @@ export default function DashboardScreen() {
           currencySymbol={currencySymbol}
         />
 
-        {/* ── 💧 Water Payment Forecast ── */}
+        {/* ── Water Payment Forecast ── */}
         <ForecastCard
-          icon="💧"
+          icon={<Icon as={CATEGORY_ICON.Water} size={18} />}
           title="Water"
           barColor="#2B6CB0"
           history={waterHistory}
@@ -583,6 +596,7 @@ export default function DashboardScreen() {
           <button className="quick-btn" onClick={() => navigate('/groups')}>Create Group</button>
           <button className="quick-btn" onClick={() => navigate('/reports')}>View Reports</button>
         </div>
+        </LoadGate>
       </div>
 
       {/* Group Spending Modal */}
@@ -591,7 +605,7 @@ export default function DashboardScreen() {
           <div className="group-modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Group Spending</h2>
-              <button className="modal-close" onClick={() => setShowGroupModal(false)}><X size={18} /></button>
+              <button aria-label="Close" className="modal-close" onClick={() => setShowGroupModal(false)}><X size={18} /></button>
             </div>
             <div className="group-modal-body">
               <p className="modal-sub">Your share of paid group expenses this month.</p>
@@ -631,7 +645,7 @@ export default function DashboardScreen() {
             </div>
           </div>
         )}
-        <button className="floating-code-btn" onClick={() => setShowHouseholdCode(!showHouseholdCode)}>🏠 Your Code</button>
+        <button className="floating-code-btn" onClick={() => setShowHouseholdCode(!showHouseholdCode)}><InlineIcon as={ICONS.household} /> Your Code</button>
       </div>
 
       <BottomNav active="dashboard" />

@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { X, Camera, Copy, Download } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 import { money, num, round2, overpaidOf } from '../utils/expenseEditUtils';
+import { openPaymentApp } from '../utils/paymentUtils';
+import { ModalListSkeleton } from './Skeleton';
 import './ExpenseModals.css';
 
 /**
@@ -11,14 +13,20 @@ import './ExpenseModals.css';
  *
  * props: expense, split (with .profiles), loading, onSubmit({ amount, file, note }), onClose
  */
-export default function RefundModal({ expense, split, loading, onSubmit, onClose }) {
+export default function RefundModal({
+  expense, split, refundType = 'expense_deletion', resending = false,
+  loading, onSubmit, onClose,
+}) {
   const inputRef = useRef(null);
   const over = overpaidOf(split);
-  const maxAmount = round2(num(split.paid_amount));
+  const paidAmount = round2(num(split.paid_amount));
+  const maxAmount = refundType === 'overpayment' ? Math.min(over, paidAmount) : paidAmount;
 
   const [details, setDetails] = useState(null);
   const [method, setMethod] = useState(null);
-  const [amount, setAmount] = useState(String(over > 0 ? over : maxAmount));
+  // Refunds always return the whole amount (all of the overpaid part, or
+  // everything paid toward a deleted expense), so the amount is fixed.
+  const isOverpayment = refundType === 'overpayment';
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
   const [note, setNote] = useState('');
@@ -43,9 +51,9 @@ export default function RefundModal({ expense, split, loading, onSubmit, onClose
   }, [split.user_id]);
 
   const methods = [];
-  if (details?.gcash_number || details?.gcash_qr_url) methods.push({ key: 'gcash', label: '💙 GCash' });
-  if (details?.paymaya_number || details?.paymaya_qr_url) methods.push({ key: 'paymaya', label: '💚 PayMaya' });
-  if (details?.bank_account_number) methods.push({ key: 'bank', label: '🏦 Bank' });
+  if (details?.gcash_number || details?.gcash_qr_url) methods.push({ key: 'gcash', label: 'GCash', number: details.gcash_number });
+  if (details?.paymaya_number || details?.paymaya_qr_url) methods.push({ key: 'paymaya', label: 'PayMaya', number: details.paymaya_number });
+  if (details?.bank_account_number) methods.push({ key: 'bank', label: 'Bank' });
 
   const current = (() => {
     if (!details) return null;
@@ -85,16 +93,18 @@ export default function RefundModal({ expense, split, loading, onSubmit, onClose
     setPreview(URL.createObjectURL(f));
   };
 
-  const amt = round2(num(amount));
-  const tooMuch = amt > maxAmount + 0.001;
-  const invalid = !(amt > 0) || tooMuch || !file;
+  const amt = maxAmount;
+  const invalid = !(amt > 0) || !file;
 
   return (
     <div className="xm-overlay">
       <div className="xm-card">
         <div className="xm-header">
-          <h2>Refund {split.profiles?.full_name?.split(' ')[0] || 'member'}</h2>
-          <button className="xm-close" onClick={onClose}><X size={18} /></button>
+          <h2>
+            {resending ? 'Resend' : 'Send'} {refundType === 'overpayment' ? 'Overpayment' : 'Expense'} Refund to{' '}
+            {split.profiles?.full_name?.split(' ')[0] || 'member'}
+          </h2>
+          <button aria-label="Close" className="xm-close" onClick={onClose}><X size={18} /></button>
         </div>
 
         <div className="xm-body">
@@ -113,7 +123,10 @@ export default function RefundModal({ expense, split, loading, onSubmit, onClose
           {/* Member's payment details */}
           <p className="xm-section-title">Send the refund to</p>
           {!details ? (
-            <p className="xm-empty">Loading payment details…</p>
+            <div aria-busy="true">
+              <span className="sk-sr-only">Loading</span>
+              <ModalListSkeleton rows={2} />
+            </div>
           ) : methods.length === 0 ? (
             <div className="xm-box xm-yellow">
               {split.profiles?.full_name || 'This member'} hasn’t added GCash, PayMaya or bank details in Settings yet.
@@ -123,11 +136,21 @@ export default function RefundModal({ expense, split, loading, onSubmit, onClose
             <>
               <div className="xm-pay-tabs">
                 {methods.map((m) => (
-                  <button key={m.key} className={method === m.key ? 'active' : ''} onClick={() => setMethod(m.key)}>
+                  <button
+                    key={m.key}
+                    className={method === m.key ? 'active' : ''}
+                    onClick={() => {
+                      setMethod(m.key);
+                      if (m.key !== 'bank') openPaymentApp(m.key, m.number);
+                    }}
+                  >
                     {m.label}
                   </button>
                 ))}
               </div>
+              {methods.some((m) => m.key !== 'bank') && (
+                <span className="xm-hint">Tap GCash or PayMaya to open the app — the number is copied so you can paste it.</span>
+              )}
               {current?.qr && (
                 <div className="xm-qr-box">
                   <img src={current.qr} alt={`${current.label} QR`} />
@@ -155,17 +178,16 @@ export default function RefundModal({ expense, split, loading, onSubmit, onClose
 
           {/* Amount + proof */}
           <div className="xm-field">
-            <label>Refund amount <span style={{ fontWeight: 400, color: '#9E8FCC' }}>(max {money(maxAmount)})</span></label>
-            <div className={`xm-amount-wrap${tooMuch ? ' xm-error' : ''}`}>
-              <span className="xm-peso">₱</span>
-              <input type="number" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
+            <label>{isOverpayment ? 'Overpayment refund amount' : 'Deletion refund amount'}</label>
+            <div className="xm-amount-fixed" aria-readonly="true">
+              <span className="xm-amount-fixed-value">{money(amt)}</span>
+              <span className="xm-amount-fixed-tag">{isOverpayment ? 'Full overpaid amount' : 'Full amount paid'}</span>
             </div>
-            {tooMuch && <span className="xm-err-text">More than the member has paid</span>}
-            {over > 0 && maxAmount > over && (
-              <span className="xm-hint">
-                Overpaid only: {money(over)} · Full payment: {money(maxAmount)}
-              </span>
-            )}
+            <span className="xm-hint">
+              {isOverpayment
+                ? 'Send the whole overpaid amount — it can’t be split into smaller refunds.'
+                : 'Refund everything this member paid for the deleted expense — it can’t be split into smaller refunds.'}
+            </span>
           </div>
 
           <input ref={inputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={pick} />
@@ -180,10 +202,10 @@ export default function RefundModal({ expense, split, loading, onSubmit, onClose
             onChange={(e) => setNote(e.target.value)}
           />
 
-          <div className="xm-box xm-purple">The member is notified and can confirm they received it.</div>
+          <div className="xm-box xm-purple">The member is notified and can approve or reject the refund proof.</div>
 
           <button className="xm-btn" disabled={invalid || loading} onClick={() => onSubmit({ amount: amt, file, note })}>
-            {loading ? 'Sending…' : 'Send Refund Proof'}
+            {loading ? 'Sending…' : `${resending ? 'Resend' : 'Send'} ${refundType === 'overpayment' ? 'Overpayment' : 'Expense'} Refund Proof`}
           </button>
           <button className="xm-cancel" onClick={onClose}>Cancel</button>
         </div>

@@ -1,7 +1,11 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { X, ChevronLeft, Copy, Check as CheckIcon, ExternalLink, Download } from 'lucide-react';
 import { PAYMENT_METHODS, fetchReceiverPaymentDetails, openPaymentApp } from '../utils/paymentUtils';
 import './PayOnlineModal.css';
+import { Icon, InlineIcon, CategoryIcon, StatusIcon } from './Icon';
+import { ICONS, CATEGORY_ICON, SUBSCRIPTION_ICON, NOTIF_ICON } from '../utils/iconMap';
+import { Skeleton, SkeletonLines } from './Skeleton';
 
 /**
  * Shared "Pay Online" flow used across GroupDetailScreen, ExpensesScreen and
@@ -19,28 +23,31 @@ import './PayOnlineModal.css';
  *                  The parent should close this modal and open its own
  *                  Upload Screenshot modal, carrying `email` forward.
  */
-export default function PayOnlineModal({ show, onClose, receiverId, itemTitle, amount, onProceed }) {
+export default function PayOnlineModal({ show, ...props }) {
+  // The body mounts fresh each time the modal opens, so it always starts at
+  // step 1 with nothing selected (no state resets inside an effect).
+  if (!show) return null;
+  // Rendered on <body> so no scrolling / positioned parent can clip the backdrop.
+  return createPortal(<PayOnlineModalBody {...props} />, document.body);
+}
+
+function PayOnlineModalBody({ onClose, receiverId, itemTitle, amount, onProceed }) {
   const [step, setStep] = useState(1);
   const [method, setMethod] = useState(null);
   const [receiverDetails, setReceiverDetails] = useState(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(!!receiverId);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    if (!show) return;
-    setStep(1);
-    setMethod(null);
-    setCopied(false);
-    if (receiverId) {
-      setLoading(true);
-      fetchReceiverPaymentDetails(receiverId).then((d) => {
-        setReceiverDetails(d);
-        setLoading(false);
-      });
-    }
-  }, [show, receiverId]);
-
-  if (!show) return null;
+    if (!receiverId) return undefined;
+    let cancelled = false;
+    fetchReceiverPaymentDetails(receiverId).then((d) => {
+      if (cancelled) return;
+      setReceiverDetails(d);
+      setLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [receiverId]);
 
   const config = method ? PAYMENT_METHODS[method] : null;
   const getNumber = () => (method === 'gcash' ? receiverDetails?.gcash_number : receiverDetails?.paymaya_number);
@@ -62,7 +69,7 @@ export default function PayOnlineModal({ show, onClose, receiverId, itemTitle, a
   };
 
   const handleContinue = () => {
-    openPaymentApp(method);
+    openPaymentApp(method, getNumber());
   };
 
   const handleDownloadQr = async () => {
@@ -128,7 +135,7 @@ export default function PayOnlineModal({ show, onClose, receiverId, itemTitle, a
                 style={{ '--method-color': m.color }}
                 onClick={() => selectMethod(m.key)}
               >
-                <span className="pom-method-icon">{m.icon}</span>
+                <span className="pom-method-icon"><Icon as={m.icon} /></span>
                 <span className="pom-method-label">{m.label}</span>
               </button>
             ))}
@@ -138,7 +145,11 @@ export default function PayOnlineModal({ show, onClose, receiverId, itemTitle, a
         {step === 2 && (
           <div className="pom-account-details">
             {loading ? (
-              <div className="pom-loading">Loading account details…</div>
+              <div className="pom-loading" aria-busy="true">
+                <span className="sk-sr-only">Loading</span>
+                <SkeletonLines lines={3} lastWidth="50%" height={12} />
+                <Skeleton height={150} radius={14} style={{ marginTop: 14 }} />
+              </div>
             ) : !hasDetails ? (
               <div className="pom-empty">
                 The admin hasn't added their {config?.label} details yet. Ask them to add it in
@@ -155,7 +166,7 @@ export default function PayOnlineModal({ show, onClose, receiverId, itemTitle, a
                   </div>
                 )}
                 <div className="pom-account-card">
-                  <span className="pom-account-method">{config.icon} {config.label}</span>
+                  <span className="pom-account-method"><InlineIcon as={config.icon} /> {config.label}</span>
                   <span className="pom-account-name">{getName() || 'Household Admin'}</span>
                   <div className="pom-account-number-row">
                     <span className="pom-account-number">{getNumber()}</span>

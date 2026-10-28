@@ -410,3 +410,57 @@
   color: #3B2AAB;
   font-weight: 600;
 }
+/* ── Card stats: roomy tiles + a full-width balance row ── */
+.group-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  margin-top: 12px;
+}
+.group-stat-grid { display: grid; gap: 8px; }
+.group-stat-grid.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.group-stat-grid.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.group-stat-grid .stat {
+  background: #fff;
+  border-radius: 12px;
+  padding: 10px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  box-shadow: 0 1px 4px rgba(59, 42, 171, 0.06);
+}
+.group-stat-grid .stat-label {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 600;
+  color: #9E8FCC;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.group-stat-grid .stat-value {
+  font-size: 13px;
+  font-weight: 800;
+  color: #2D1A7A;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.stat-sub { font-size: 9px; color: #9E8FCC; }
+.group-balance {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 12px;
+}
+.group-balance.owe { background: #FFF1F1; }
+.group-balance.settled { background: #EFFAF3; }
+.group-balance-label { font-size: 11px; font-weight: 600; color: #5A4AAA; }
+.group-balance-value { font-size: 14px; font-weight: 800; white-space: nowrap; }
+.group-balance.owe .group-balance-value { color: #e53e3e; }
+.group-balance.settled .group-balance-value { color: #38a169; }

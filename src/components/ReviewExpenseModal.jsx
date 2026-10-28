@@ -2,6 +2,8 @@ import React from 'react';
 import { ClipboardCheck, Check, X } from 'lucide-react';
 import { money, fmtDate, num } from '../utils/expenseEditUtils';
 import './ExpenseModals.css';
+import { Icon, InlineIcon, CategoryIcon, StatusIcon } from './Icon';
+import { ICONS, CATEGORY_ICON, SUBSCRIPTION_ICON, NOTIF_ICON, categoryIconOf } from '../utils/iconMap';
 
 /**
  * Admin review of an expense a member created, shown BEFORE it is approved.
@@ -18,7 +20,7 @@ import './ExpenseModals.css';
  *        onApprove(expense), onReject(expense), onClose()
  */
 export default function ReviewExpenseModal({
-  expense, members = [], icon = '📦', color = '#3B2AAB', loading, onApprove, onReject, onClose,
+  expense, members = [], icon = null, color = '#3B2AAB', loading, onApprove, onReject, onClose,
 }) {
   const memberOf = (uid) => members.find((m) => m.user_id === uid);
   const nameOf = (uid) => memberOf(uid)?.profiles?.full_name || 'Member';
@@ -42,7 +44,7 @@ export default function ReviewExpenseModal({
 
           <div className="xm-summary">
             <div className="xm-summary-top">
-              <div className="xm-cat-icon" style={{ background: `${color}22` }}>{icon}</div>
+              <div className="xm-cat-icon" style={{ background: `${color}22`, color }}>{icon || <CategoryIcon category={expense.category} tile={false} />}</div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <p className="xm-summary-title">{expense.title}</p>
                 <p className="xm-summary-amount">{money(expense.amount)}</p>
@@ -50,7 +52,7 @@ export default function ReviewExpenseModal({
             </div>
 
             <div className="xm-meta-row">
-              <span className="xm-meta-pill">{icon} {expense.category}</span>
+              <span className="xm-meta-pill"><InlineIcon as={categoryIconOf(expense.category)} size={12} /> {expense.category}</span>
               {expense.due_date && <span className="xm-meta-pill">Due {fmtDate(expense.due_date)}</span>}
               {expense.expense_date && <span className="xm-meta-pill">Added {fmtDate(expense.expense_date)}</span>}
               <span className="xm-meta-pill">{expense.split_type === 'custom' ? 'Custom split' : 'Equal split'}</span>
@@ -73,7 +75,7 @@ export default function ReviewExpenseModal({
 
           {mismatch && (
             <div className="xm-box xm-red" style={{ textAlign: 'left', width: '100%', boxSizing: 'border-box' }}>
-              ⚠️ The shares add up to {money(total)}, but the expense is {money(expense.amount)}.
+              <InlineIcon as={ICONS.warning} /> The shares add up to {money(total)}, but the expense is {money(expense.amount)}.
             </div>
           )}
 

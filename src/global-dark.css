@@ -27,8 +27,8 @@
   --text-secondary: #AE96FF;
   --text-muted: #6B5FA0;
   --border-color: #2D2A5E;
-  --input-bg: #2A2550;
-  --input-border: #3D3A6E;
+  --input-bg: hsla(248, 42%, 16%, 1);   /* same surface as the pickers (Category, dates) */
+  --input-border: hsla(250, 45%, 29%, 1);
   --icon-bg: #2D2A5E;
   --nav-bg: #1a1635;
   --nav-border: #2D2A5E;
@@ -267,5 +267,88 @@
 [data-theme="dark"] .detail-preset-btn.active,
 [data-theme="dark"] .subscription-preset-btn.active {
   background: var(--icon-bg) !important;
+  border-color: var(--accent) !important;
+}
+
+/* ── Search bars: the wrapper is the pill, the input inside is see-through ──
+   (the generic "input" rule above would otherwise paint a second pill inside) */
+[data-theme="dark"] .search-input-wrap,
+[data-theme="dark"] .search-filter-merged,
+[data-theme="dark"] .detail-expense-search {
+  background: var(--input-bg) !important;
+  border: 1.5px solid var(--input-border) !important;
+  box-shadow: none !important;
+}
+
+[data-theme="dark"] .search-input-wrap input,
+[data-theme="dark"] .search-filter-merged input,
+[data-theme="dark"] .detail-expense-search input {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  color: var(--text-primary) !important;
+}
+
+[data-theme="dark"] .search-input-wrap input::placeholder,
+[data-theme="dark"] .search-filter-merged input::placeholder,
+[data-theme="dark"] .detail-expense-search input::placeholder {
+  color: var(--text-muted) !important;
+}
+
+[data-theme="dark"] .search-filter-merged .filter-btn {
+  background: transparent !important;
+  border: none !important;
+  border-left: 1px solid var(--input-border) !important;
+}
+
+/* ── Fields with a prefix (₱ amount): the wrapper is the field, the input inside is clear ── */
+[data-theme="dark"] .aem-amount input,
+[data-theme="dark"] .aem-amount input:focus,
+[data-theme="dark"] .xm-amount-wrap input,
+[data-theme="dark"] .xm-amount-wrap input:focus {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+[data-theme="dark"] .aem-input,
+[data-theme="dark"] .aem-amount,
+[data-theme="dark"] .xm-amount-wrap {
+  background: var(--input-bg) !important;
+  border-color: var(--input-border) !important;
+}
+
+/* ── Chat: photo tray inside the message box — the box is the field, the
+   caption textarea inside it is clear ── */
+[data-theme="dark"] .chat-input-wrap.has-tray {
+  background: var(--input-bg) !important;
+  border-color: var(--input-border) !important;
+}
+[data-theme="dark"] .chat-input-wrap.has-tray:focus-within { border-color: var(--accent) !important; }
+[data-theme="dark"] .chat-input-wrap.has-tray .chat-text-input {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+[data-theme="dark"] .chat-tray-add { border-color: var(--input-border) !important; color: var(--accent) !important; }
+[data-theme="dark"] .chat-tray-remove { border-color: var(--card-bg) !important; }
+[data-theme="dark"] .chat-pick-actions,
+[data-theme="dark"] .chat-input-bar {
+  background: var(--card-bg) !important;
+  border-top-color: var(--border-color) !important;
+}
+[data-theme="dark"] .chat-pick-btn {
+  background: var(--input-bg) !important;
+  border-color: var(--input-border) !important;
+  color: var(--text-primary) !important;
+}
+[data-theme="dark"] .chat-pick-send {
+  background: #3B2AAB !important;
+  border-color: #3B2AAB !important;
+  color: #fff !important;
+}
+[data-theme="dark"] .chat-send-count {
+  background: var(--card-bg) !important;
+  color: var(--accent) !important;
   border-color: var(--accent) !important;
 }

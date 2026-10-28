@@ -8,11 +8,18 @@ import {
 import { Search, Filter, X, ChevronDown, FileText, Eye, Download, Users, Check } from 'lucide-react';
 import TopBar from '../components/TopBar';
 import BottomNav from '../components/BottomNav';
+import SelectField from '../components/SelectField';
+import DatePickerField from '../components/DatePickerField';
 import {
   computeReport, periodLabel, statementFromReport, statementFromMonthly,
-  exportReportPdf, datePresets, REPORT_CATEGORIES, peso,
+  exportReportPdf, datePresets, REPORT_CATEGORIES, peso, refundsForExpense, statementRefunds, toDeletionRefundEntries, toOverpaidRefundEntries,
 } from '../utils/reportUtils';
+import { fetchAwaitingRefundsMap, fetchDeletionRefundsMap, deletionStateOf, fetchConfirmedDeletionRefunds } from '../utils/refundsOwed';
 import './ReportsScreen.css';
+import { Icon, InlineIcon, CategoryIcon, StatusIcon } from '../components/Icon';
+import { ICONS, CATEGORY_ICON, SUBSCRIPTION_ICON, NOTIF_ICON } from '../utils/iconMap';
+import { useCachedState, useScreenLoad } from '../utils/screenCache';
+import { LoadGate, ReportsSkeleton } from '../components/Skeleton';
 
 const COLORS = ['#3B2AAB', '#2D1A7A', '#D4C5FF', '#AE96FF', '#6B46C1', '#9F7AEA', '#7C3AED', '#C4B5FD'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -70,29 +77,30 @@ export default function ReportsScreen() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const [profile, setProfile] = useState(null);
-  const [currentUser, setCurrentUser] = useState(null);
-  const [household, setHousehold] = useState(null);
-  const [allHouseholds, setAllHouseholds] = useState([]);
-  const [selectedHousehold, setSelectedHousehold] = useState(null);
-  const [notifications, setNotifications] = useState([]);
-  const [unreadCount, setUnreadCount] = useState(0);
-  const [householdMembers, setHouseholdMembers] = useState([]);
-  const [selectedMemberId, setSelectedMemberId] = useState(null); // for member filter (admin only)
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [profile, setProfile] = useCachedState('reports', 'profile', null);
+  const [currentUser, setCurrentUser] = useCachedState('reports', 'currentUser', null);
+  const [household, setHousehold] = useCachedState('reports', 'household', null);
+  const [allHouseholds, setAllHouseholds] = useCachedState('reports', 'allHouseholds', []);
+  const [selectedHousehold, setSelectedHousehold] = useCachedState('reports', 'selectedHousehold', null);
+  const [notifications, setNotifications] = useCachedState('reports', 'notifications', []);
+  const [unreadCount, setUnreadCount] = useCachedState('reports', 'unreadCount', 0);
+  const [householdMembers, setHouseholdMembers] = useCachedState('reports', 'householdMembers', []);
+  const [selectedMemberId, setSelectedMemberId] = useCachedState('reports', 'selectedMemberId', null); // for member filter (admin only)
+  const [isAdmin, setIsAdmin] = useCachedState('reports', 'isAdmin', false);
 
   // Data
-  const [yearlyTotal, setYearlyTotal] = useState(0);
-  const [lastYearTotal, setLastYearTotal] = useState(0);
-  const [monthlyData, setMonthlyData] = useState([]);
-  const [categoryData, setCategoryData] = useState([]);
-  const [pendingBalances, setPendingBalances] = useState(0);
-  const [lastYearPending, setLastYearPending] = useState(0);
-  const [pendingByCategory, setPendingByCategory] = useState([]);
-  const [statementHistory, setStatementHistory] = useState([]);
-  const [recentActivity, setRecentActivity] = useState([]);
-  const [reportSchedule, setReportSchedule] = useState(null);
-  const [savedReports, setSavedReports] = useState([]);     // reports saved in Statement History
+  const [yearlyTotal, setYearlyTotal] = useCachedState('reports', 'yearlyTotal', 0);
+  const [lastYearTotal, setLastYearTotal] = useCachedState('reports', 'lastYearTotal', 0);
+  const [monthlyData, setMonthlyData] = useCachedState('reports', 'monthlyData', []);
+  const [categoryData, setCategoryData] = useCachedState('reports', 'categoryData', []);
+  const [pendingBalances, setPendingBalances] = useCachedState('reports', 'pendingBalances', 0);
+  const [lastYearPending, setLastYearPending] = useCachedState('reports', 'lastYearPending', 0);
+  const [pendingByCategory, setPendingByCategory] = useCachedState('reports', 'pendingByCategory', []);
+  const [owedRefunds, setOwedRefunds] = useCachedState('reports', 'owedRefunds', []);       // overpayment refunds the owner still owes
+  const [statementHistory, setStatementHistory] = useCachedState('reports', 'statementHistory', []);
+  const [recentActivity, setRecentActivity] = useCachedState('reports', 'recentActivity', []);
+  const [reportSchedule, setReportSchedule] = useCachedState('reports', 'reportSchedule', null);
+  const [savedReports, setSavedReports] = useCachedState('reports', 'savedReports', []);     // reports saved in Statement History
   const [highlightId, setHighlightId] = useState(null);
   const statementRef = useRef(null);
   const openedFromLink = useRef(false);
@@ -110,7 +118,12 @@ export default function ReportsScreen() {
   const [filterTo, setFilterTo] = useState('');
   const [toast, setToast] = useState(null);
   const [loading, setLoading] = useState(false);
+  const load = useScreenLoad('reports');
   const [showMemberDropdown, setShowMemberDropdown] = useState(false);
+  const [openRefundIds, setOpenRefundIds] = useState(() => new Set()); // expanded refund dropdowns
+  const [showAllRefunds, setShowAllRefunds] = useState(false);
+  const [showAllHistory, setShowAllHistory] = useState(false);
+  const [showAllActivity, setShowAllActivity] = useState(false);
 
   // Generate Report Form  (category_filter: null = all categories)
   const presets = datePresets();
@@ -128,6 +141,8 @@ export default function ReportsScreen() {
     day_of_month: 1,
     custom_interval_days: 30,
     category_filter: null,
+    member_filter: 'all',          // admin only: 'all' (household total) or a user id
+    include_split_details: false,
   });
 
   const showToast = (message, type = 'success') => {
@@ -205,6 +220,11 @@ export default function ReportsScreen() {
     // ── Step 2: Fetch expense_splits for enrichment (best-effort) ──
     const allExpenseIds = allExpenses.map(e => e.id);
     const splitsMap = allExpenseIds.length > 0 ? await fetchExpenseSplits(allExpenseIds) : {};
+    // refunds sent but not yet confirmed by the member — still owed until they approve
+    const refundsMap = await fetchAwaitingRefundsMap(allExpenseIds);
+    // deletion refunds: sent → still paid ('verifying for deletion'); confirmed → settled
+    const deletionMap = await fetchDeletionRefundsMap(allExpenseIds);
+    const deletionOf = (expense, split) => deletionStateOf(split, deletionMap[expense.id]);
 
     // ── Helpers ──────────────────────────────────────────────────────────────
     // Priority: expense_splits table row (most authoritative) → members_split JSONB → 0
@@ -249,6 +269,9 @@ export default function ReportsScreen() {
         // member only counts their real share; a partly paid member counts
         // what has been approved so far.
         const share = Number(userSplit.share_amount) || 0;
+        const deletion = deletionOf(expense, userSplit);
+        if (deletion === 'verifying') return share;  // refund not confirmed yet — still paid
+        if (deletion === 'refunded') return 0;        // the money went back to them
         if (userSplit.status === 'approved') return share;
         return Math.min(Number(userSplit.paid_amount) || 0, share);
       }
@@ -272,6 +295,8 @@ export default function ReportsScreen() {
         // 'approved' = owner confirmed payment — not pending
         // 'pending_verification' = member submitted proof, awaiting owner — already paid by member, not pending
         if (userSplit.status === 'approved' || userSplit.status === 'pending_verification') return 0;
+        // being deleted (deletion refund sent or confirmed) — nothing left to pay
+        if (deletionOf(expense, userSplit)) return 0;
         // 'unpaid' = still owes the whole share; 'partly_paid' = owes the rest
         return Math.max((Number(userSplit.share_amount) || 0) - (Number(userSplit.paid_amount) || 0), 0);
       }
@@ -344,6 +369,17 @@ export default function ReportsScreen() {
     });
     setPendingByCategory(Object.entries(pendingCats).map(([name, value]) => ({ name, value })));
 
+    // ── Card 4: overpayment refunds still owed (any year — they're still owed).
+    //    Kept for every member; the card shows the admin all of them, a member theirs. ──
+    const ownerId = houseData.created_by;
+    setOwedRefunds(
+      allExpenses
+        .filter(e => e.approval_status === 'approved')
+        .flatMap(e => refundsForExpense(splitsMap[e.id], 'all', ownerId, {}, refundsMap[e.id]).map(f => ({
+          ...f, expense_id: e.id, title: e.title, category: e.category, expense_date: e.expense_date,
+        })))
+    );
+
     // ── Statement history: group by month (already scoped to this household) ──
     const monthlyStatements = {};
     thisYearExpenses.forEach(e => {
@@ -360,7 +396,8 @@ export default function ReportsScreen() {
         };
       }
       if (userAmount > 0) {
-        monthlyStatements[key].expenses.push({ ...e, user_share: userAmount });
+        const refunds = refundsForExpense(splitsMap[e.id], targetUserId, ownerId, {}, refundsMap[e.id]);
+        monthlyStatements[key].expenses.push({ ...e, user_share: userAmount, refunds });
         monthlyStatements[key].total += userAmount;
       }
     });
@@ -399,7 +436,8 @@ export default function ReportsScreen() {
     const { data: memberRows } = await supabase
       .from('household_members')
       .select('user_id, role, status')
-      .eq('household_id', householdId);
+      .eq('household_id', householdId)
+      .eq('status', 'active');   // past memberships (left / removed) would list people twice
     if (memberRows && memberRows.length) {
       const userIds = memberRows.map(m => m.user_id);
       const { data: profilesData } = await supabase
@@ -490,11 +528,14 @@ export default function ReportsScreen() {
             day_of_month: schedule.day_of_month,
             custom_interval_days: schedule.custom_interval_days || 30,
             category_filter: schedule.category_filter && schedule.category_filter.length ? schedule.category_filter : null,
+            member_filter: schedule.member_id || 'all',
+            include_split_details: !!schedule.include_split_details,
           });
         }
       } catch { /* table may not exist yet */ }
+      load.done();
     } catch (err) {
-      console.error(err);
+      load.fail(err);
     }
   };
 
@@ -523,6 +564,13 @@ export default function ReportsScreen() {
         if (currentUser?.id && selectedHousehold?.id)
           fetchReportData(selectedHousehold, selectedMemberId || currentUser.id, currentUser.id);
       })
+      // a member confirming a refund settles it (splits don't change then)
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'expense_refunds',
+      }, () => {
+        if (currentUser?.id && selectedHousehold?.id)
+          fetchReportData(selectedHousehold, selectedMemberId || currentUser.id, currentUser.id);
+      })
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
@@ -534,6 +582,10 @@ export default function ReportsScreen() {
 
   const memberNameMap = () =>
     Object.fromEntries(householdMembers.map((m) => [m.user_id, m.profiles?.full_name || 'Member']));
+
+  // The household owner owes overpayment refunds; a member is owed them.
+  const viewerIsOwner = !!currentUser?.id && currentUser.id === selectedHousehold?.created_by;
+  const refundLabel = viewerIsOwner ? 'Needs refund' : 'Refund still needed';
 
   // Tapping the "report ready" notification lands here with ?report=<id>
   /* eslint-disable react-hooks/exhaustive-deps, react-hooks/set-state-in-effect */
@@ -599,6 +651,8 @@ export default function ReportsScreen() {
     if (error) throw error;
     const list = exps || [];
     const splitsMap = list.length ? await fetchExpenseSplits(list.map((e) => e.id)) : {};
+    const refundsMap = await fetchAwaitingRefundsMap(list.map((e) => e.id));
+    const deletionMap = await fetchDeletionRefundsMap(list.map((e) => e.id));
     const names = memberNameMap();
     const result = computeReport({
       expenses: list,
@@ -607,8 +661,20 @@ export default function ReportsScreen() {
       categories: reportForm.category_filter,
       includeSplits: reportForm.include_split_details,
       memberNames: names,
+      ownerId: selectedHousehold.created_by,
+      refundsMap,
+      deletionMap,
     });
-    return { memberId, names, ...result };
+    // "Refunded for deletion of expense": deletion refunds the member approved.
+    // The admin's household / own report lists everyone; a member's only theirs.
+    const everyone = memberId === 'all' || memberId === selectedHousehold.created_by;
+    const catSet = reportForm.category_filter && reportForm.category_filter.length ? new Set(reportForm.category_filter) : null;
+    // "Refunded for overpaid expense": overpayment refunds the member approved — same rule.
+    const confirmedOf = async (type) => (await fetchConfirmedDeletionRefunds(selectedHousehold.id, reportForm.from, reportForm.to, type))
+      .filter((f) => (everyone || f.user_id === memberId) && (!catSet || catSet.has(f.category)))
+      .map((f) => ({ ...f, name: names[f.user_id] || 'Member' }));
+    const [deletionRefunds, overpaidRefunds] = await Promise.all([confirmedOf('expense_deletion'), confirmedOf('overpayment')]);
+    return { memberId, names, ...result, deletionRefunds, overpaidRefunds };
   };
 
   const memberLabelOf = (memberId, names) => (memberId === 'all' ? 'All Members' : (names[memberId] || 'Member'));
@@ -619,7 +685,7 @@ export default function ReportsScreen() {
     setLoading(true);
     try {
       const built = await buildReportFromForm();
-      if (built.count === 0) {
+      if (built.count === 0 && !built.deletionRefunds.length && !built.overpaidRefunds.length) {
         showToast('No expenses match these filters.', 'error');
         setLoading(false);
         return;
@@ -641,7 +707,8 @@ export default function ReportsScreen() {
           paid: built.paid,
           pending: built.pending,
           expense_count: built.count,
-          rows: built.rows,
+          // approved deletion / overpayment refunds ride along in rows (see toDeletionRefundEntries)
+          rows: [...built.rows, ...toDeletionRefundEntries(built.deletionRefunds), ...toOverpaidRefundEntries(built.overpaidRefunds)],
         })
         .select()
         .single();
@@ -665,7 +732,7 @@ export default function ReportsScreen() {
         await supabase.from('notifications').insert({
           user_id: currentUser.id,
           title: '📄 Your report is ready',
-          message: `${selectedHousehold.name} · ${label} · ${who}. Total ${peso(built.total)} (paid ${peso(built.paid)}, pending ${peso(built.pending)}) across ${built.count} expense${built.count === 1 ? '' : 's'}.`,
+          message: `${selectedHousehold.name} · ${label} · ${who}. Total ${peso(built.total)} (paid ${peso(built.paid)}, pending ${peso(built.pending)}) across ${built.count} expense${built.count === 1 ? '' : 's'}.${built.refundTotal > 0 ? ` ${refundLabel}: ${peso(built.refundTotal)}.` : ''}`,
           type: 'report_generated',
           link_path: '/reports',
           link_query: `report=${saved.id}`,
@@ -676,7 +743,7 @@ export default function ReportsScreen() {
       // 4. refresh history and show the new report
       await fetchReportData(selectedHousehold, selectedMemberId || currentUser?.id, currentUser?.id);
       setShowGenerateModal(false);
-      showToast('Report generated! It’s in Statement History ✅');
+      showToast('Report generated! It’s in Statement History');
       setHighlightId(saved.id);
       setTimeout(() => statementRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 250);
       setTimeout(() => setHighlightId(null), 4500);
@@ -697,7 +764,7 @@ export default function ReportsScreen() {
         setLoading(true);
         const built = await buildReportFromForm();
         setLoading(false);
-        if (built.count === 0) { showToast('No expenses match these filters.', 'error'); return; }
+        if (built.count === 0 && !built.deletionRefunds.length && !built.overpaidRefunds.length) { showToast('No expenses match these filters.', 'error'); return; }
         st = {
           period: periodLabel(reportForm.from, reportForm.to),
           memberLabel: memberLabelOf(built.memberId, built.names),
@@ -705,9 +772,16 @@ export default function ReportsScreen() {
           includeSplits: reportForm.include_split_details,
           total: built.total, paid: built.paid, pending: built.pending,
           rows: built.rows,
+          deletionRefunds: built.deletionRefunds,
+          overpaidRefunds: built.overpaidRefunds,
         };
       }
-      exportReportPdf({ statement: st, householdName: selectedHousehold?.name, generatedBy: profile?.full_name });
+      exportReportPdf({
+        statement: { ...st, refunds: statementRefunds(st.rows).map(f => ({ ...f, name: f.name || memberNameMap()[f.user_id] })) },
+        householdName: selectedHousehold?.name,
+        generatedBy: profile?.full_name,
+        refundLabel,
+      });
 
       try {
         await supabase.from('report_activity').insert({
@@ -718,7 +792,7 @@ export default function ReportsScreen() {
         });
       } catch { /* table may not exist */ }
 
-      showToast('PDF exported! ✅');
+      showToast('PDF exported!');
     } catch (err) {
       console.error(err);
       setLoading(false);
@@ -755,6 +829,9 @@ export default function ReportsScreen() {
         day_of_month: scheduleForm.day_of_month,
         custom_interval_days: scheduleForm.custom_interval_days,
         category_filter: scheduleForm.category_filter || [],
+        // null = All Members (household total); a member's schedule is always their own
+        member_id: isAdmin ? (scheduleForm.member_filter === 'all' ? null : scheduleForm.member_filter) : currentUser.id,
+        include_split_details: scheduleForm.include_split_details,
         next_scheduled_at: computeNextReportDate().toISOString(),
         is_active: true,
       };
@@ -770,7 +847,7 @@ export default function ReportsScreen() {
       if (error) throw error;
 
       setReportSchedule(data);   // so "Next report" shows the saved date right away
-      showToast('Schedule saved! ✅');
+      showToast('Schedule saved!');
       setShowGenerateModal(false);
     } catch (err) {
       console.error('Save schedule failed:', err);
@@ -789,6 +866,8 @@ export default function ReportsScreen() {
   const yoyPending = getYoYChange(pendingBalances, lastYearPending);
 
   const names = memberNameMap();
+  // profile pictures for the refund rows (initials when there is none)
+  const avatarOf = Object.fromEntries(householdMembers.map((m) => [m.user_id, m.profiles?.avatar_url || null]));
   const viewedMemberLabel = names[selectedMemberId || currentUser?.id] || profile?.full_name || 'Me';
   const historyItems = [
     ...savedReports.map((rep) => ({
@@ -817,6 +896,47 @@ export default function ReportsScreen() {
     return true;
   });
 
+  // Card 4: the admin sees every refund they still owe (or one member's, when
+  // viewing that member); a member sees the refunds owed to them.
+  const refundScopeId = viewerIsOwner ? (selectedMemberId || currentUser?.id) : currentUser?.id;
+  const visibleRefunds = owedRefunds
+    .filter(f => refundScopeId === selectedHousehold?.created_by || f.user_id === refundScopeId)
+    .map(f => ({ ...f, name: names[f.user_id] || 'Member' }));
+  const visibleRefundTotal = visibleRefunds.reduce((sum, f) => sum + f.amount, 0);
+  const visibleRefundAwaiting = visibleRefunds.reduce((sum, f) => sum + (f.awaiting || 0), 0);
+  // One entry per expense (an expense can owe several members) — each opens as a dropdown.
+  const refundGroups = Object.values(visibleRefunds.reduce((acc, f) => {
+    const g = acc[f.expense_id] || (acc[f.expense_id] = {
+      expense_id: f.expense_id, title: f.title, category: f.category, expense_date: f.expense_date, total: 0, members: [],
+    });
+    g.total += f.amount;
+    g.members.push(f);
+    return acc;
+  }, {})).sort((a, b) => String(b.expense_date).localeCompare(String(a.expense_date)));
+  const refundChartData = [...refundGroups]
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 5)
+    .map(g => ({ key: g.expense_id, label: g.title, value: Math.round(g.total * 100) / 100 }));
+  const REFUND_PREVIEW = 3;
+  const shownRefundGroups = showAllRefunds ? refundGroups : refundGroups.slice(0, REFUND_PREVIEW);
+  const toggleRefundGroup = (id) => setOpenRefundIds(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
+  const HISTORY_PREVIEW = 4;
+  const ACTIVITY_PREVIEW = 3;
+  const fmtShortDate = (d) => new Date(d).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' });
+
+  const memberOptions = [
+    { value: 'all', label: 'All Members (Household Total)' },
+    ...householdMembers.map((m) => ({
+      value: m.user_id,
+      label: m.profiles?.full_name || 'Member',
+      avatar: { url: m.profiles?.avatar_url, name: m.profiles?.full_name },
+    })),
+  ];
   const categoryOptions = Array.from(new Set([...REPORT_CATEGORIES, ...categoryData.map((c) => c.name)]));
 
   return (
@@ -844,7 +964,7 @@ export default function ReportsScreen() {
             <h2 className="reports-title">Reports & Analytics</h2>
             <p className="reports-subtitle">Top Spending & Balances</p>
           </div>
-          <button className="export-icon-btn" onClick={() => setShowGenerateModal(true)}>
+          <button aria-label="Generate report" className="export-icon-btn" onClick={() => setShowGenerateModal(true)}>
             <FileText size={20}/>
           </button>
         </div>
@@ -863,7 +983,7 @@ export default function ReportsScreen() {
                   className="household-switcher-pill"
                   onClick={() => { if (!canHover()) { setShowMemberDropdown(false); setShowHouseholdDropdown(!showHouseholdDropdown); } }}
                 >
-                  <span className="pill-text">🏠 {selectedHousehold?.name}</span>
+                  <span className="pill-text"><InlineIcon as={ICONS.household} /> {selectedHousehold?.name}</span>
                   <ChevronDown size={14} className={`pill-chevron ${showHouseholdDropdown ? 'open' : ''}`}/>
                 </button>
                 {showHouseholdDropdown && (
@@ -899,7 +1019,7 @@ export default function ReportsScreen() {
                   <ChevronDown size={14} className={`pill-chevron ${showMemberDropdown ? 'open' : ''}`}/>
                 </button>
                 {showMemberDropdown && (
-                  <div className="household-dropdown align-right">
+                  <div className={`household-dropdown ${allHouseholds.length > 1 ? 'align-right' : ''}`}>
                     {householdMembers.map(m => (
                       <button key={m.user_id} className={`household-option ${selectedMemberId === m.user_id ? 'active' : ''}`} onClick={() => handleMemberChange(m.user_id)}>
                         <span className="household-option-name">{m.profiles?.full_name}</span>
@@ -916,6 +1036,7 @@ export default function ReportsScreen() {
       </div>
 
       <div className="reports-content">
+        <LoadGate load={load} skeleton={<ReportsSkeleton />} onRetry={fetchData}>
 
         {/* Card 1 — Total Household Spent (paid splits across ALL households) */}
         <div className="report-card">
@@ -1071,6 +1192,103 @@ export default function ReportsScreen() {
           )}
         </div>
 
+        {/* Card 4 — Overpayment refunds still owed (admin: to pay, member: owed to them).
+            Refunds sent but not yet confirmed by the member still count. */}
+        <div className="report-card refund-card">
+          <div className="refund-card-head">
+            <div>
+              <p className="report-card-label">{viewerIsOwner ? 'Refunds You Still Need to Pay' : 'Refunds the Admin Still Owes You'}</p>
+              <p className="report-card-amount">₱ {visibleRefundTotal.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</p>
+              {refundGroups.length > 0 && (
+                <p className="refund-card-sub">
+                  {refundGroups.length} expense{refundGroups.length === 1 ? '' : 's'}
+                  {viewerIsOwner && ` · ${new Set(visibleRefunds.map(f => f.user_id)).size} member${new Set(visibleRefunds.map(f => f.user_id)).size === 1 ? '' : 's'}`}
+                </p>
+              )}
+            </div>
+            <span className="refund-card-badge"><InlineIcon as={ICONS.refund} size={12} /> Overpaid</span>
+          </div>
+          {visibleRefundAwaiting > 0 && (
+            <p className="refund-card-awaiting">
+              <InlineIcon as={ICONS.pending} /> {peso(visibleRefundAwaiting)} {viewerIsOwner ? 'sent — waiting for the member to confirm' : 'sent to you — confirm it once received'}
+            </p>
+          )}
+
+          {refundGroups.length > 0 ? (
+            <>
+              <div style={{ width: '100%', height: refundChartData.length * 30 + 10 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={refundChartData} layout="vertical" margin={{ left: 0, right: 12, top: 4, bottom: 4 }}>
+                    <defs>
+                      <linearGradient id="refundBar" x1="0" y1="0" x2="1" y2="0">
+                        <stop offset="0%" stopColor="#3B2AAB" />
+                        <stop offset="100%" stopColor="#AE96FF" />
+                      </linearGradient>
+                    </defs>
+                    <XAxis type="number" hide />
+                    <YAxis type="category" dataKey="label" width={90} tick={{ fontSize: 10, fill: '#2D1A7A', fontWeight: 600 }} axisLine={false} tickLine={false} />
+                    <Tooltip cursor={{ fill: '#F5F3FF' }} formatter={(value) => [`₱${Number(value).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`, 'To refund']} />
+                    <Bar dataKey="value" name="To refund" fill="url(#refundBar)" radius={[0, 6, 6, 0]} barSize={14} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+
+              <div className="refund-group-list">
+                {shownRefundGroups.map(g => {
+                  const open = openRefundIds.has(g.expense_id);
+                  return (
+                    <div key={g.expense_id} className={`refund-group ${open ? 'open' : ''}`}>
+                      <button type="button" className="refund-group-head" onClick={() => toggleRefundGroup(g.expense_id)} aria-expanded={open}>
+                        <span className="refund-group-icon">{(g.title || '?').charAt(0).toUpperCase()}</span>
+                        <span className="refund-group-info">
+                          <span className="refund-group-title">{g.title}</span>
+                          <span className="refund-group-meta">
+                            {fmtShortDate(g.expense_date)}
+                            {viewerIsOwner && ` · ${g.members.length} member${g.members.length === 1 ? '' : 's'}`}
+                          </span>
+                        </span>
+                        <span className="refund-group-amt">{peso(g.total)}</span>
+                        <ChevronDown size={16} className={`refund-group-chev ${open ? 'open' : ''}`} />
+                      </button>
+                      {open && (
+                        <div className="refund-group-body">
+                          {g.members.map(f => (
+                            <div key={f.user_id} className="refund-member-row">
+                              <span className="refund-member-avatar">
+                                {avatarOf[f.user_id]
+                                  ? <img src={avatarOf[f.user_id]} alt="" className="refund-member-avatar-img" />
+                                  : (f.name || 'M').split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
+                              </span>
+                              <span className="refund-member-info">
+                                <span className="refund-member-name">{viewerIsOwner ? `Refund to ${f.name}` : 'Your overpayment'}</span>
+                                {f.awaiting > 0 && <span className="refund-member-note">{peso(f.awaiting)} sent · awaiting confirmation</span>}
+                              </span>
+                              <span className="refund-member-right">
+                                <span className="refund-member-amt">{peso(f.amount)}</span>
+                                <span className="refund-owed-tag">Overpaid</span>
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              {refundGroups.length > REFUND_PREVIEW && (
+                <button type="button" className="report-more-btn" onClick={() => setShowAllRefunds(v => !v)}>
+                  {showAllRefunds ? 'Show less' : `Show all ${refundGroups.length} expenses`}
+                  <ChevronDown size={14} className={`pill-chevron ${showAllRefunds ? 'open' : ''}`} />
+                </button>
+              )}
+            </>
+          ) : (
+            <div className="refund-empty">
+              <p className="no-data" style={{ margin: 0 }}>{viewerIsOwner ? 'No refunds to send' : 'No refunds owed to you'}</p>
+            </div>
+          )}
+        </div>
+
         {/* Search & Filter */}
         <div className="search-filter-row">
           <div className="search-input-wrap">
@@ -1082,60 +1300,88 @@ export default function ReportsScreen() {
 
         {/* Statement History */}
         <div className="report-section" ref={statementRef}>
-          <p className="report-section-title">Statement History</p>
-          <div className="statement-table">
-            <div className="statement-header-row">
-              <span>ID</span>
-              <span>Period</span>
-              <span>Total</span>
-              <span>Date</span>
-              <span>Status</span>
-              <span></span>
-            </div>
-            {historyItems.length === 0 ? (
-              <p className="no-data">No statements yet</p>
-            ) : (
-              historyItems.map((item) => {
+          <div className="report-section-head">
+            <p className="report-section-title">Statement History</p>
+            {historyItems.length > 0 && <span className="report-count-chip">{historyItems.length}</span>}
+          </div>
+          {historyItems.length === 0 ? (
+            <p className="no-data">No statements yet</p>
+          ) : (
+            <div className="stmt-list">
+              {(showAllHistory ? historyItems : historyItems.slice(0, HISTORY_PREVIEW)).map((item) => {
                 const st = item.statement;
                 const statusClass = item.kind === 'scheduled' ? 'scheduled' : item.kind === 'auto' ? 'auto' : 'finalized';
                 const statusText = item.kind === 'scheduled' ? 'Scheduled' : item.kind === 'auto' ? 'Auto' : 'Finalized';
+                const icon = item.kind === 'scheduled' ? ICONS.schedule : item.kind === 'auto' ? ICONS.auto : ICONS.report;
                 return (
-                  <div key={item.key} className={`statement-row ${highlightId === item.key ? 'highlight' : ''}`}>
-                    <span className="statement-id">{item.kind === 'auto' ? 'AUTO' : `RPT-${String(st.id).slice(0, 4).toUpperCase()}`}</span>
-                    <span className="statement-period">{st.period}</span>
-                    <span className="statement-total">{peso(st.total)}</span>
-                    <span className="statement-date">{new Date(item.createdDate).toLocaleDateString()}</span>
-                    <span className={`statement-status ${statusClass}`}>{statusText}</span>
-                    <div className="statement-actions">
-                      <button className="icon-btn-report" onClick={() => { setSelectedStatement(st); setShowStatementDetail(true); }}><Eye size={14}/></button>
-                      <button className="icon-btn-report" onClick={() => handleExportPDF(st)}><Download size={14}/></button>
+                  <div key={item.key} className={`stmt-item ${highlightId === item.key ? 'highlight' : ''}`}>
+                    <span className={`stmt-icon ${statusClass}`}><Icon as={icon} /></span>
+                    <button type="button" className="stmt-main" onClick={() => { setSelectedStatement(st); setShowStatementDetail(true); }}>
+                      <span className="stmt-period">{st.period}</span>
+                      <span className="stmt-meta">
+                        {item.kind === 'auto' ? 'AUTO' : `RPT-${String(st.id).slice(0, 4).toUpperCase()}`} · {fmtShortDate(item.createdDate)}
+                      </span>
+                      <span className="stmt-total-row">
+                        <span className="stmt-total">{peso(st.total)}</span>
+                        <span className={`statement-status ${statusClass}`}><StatusIcon status={statusText} />{statusText}</span>
+                      </span>
+                    </button>
+                    <div className="stmt-actions">
+                      <button className="icon-btn-report" aria-label="View" onClick={() => { setSelectedStatement(st); setShowStatementDetail(true); }}><Eye size={15}/></button>
+                      <button className="icon-btn-report" aria-label="Download PDF" onClick={() => handleExportPDF(st)}><Download size={15}/></button>
                     </div>
                   </div>
                 );
-              })
-            )}
-          </div>
+              })}
+            </div>
+          )}
+          {historyItems.length > HISTORY_PREVIEW && (
+            <button type="button" className="report-more-btn" onClick={() => setShowAllHistory(v => !v)}>
+              {showAllHistory ? 'Show less' : `Show all ${historyItems.length} statements`}
+              <ChevronDown size={14} className={`pill-chevron ${showAllHistory ? 'open' : ''}`} />
+            </button>
+          )}
         </div>
 
         {/* Recent Activity */}
         <div className="report-section">
-          <p className="report-section-title">Recent Report Activity</p>
+          <div className="report-section-head">
+            <p className="report-section-title">Recent Report Activity</p>
+            {filteredActivity.length > 0 && <span className="report-count-chip">{filteredActivity.length}</span>}
+          </div>
           {filteredActivity.length === 0 ? (
             <p className="no-data">No recent activity</p>
           ) : (
-            filteredActivity.map(a => (
-              <div key={a.id} className="activity-item">
-                <div className="activity-avatar">
-                  {a.profiles?.avatar_url ? <img src={a.profiles.avatar_url} alt="" className="activity-avatar-img"/> : a.profiles?.full_name?.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
-                </div>
-                <div className="activity-info">
-                  <p className="activity-desc">{a.description}</p>
-                  <p className="activity-time">{getTimeAgo(a.created_at)}</p>
-                </div>
-              </div>
-            ))
+            <div className={`activity-list ${showAllActivity ? 'expanded' : ''}`}>
+              {(showAllActivity ? filteredActivity : filteredActivity.slice(0, ACTIVITY_PREVIEW)).map(a => {
+                const exported = a.action === 'exported';
+                return (
+                  <div key={a.id} className="activity-item activity-item--v2">
+                    <div className={`activity-icon ${exported ? 'exported' : 'generated'}`}>
+                      {a.profiles?.avatar_url
+                        ? <img src={a.profiles.avatar_url} alt="" className="activity-avatar-img"/>
+                        : exported ? <Download size={15}/> : <FileText size={15}/>}
+                    </div>
+                    <div className="activity-info">
+                      <p className="activity-desc">{a.description}</p>
+                      <p className="activity-time">
+                        <span className={`activity-tag ${exported ? 'exported' : 'generated'}`}>{exported ? 'Exported' : 'Generated'}</span>
+                        {getTimeAgo(a.created_at)}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {filteredActivity.length > ACTIVITY_PREVIEW && (
+            <button type="button" className="report-more-btn" onClick={() => setShowAllActivity(v => !v)}>
+              {showAllActivity ? 'Show less' : `Show all ${filteredActivity.length} activities`}
+              <ChevronDown size={14} className={`pill-chevron ${showAllActivity ? 'open' : ''}`} />
+            </button>
           )}
         </div>
+        </LoadGate>
       </div>
 
       {/* Generate & Export Modal */}
@@ -1144,7 +1390,7 @@ export default function ReportsScreen() {
           <div className="generate-modal">
             <div className="modal-header">
               <h2>Generate & Export Report</h2>
-              <button className="modal-close" onClick={() => setShowGenerateModal(false)}><X size={18}/></button>
+              <button aria-label="Close" className="modal-close" onClick={() => setShowGenerateModal(false)}><X size={18}/></button>
             </div>
 
             <div className="modal-tabs">
@@ -1157,10 +1403,23 @@ export default function ReportsScreen() {
                 <>
                   <div className="form-group">
                     <label>Date range</label>
-                    <div className="date-range-row">
-                      <input type="date" value={reportForm.from} max={reportForm.to || undefined} onChange={e => setReportForm(prev => ({ ...prev, from: e.target.value }))} />
-                      <span className="date-range-sep">to</span>
-                      <input type="date" value={reportForm.to} min={reportForm.from || undefined} onChange={e => setReportForm(prev => ({ ...prev, to: e.target.value }))} />
+                    <div className="date-range-stack">
+                      <span className="date-range-label">From</span>
+                      <DatePickerField
+                        value={reportForm.from}
+                        max={reportForm.to || undefined}
+                        placeholder="Start date"
+                        allowClear={false}
+                        onChange={v => setReportForm(prev => ({ ...prev, from: v }))}
+                      />
+                      <span className="date-range-label">To</span>
+                      <DatePickerField
+                        value={reportForm.to}
+                        min={reportForm.from || undefined}
+                        placeholder="End date"
+                        allowClear={false}
+                        onChange={v => setReportForm(prev => ({ ...prev, to: v }))}
+                      />
                     </div>
                     <div className="preset-row">
                       <button type="button" className="preset-btn" onClick={() => setReportForm(prev => ({ ...prev, ...datePresets().thisMonth }))}>This month</button>
@@ -1181,13 +1440,12 @@ export default function ReportsScreen() {
                   {isAdmin ? (
                     <div className="form-group">
                       <label>Member</label>
-                      <div className="select-wrap">
-                        <select value={reportForm.member_filter} onChange={e => setReportForm(prev => ({ ...prev, member_filter: e.target.value }))}>
-                          <option value="all">All Members (Household Total)</option>
-                          {householdMembers.map(m => (<option key={m.user_id} value={m.user_id}>{m.profiles?.full_name}</option>))}
-                        </select>
-                        <ChevronDown size={14} className="select-arrow"/>
-                      </div>
+                      <SelectField
+                        label="Member"
+                        options={memberOptions}
+                        value={reportForm.member_filter}
+                        onChange={v => setReportForm(prev => ({ ...prev, member_filter: v }))}
+                      />
                     </div>
                   ) : (
                     <div className="report-for-note">Report for <strong>{profile?.full_name || 'you'}</strong></div>
@@ -1242,15 +1500,36 @@ export default function ReportsScreen() {
                     />
                   </div>
 
+                  {isAdmin ? (
+                    <div className="form-group">
+                      <label>Member</label>
+                      <SelectField
+                        label="Member"
+                        options={memberOptions}
+                        value={scheduleForm.member_filter}
+                        onChange={v => setScheduleForm(prev => ({ ...prev, member_filter: v }))}
+                      />
+                    </div>
+                  ) : (
+                    <div className="report-for-note">Report for <strong>{profile?.full_name || 'you'}</strong></div>
+                  )}
+
+                  <SwitchRow
+                    checked={scheduleForm.include_split_details}
+                    onChange={v => setScheduleForm(prev => ({ ...prev, include_split_details: v }))}
+                    title="Include per-member split details"
+                    hint="Adds each member’s share and payment for every expense"
+                  />
+
                   {reportSchedule && (
                     <div className="schedule-info">
-                      <p>✅ Schedule active</p>
+                      <p><InlineIcon as={ICONS.approved} /> Schedule active</p>
                       <p>Next report: {new Date(reportSchedule.next_scheduled_at).toLocaleDateString()}</p>
                     </div>
                   )}
 
                   <p className="schedule-note">
-                    🔔 On each report date at 8:00 AM your report is saved to Statement History and you’ll get a notification (and a phone push if you allowed notifications). Turn this off with “Report Schedules” in Settings.
+                    <InlineIcon as={ICONS.bell} /> On each report date at 8:00 AM your report is saved to Statement History and you’ll get a notification (and a phone push if you allowed notifications). Turn this off with “Report Schedules” in Settings.
                   </p>
 
                   <button className="generate-btn" onClick={handleSaveSchedule} disabled={loading}>{loading ? 'Saving...' : 'Save Schedule'}</button>
@@ -1269,18 +1548,20 @@ export default function ReportsScreen() {
           'paid': { color: '#065F46', background: '#D1FAE5' },
           'partly paid': { color: '#c05621', background: '#FEEBC8' },
           'verifying': { color: '#856404', background: '#FFF3CD' },
+          'verifying for deletion': { color: '#6B46C1', background: '#EDE9FF' },
+          'refunded for deletion': { color: '#2C7A7B', background: '#E6FFFA' },
         }[status] || { color: '#856404', background: '#FFF3CD' });
         return (
           <div className="modal-overlay-reports">
             <div className="generate-modal">
               <div className="modal-header">
                 <h2>{st.period}</h2>
-                <button className="modal-close" onClick={() => setShowStatementDetail(false)}><X size={18}/></button>
+                <button aria-label="Close" className="modal-close" onClick={() => setShowStatementDetail(false)}><X size={18}/></button>
               </div>
               <div className="modal-scroll">
                 <div className="detail-tags">
-                  <span className="detail-tag">{st.kind === 'scheduled' ? '🗓️ Scheduled' : st.kind === 'auto' ? '⚙️ Auto' : '📄 Custom'}</span>
-                  <span className="detail-tag">👤 {st.memberLabel}</span>
+                  <span className="detail-tag"><InlineIcon as={st.kind === 'scheduled' ? ICONS.schedule : st.kind === 'auto' ? ICONS.auto : ICONS.report} size={12} />{st.kind === 'scheduled' ? 'Scheduled' : st.kind === 'auto' ? 'Auto' : 'Custom'}</span>
+                  <span className="detail-tag"><InlineIcon as={ICONS.member} size={12} />{st.memberLabel}</span>
                   <span className="detail-tag">{st.categories && st.categories.length ? st.categories.join(', ') : 'All categories'}</span>
                 </div>
 
@@ -1307,6 +1588,78 @@ export default function ReportsScreen() {
                     </div>
                   )}
                 </div>
+
+                {/* Overpayment refunds still owed for the expenses in this report */}
+                {(() => {
+                  const refunds = st.refunds || statementRefunds(st.rows);
+                  if (!refunds.length) return null;
+                  const sum = refunds.reduce((a, f) => a + Number(f.amount || 0), 0);
+                  return (
+                    <div className="detail-refunds">
+                      <div className="detail-refunds-head">
+                        <span><InlineIcon as={ICONS.refund} /> {refundLabel}</span>
+                        <span>{peso(sum)}</span>
+                      </div>
+                      {refunds.map(f => (
+                        <div key={`${f.expense_id}-${f.user_id}`} className="detail-refund-row">
+                          <span className="detail-refund-title">
+                            {f.title}
+                            {viewerIsOwner && <span className="detail-refund-who"> · {f.name || names[f.user_id] || 'Member'}</span>}
+                          </span>
+                          <span className="detail-refund-amt">{peso(f.amount)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+
+                {/* Deletion refunds the member approved */}
+                {(st.deletionRefunds || []).length > 0 && (() => {
+                  const list = st.deletionRefunds;
+                  const sum = list.reduce((a, f) => a + Number(f.amount || 0), 0);
+                  return (
+                    <div className="detail-refunds detail-refunds--deletion">
+                      <div className="detail-refunds-head">
+                        <span><InlineIcon as={ICONS.delete} /> Refunded for deletion of expense</span>
+                        <span>{peso(sum)}</span>
+                      </div>
+                      {list.map(f => (
+                        <div key={`${f.expense_id}-${f.user_id}`} className="detail-refund-row">
+                          <span className="detail-refund-title">
+                            {f.title}
+                            <span className="detail-refund-who"> · {f.name || names[f.user_id] || 'Member'}</span>
+                            {f.deleted && <span className="detail-refund-deleted">deleted</span>}
+                          </span>
+                          <span className="detail-refund-amt">{peso(f.amount)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+
+                {/* Overpayment refunds the member approved */}
+                {(st.overpaidRefunds || []).length > 0 && (() => {
+                  const list = st.overpaidRefunds;
+                  const sum = list.reduce((a, f) => a + Number(f.amount || 0), 0);
+                  return (
+                    <div className="detail-refunds detail-refunds--deletion">
+                      <div className="detail-refunds-head">
+                        <span><InlineIcon as={ICONS.refund} /> Refunded for overpaid expense</span>
+                        <span>{peso(sum)}</span>
+                      </div>
+                      {list.map(f => (
+                        <div key={f.refund_id || `${f.expense_id}-${f.user_id}-${f.amount}`} className="detail-refund-row">
+                          <span className="detail-refund-title">
+                            {f.title}
+                            <span className="detail-refund-who"> · {f.name || names[f.user_id] || 'Member'}</span>
+                            {f.deleted && <span className="detail-refund-deleted">deleted</span>}
+                          </span>
+                          <span className="detail-refund-amt">{peso(f.amount)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
 
                 {st.rows.length === 0 && <p className="no-data">No expenses in this report.</p>}
                 {st.rows.map(r => (
@@ -1351,15 +1704,15 @@ export default function ReportsScreen() {
           <div className="filter-modal-reports">
             <div className="modal-header">
               <h2>Filter</h2>
-              <button className="modal-close" onClick={() => setShowFilter(false)}><X size={18}/></button>
+              <button aria-label="Close" className="modal-close" onClick={() => setShowFilter(false)}><X size={18}/></button>
             </div>
             <div className="form-group">
               <label>Date From</label>
-              <input type="date" value={filterFrom} onChange={e => setFilterFrom(e.target.value)} />
+              <DatePickerField value={filterFrom} max={filterTo || undefined} placeholder="Any date" onChange={setFilterFrom} />
             </div>
             <div className="form-group">
               <label>Date To</label>
-              <input type="date" value={filterTo} onChange={e => setFilterTo(e.target.value)} />
+              <DatePickerField value={filterTo} min={filterFrom || undefined} placeholder="Any date" onChange={setFilterTo} />
             </div>
             <div className="filter-actions">
               <button className="filter-reset-btn" onClick={() => { setFilterFrom(''); setFilterTo(''); setShowFilter(false); }}>Reset</button>

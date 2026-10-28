@@ -1,0 +1,85 @@
+/* ── Search bars (Groups, Reports, Utilities, Expenses, household screen) ──
+   One look everywhere: the wrapper is the pill — border, background and the
+   focus ring all live on it — and the input inside is borderless and clear,
+   so no second pill ever shows inside the first.
+   Selectors are a notch more specific than each screen's own .search-input /
+   .search-input-wrap (all screen CSS is bundled together and those rules
+   overlap). */
+
+div.search-input-wrap {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  padding: 0;
+  background: #fff;
+  border: 1.5px solid #E0D9FF;
+  border-radius: 50px;
+  box-shadow: 0 2px 8px rgba(59, 42, 171, 0.08);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+div.search-input-wrap:focus-within,
+div.search-filter-merged:focus-within,
+div.hh-search-input-wrap:focus-within .hh-search-input,
+div.detail-expense-search:focus-within {
+  border-color: #3B2AAB;
+  box-shadow: 0 0 0 3px rgba(59, 42, 171, 0.12);
+}
+
+.search-input-wrap .search-icon {
+  position: absolute;
+  left: 14px;
+  color: #9E8FCC;
+  pointer-events: none;
+}
+
+.search-input-wrap input.search-input {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 11px 36px 11px 38px;
+  border: none;
+  border-radius: 50px;
+  background: transparent;
+  box-shadow: none;
+  outline: none;
+  font-family: 'Poppins', sans-serif;
+  font-size: 13px;
+  color: #2D1A7A;
+}
+
+.search-input-wrap input.search-input::placeholder { color: #9E8FCC; }
+
+.search-input-wrap .search-clear {
+  position: absolute;
+  right: 12px;
+}
+
+/* Inputs inside the other search pills: never their own border / ring */
+.search-input-wrap input:focus,
+.search-filter-merged input.search-input,
+.search-filter-merged input.search-input:focus,
+.detail-expense-search input,
+.detail-expense-search input:focus {
+  border: none;
+  outline: none;
+  box-shadow: none;
+}
+
+/* Expenses: search + filter share one pill — the ring goes around both */
+div.search-filter-merged {
+  border: 1.5px solid transparent;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+/* Dark mode */
+[data-theme="dark"] div.search-input-wrap:focus-within,
+[data-theme="dark"] div.search-filter-merged:focus-within,
+[data-theme="dark"] div.detail-expense-search:focus-within {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px rgba(174, 150, 255, 0.18) !important;
+}

@@ -780,13 +780,24 @@
 
 .switcher-row {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 8px;
-  margin-top: 8px;
+  margin-top: 10px;
 }
 
+/* Same height and padding for both pills; long names get "…" only when the row is full */
+.switcher-row .household-switcher-pill {
+  height: 34px;
+  padding: 0 12px 0 14px;
+  gap: 6px;
+  box-shadow: 0 2px 8px rgba(59, 42, 171, 0.18);
+}
+.switcher-row .household-switcher-pill .pill-text { max-width: 150px; }
+.switcher-row .household-switcher-pill:active { transform: scale(0.97); }
+
 .switcher-row .household-switcher-wrap {
-  margin-top: 0;
+  margin: 0;
+  padding: 0;
   min-width: 0;          
   flex: 0 1 auto;
 }
@@ -1000,3 +1011,153 @@
 .detail-split-name { flex: 1; font-size: 11px; color: #2D1A7A; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .detail-split-amt { font-size: 11px; font-weight: 700; color: #3B2AAB; }
 .detail-split-status { font-size: 9px; font-weight: 600; padding: 2px 8px; border-radius: 50px; }
+
+/* ══════════════════════════════════════════════════════════════════════
+   Refunds still owed · Statement History · Recent Activity (v2)
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* ── Card 4: refunds still owed ── */
+.refund-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.refund-card .report-card-amount { color: #3B2AAB; }
+.refund-card-sub { margin: 0; font-size: 11px; color: #9E8FCC; font-weight: 500; }
+.refund-card-badge {
+  flex-shrink: 0; font-size: 10px; font-weight: 700; color: #3B2AAB;
+  background: #EDE9FF; padding: 4px 10px; border-radius: 50px;
+}
+.refund-card-awaiting {
+  margin: 10px 0 0; padding: 8px 10px; border-radius: 10px;
+  background: #F5F3FF; border: 1px dashed #C4B5FD;
+  font-size: 11px; font-weight: 600; color: #6B46C1;
+}
+.refund-empty { height: 56px; display: flex; align-items: center; justify-content: center; }
+
+.refund-group-list { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.refund-group { border: 1px solid #EDE9FF; border-radius: 14px; background: #FBFAFF; overflow: hidden; transition: box-shadow 0.2s, border-color 0.2s; }
+.refund-group.open { border-color: #D4C5FF; box-shadow: 0 4px 14px rgba(59, 42, 171, 0.08); background: #fff; }
+.refund-group-head {
+  width: 100%; display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; background: none; border: none; cursor: pointer; text-align: left; font-family: inherit;
+}
+.refund-group-icon {
+  width: 34px; height: 34px; border-radius: 11px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(145deg, #3B2AAB 0%, #6B46C1 100%);
+  color: #fff; font-size: 14px; font-weight: 800;
+}
+.refund-group-info { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.refund-group-title { font-size: 13px; font-weight: 700; color: #2D1A7A; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.refund-group-meta { font-size: 10px; color: #9E8FCC; margin-top: 1px; }
+.refund-group-amt { font-size: 13px; font-weight: 800; color: #3B2AAB; flex-shrink: 0; }
+.refund-group-chev { color: #9E8FCC; flex-shrink: 0; transition: transform 0.2s; }
+.refund-group-chev.open { transform: rotate(180deg); }
+.refund-group-body { padding: 0 12px 10px; display: flex; flex-direction: column; gap: 6px; animation: refund-open 0.16s ease-out; }
+@keyframes refund-open { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+.refund-member-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: #F5F3FF; border-radius: 10px; }
+.refund-member-avatar {
+  width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0;
+  background: #D4C5FF; color: #2D1A7A; font-size: 9px; font-weight: 800;
+  display: flex; align-items: center; justify-content: center;
+}
+.refund-member-info { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.refund-member-name { font-size: 11px; font-weight: 700; color: #2D1A7A; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.refund-member-note { font-size: 10px; color: #6B46C1; }
+.refund-member-right { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; flex-shrink: 0; }
+.refund-member-amt { font-size: 12px; font-weight: 800; color: #3B2AAB; }
+.refund-owed-tag { font-size: 9px; font-weight: 700; padding: 2px 8px; border-radius: 50px; color: #6B46C1; background: #EDE9FF; }
+
+/* Show all / Show less under long lists */
+.report-more-btn {
+  width: 100%; margin-top: 10px; padding: 9px 12px;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  background: #F5F3FF; color: #3B2AAB; border: none; border-radius: 12px;
+  font-family: inherit; font-size: 12px; font-weight: 700; cursor: pointer;
+}
+.report-more-btn:hover { background: #EDE9FF; }
+
+/* ── Statement detail: refunds box (purple theme) ── */
+.detail-refunds {
+  background: linear-gradient(145deg, #F5F3FF 0%, #EDE9FF 100%);
+  border: 1px solid #D4C5FF; border-radius: 14px; padding: 12px 14px; margin: 4px 0 12px;
+}
+.detail-refunds-head {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 12px; font-weight: 800; color: #3B2AAB;
+  padding-bottom: 8px; margin-bottom: 6px; border-bottom: 1px solid #D4C5FF;
+}
+.detail-refund-row { display: flex; justify-content: space-between; gap: 10px; padding: 4px 0; font-size: 11px; }
+.detail-refund-title { color: #2D1A7A; font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.detail-refund-who { color: #6B46C1; font-weight: 500; }
+.detail-refund-amt { color: #3B2AAB; font-weight: 800; flex-shrink: 0; }
+
+/* ── Section header with a count chip ── */
+.report-section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.report-section-head .report-section-title { margin: 0; }
+.report-count-chip { font-size: 11px; font-weight: 700; color: #3B2AAB; background: #EDE9FF; padding: 2px 10px; border-radius: 50px; }
+
+/* ── Statement History: cards instead of a cramped table ── */
+.stmt-list { display: flex; flex-direction: column; gap: 8px; }
+.stmt-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 10px 10px 12px; border-radius: 14px;
+  background: #FBFAFF; border: 1px solid #F0EDFF;
+  transition: background 0.4s ease, border-color 0.2s;
+}
+.stmt-item:hover { border-color: #D4C5FF; }
+.stmt-item.highlight { background: #EDE9FF; animation: row-pulse 1.1s ease 3; }
+.stmt-icon {
+  width: 36px; height: 36px; border-radius: 12px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center; font-size: 16px;
+  background: #EDE9FF;
+}
+.stmt-icon.finalized { background: #E9FBEF; }
+.stmt-icon.auto { background: #F3F0FF; }
+.stmt-main {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px;
+  background: none; border: none; padding: 0; text-align: left; cursor: pointer; font-family: inherit;
+}
+.stmt-period { font-size: 13px; font-weight: 700; color: #2D1A7A; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stmt-meta { font-size: 10px; color: #9E8FCC; font-weight: 500; letter-spacing: 0.2px; }
+.stmt-total-row { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+.stmt-total { font-size: 13px; font-weight: 800; color: #3B2AAB; }
+.stmt-total-row .statement-status { padding: 2px 8px; }
+.stmt-actions { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
+.stmt-actions .icon-btn-report { padding: 6px; border-radius: 9px; }
+
+/* ── Recent Activity: compact with action icons ── */
+.activity-list.expanded { max-height: 340px; overflow-y: auto; scrollbar-width: none; }
+.activity-item--v2 { align-items: flex-start; padding: 10px 0; }
+.activity-icon {
+  width: 32px; height: 32px; border-radius: 10px; flex-shrink: 0; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  background: #EDE9FF; color: #3B2AAB;
+}
+.activity-icon.exported { background: #F3F0FF; color: #6B46C1; }
+.activity-item--v2 .activity-desc { font-weight: 500; line-height: 1.35; }
+.activity-item--v2 .activity-time { display: flex; align-items: center; gap: 6px; margin: 4px 0 0; }
+.activity-tag { font-size: 9px; font-weight: 700; padding: 1px 7px; border-radius: 50px; background: #EDE9FF; color: #3B2AAB; }
+.activity-tag.exported { background: #F3F0FF; color: #6B46C1; }
+.refund-member-avatar { overflow: hidden; }
+.refund-member-avatar-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* Statement detail — refunded for deletion of expense */
+.detail-refunds--deletion { background: linear-gradient(145deg, #FBFAFF 0%, #F3F0FF 100%); border-color: #C4B5FD; }
+.detail-refunds--deletion .detail-refunds-head { color: #6B46C1; border-bottom-color: #C4B5FD; }
+.detail-refund-deleted {
+  margin-left: 6px; font-size: 9px; font-weight: 700; color: #6B46C1;
+  background: #EDE9FF; padding: 1px 7px; border-radius: 50px;
+}
+
+/* Date range: From / To stacked so each calendar gets the full width */
+.date-range-stack {
+  display: grid; grid-template-columns: 42px 1fr; align-items: start; gap: 8px 10px;
+}
+.date-range-label {
+  padding-top: 14px; font-size: 11px; font-weight: 600; color: #9E8FCC; font-family: 'Poppins', sans-serif;
+}
+
+/* Switcher dropdown options: visible hover / keyboard focus; list stays on screen */
+.switcher-row .household-dropdown { max-width: calc(100vw - 32px); }
+.household-option { transition: background-color 0.15s ease; text-align: left; }
+.household-option:hover, .household-option:focus-visible { background: #F8F6FF; outline: none; }
+.household-option.active:hover { background: #F0EDFF; }
+.household-option-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; margin-right: 8px; }

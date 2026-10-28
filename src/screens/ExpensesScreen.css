@@ -1243,3 +1243,294 @@
   color: #9E8FCC;
   padding-left: 8px;
 }
+/* ── Search + Filter merged into one pill ── */
+.search-filter-row.search-filter-merged {
+  position: relative;
+  gap: 4px;
+  background: white;
+  border-radius: 50px;
+  padding-right: 4px;
+}
+.search-filter-merged .search-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+}
+.search-filter-merged .filter-btn {
+  flex-shrink: 0;
+  background: #F0EDFF;
+  padding: 7px 12px;
+}
+.filter-count {
+  min-width: 16px;
+  height: 16px;
+  margin-left: 2px;
+  padding: 0 4px;
+  border-radius: 50px;
+  background: #3B2AAB;
+  color: white;
+  font-size: 9px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+}
+
+/* ── Summary cards: snap + pagination dots ── */
+.stat-cards-row {
+  scroll-snap-type: x mandatory;
+  scroll-padding-left: 0;
+}
+.stat-card { scroll-snap-align: start; }
+.stat-dots {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  margin-top: -2px;
+}
+.stat-dot {
+  width: 6px;
+  height: 6px;
+  padding: 0;
+  border: none;
+  border-radius: 50px;
+  background: #C4B5FD;
+  cursor: pointer;
+  transition: width 0.2s, background 0.2s;
+}
+.stat-dot.active { width: 16px; background: #3B2AAB; }
+.stat-dot:focus-visible { outline: 2px solid #3B2AAB; outline-offset: 2px; }
+
+/* ── Expense cards: urgency, proofs link, ⋮ menu ── */
+.expense-badges { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+.due-pill {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 50px;
+  white-space: nowrap;
+}
+.due-pill--overdue { background: #FEE2E2; color: #e53e3e; }
+.due-pill--soon { background: #FEF3C7; color: #B7791F; }
+
+
+.expense-menu { position: relative; }
+.expense-menu-btn { padding: 4px; }
+.expense-menu-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 30;
+  min-width: 128px;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(59,42,171,0.18);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+}
+.expense-menu-list button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-family: 'Poppins', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  color: #2D1A7A;
+  text-align: left;
+  cursor: pointer;
+}
+.expense-menu-list button:hover,
+.expense-menu-list button:focus-visible { background: #F0EDFF; outline: none; }
+.expense-menu-list button.danger { color: #e53e3e; }
+.expense-menu-list button.danger:hover,
+.expense-menu-list button.danger:focus-visible { background: #FEE2E2; }
+
+/* Room under the last card for the + button (FAB sits 88px up, 52px tall) */
+.expenses-content { padding-bottom: 160px; }
+
+/* Pending Payment Approvals: match the household screen's section (cards come from styles/pendingApprovals.css) */
+.pending-section { border-radius: 20px; padding: 16px; }
+.pending-section-title { font-size: 15px; color: #3B2AAB; margin: 0 0 12px; }
+
+.due-pill--refund { background: #EBF8FF; color: #2B6CB0; }
+
+/* Expense a notification pointed to (e.g. "Refund Needed"): ring + pulse */
+.expense-item.notif-pulse-card {
+  outline: 2px solid #3B2AAB;
+  outline-offset: 2px;
+  animation: expense-notif-pulse 1.2s ease-out 3;
+}
+@keyframes expense-notif-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(59, 42, 171, 0.45); background-color: #F0EDFF; }
+  70%  { box-shadow: 0 0 0 12px rgba(59, 42, 171, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(59, 42, 171, 0); }
+}
+
+/* ── "You Owe" card: compact, breakdown on hover / tap ── */
+.owe-card--interactive { cursor: pointer; }
+.owe-card-hint { display: block; font-size: 10px; font-weight: 700; opacity: 0.95; margin-top: 2px; }
+.owe-popover {
+  position: fixed;
+  z-index: 1200;
+  background: #fff;
+  border-radius: 16px;
+  padding: 12px 14px;
+  box-shadow: 0 12px 32px rgba(59, 42, 171, 0.22);
+  border: 1px solid #EDE9FF;
+  max-height: 55vh;
+  overflow-y: auto;
+  animation: owe-pop 0.14s ease-out;
+}
+@keyframes owe-pop { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.owe-popover-section + .owe-popover-section { margin-top: 10px; padding-top: 10px; border-top: 1px solid #F0EDFF; }
+.owe-popover-title { margin: 0 0 6px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #9E8FCC; }
+.owe-popover-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 5px 0; }
+.owe-popover-info { display: flex; flex-direction: column; min-width: 0; }
+.owe-popover-name { font-size: 12px; font-weight: 700; color: #2D1A7A; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.owe-popover-meta { font-size: 10px; color: #9E8FCC; }
+.owe-popover-amt { font-size: 12px; font-weight: 800; color: #C05621; flex-shrink: 0; }
+.owe-popover-amt--refund { color: #3B2AAB; }
+
+/* ── "You Owe" breakdown uses the app font (it's portalled to <body>) ── */
+.owe-popover, .owe-popover * { font-family: 'Poppins', sans-serif; }
+
+/* ── Collapsible expense cards (same look as the household screen) ── */
+.expense-item.xc-card {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
+  border-radius: 18px;
+  scroll-margin-top: 12px;
+}
+.xc-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 14px 14px 14px 14px;
+  background: none;
+  border: none;
+  border-radius: 18px;
+  text-align: left;
+  font-family: inherit;
+  cursor: pointer;
+}
+.xc-head:focus-visible { outline: 2px solid #3B2AAB; outline-offset: -2px; }
+.xc-icon {
+  width: 44px; height: 44px;
+  border-radius: 12px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 20px;
+  flex-shrink: 0;
+}
+.xc-head-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.xc-head-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.xc-title { font-size: 13px; font-weight: 600; color: #2D1A7A; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.xc-amount { font-size: 14px; font-weight: 700; color: #3B2AAB; flex-shrink: 0; }
+.xc-progress { display: flex; align-items: center; gap: 8px; }
+.xc-progress-text { font-size: 10px; font-weight: 600; color: #5A4AAA; white-space: nowrap; }
+.xc-progress-track { flex: 1; height: 6px; border-radius: 50px; background: #F0EDFF; overflow: hidden; }
+.xc-progress-fill { display: block; height: 100%; border-radius: 50px; background: #38a169; transition: width 0.25s; }
+.xc-pills { display: flex; flex-wrap: wrap; gap: 4px; }
+.xc-chevron { color: #9E8FCC; flex-shrink: 0; transition: transform 0.15s; }
+.xc-chevron.open { transform: rotate(180deg); }
+.xc-body { padding: 0 14px 14px; animation: xc-open 0.16s ease-out; }
+@keyframes xc-open { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+.xc-body-top {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 8px;
+  padding-top: 10px; border-top: 1px solid #F0EDFF;
+}
+.xc-body-top .expense-meta { margin: 2px 0 6px; }
+
+/* ── Pending Approvals: dropdown once it has 3+ items ── */
+.pending-section-toggle {
+  width: 100%;
+  display: flex; align-items: center; gap: 8px;
+  padding: 0; background: none; border: none; cursor: pointer;
+  font-family: inherit; text-align: left;
+}
+.pending-section-toggle .pending-section-title { margin: 0; flex: 1; }
+.pending-count-chip {
+  font-size: 11px; font-weight: 700; color: #fff; background: #3B2AAB;
+  min-width: 22px; padding: 2px 8px; border-radius: 50px; text-align: center;
+}
+.pending-chevron { color: #9E8FCC; flex-shrink: 0; transition: transform 0.15s; }
+.pending-chevron.open { transform: rotate(180deg); }
+.pending-section--collapsible .pa-list { margin-top: 12px; }
+.pending-section-hint { margin: 6px 0 0; font-size: 11px; color: #9E8FCC; }
+
+/* ── Filter: "Select all" per section ── */
+.filter-group-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.filter-group-head label { margin: 0; }
+.filter-select-all {
+  font-family: inherit; font-size: 11px; font-weight: 700;
+  color: #3B2AAB; background: #F0EDFF; border: none;
+  padding: 4px 10px; border-radius: 50px; cursor: pointer;
+}
+.filter-select-all:hover { background: #E4DCFF; }
+
+/* Pending Approvals card a notification pointed to (e.g. "Overpayment Refund Sent") */
+.pa-card.notif-pulse-card {
+  outline: 2px solid #3B2AAB;
+  outline-offset: 2px;
+  animation: expense-notif-pulse 1.2s ease-out 3;
+  scroll-margin-top: 12px;
+}
+
+/* Red pulsing dot: this expense still needs the user's action (it's in the Expenses badge) */
+.expense-item.xc-card { position: relative; }
+.xc-attention {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #E53E3E;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 0 rgba(229, 62, 62, 0.6);
+  animation: xc-attention-pulse 1.6s ease-out infinite;
+  pointer-events: none;
+  z-index: 2;
+}
+@keyframes xc-attention-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(229, 62, 62, 0.6); transform: scale(1); }
+  50%  { transform: scale(1.12); }
+  70%  { box-shadow: 0 0 0 8px rgba(229, 62, 62, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(229, 62, 62, 0); transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) { .xc-attention { animation: none; } }
+
+/* "Verifying for deletion" / "Refunded for deletion" tag on a pay line */
+.deletion-pill {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 2px 8px;
+  border-radius: 50px;
+  font-size: 9px;
+  font-weight: 700;
+  vertical-align: 1px;
+  white-space: nowrap;
+}
+
+/* Loading placeholders (household data still on its way) */
+.stat-skeleton {
+  display: inline-block; width: 110px; height: 22px; border-radius: 8px; vertical-align: middle;
+  background: linear-gradient(90deg, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0.38) 50%, rgba(255,255,255,0.18) 100%);
+  background-size: 200% 100%; animation: skeleton-shine 1.2s ease-in-out infinite;
+}
+.expense-skeletons { display: flex; flex-direction: column; gap: 10px; }
+.expense-skeleton {
+  height: 78px; border-radius: 20px;
+  background: linear-gradient(90deg, #F3F0FF 0%, #FFFFFF 50%, #F3F0FF 100%);
+  background-size: 200% 100%; animation: skeleton-shine 1.2s ease-in-out infinite;
+}
+@keyframes skeleton-shine { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .stat-skeleton, .expense-skeleton { animation: none; } }
