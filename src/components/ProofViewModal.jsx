@@ -51,7 +51,6 @@ export default function ProofViewModal({
               src={proof.screenshot_url}
               className="pvm-image"
               alt="payment proof"
-              onClick={() => window.open(proof.screenshot_url, '_blank')}
             />
           )}
           {proof.note && <div className="pvm-note"><InlineIcon as={ICONS.chat} /> {proof.note}</div>}

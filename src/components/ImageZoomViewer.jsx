@@ -9,8 +9,8 @@ import { createPortal } from 'react-dom';
 import { X, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
 import './ImageZoomViewer.css';
 
-// proof previews + chat photos (their link would otherwise open a new tab)
-const ZOOMABLE = 'img.proof-preview, img.xm-proof-img, img.chat-img-preview, .chat-media-tile img';
+// proof previews, submitted proofs under review, chat photos
+const ZOOMABLE = 'img.proof-preview, img.xm-proof-img, img.pvm-image, img.chat-img-preview, .chat-media-tile img';
 const MIN = 1;
 const MAX = 5;
 const clamp = (v) => Math.min(MAX, Math.max(MIN, v));

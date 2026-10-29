@@ -47,7 +47,8 @@ function toEntries(mainProofs, followups, refunds) {
   ].map((e) => ({ ...e, key: `${e.kind}:${e.row.id}`, bucket: BUCKET_OF[e.kind][e.row.status] || 'pending' }));
 }
 
-function ProofImage({ row, alt, onZoom }) {
+// Tapping it opens the in-modal zoom viewer (ImageZoomViewer, via .xm-proof-img)
+function ProofImage({ row, alt }) {
   if (row.image_deleted_at) {
     return <p className="xm-proof-removed">Image removed after {PROOF_IMAGE_RETENTION_DAYS} days</p>;
   }
@@ -59,7 +60,6 @@ function ProofImage({ row, alt, onZoom }) {
       loading="lazy"
       decoding="async"
       className="xm-proof-img"
-      onClick={() => onZoom(row.screenshot_url)}
     />
   );
 }
@@ -94,7 +94,6 @@ export default function PaymentHistoryModal({
   const [reason, setReason] = useState('');
   const [rejectingRefundId, setRejectingRefundId] = useState(null);
   const [refundReason, setRefundReason] = useState('');
-  const [zoom, setZoom] = useState(null);
 
   const allEntries = toEntries(mainProofs, followups, refunds);
 
@@ -181,7 +180,7 @@ export default function PaymentHistoryModal({
         </button>
         {open && (
           <div id={panelId} className="xm-reject-panel">
-            <ProofImage row={r} alt={`${e.title} (rejected)`} onZoom={setZoom} />
+            <ProofImage row={r} alt={`${e.title} (rejected)`} />
             {r.note && <p className="xm-proof-note">“{r.note}”</p>}
             {isAdmin && e.kind === 'refund' && resendableRefundIds.has(r.id) && onResendRefund && (
               <button className="xm-btn xm-soft" style={{ padding: '9px 0', fontSize: 13 }} onClick={() => onResendRefund(r)}>
@@ -208,7 +207,7 @@ export default function PaymentHistoryModal({
           <p className="xm-proof-title">{e.title}{e.amount != null && ` · ${formatMoney(e.amount)}`}</p>
           <span className="xm-badge" style={badgeStyle}>{BADGE[e.kind][e.bucket]}</span>
         </div>
-        <ProofImage row={r} alt={`${e.title} proof`} onZoom={setZoom} />
+        <ProofImage row={r} alt={`${e.title} proof`} />
         {r.note && <p className="xm-proof-note">“{r.note}”</p>}
         <p className="xm-proof-meta">{formatDate(r.created_at)}</p>
 
@@ -316,11 +315,6 @@ export default function PaymentHistoryModal({
         </div>
       </div>
 
-      {zoom && (
-        <div className="xm-overlay" style={{ zIndex: 400, background: 'rgba(0,0,0,0.85)' }} onClick={() => setZoom(null)}>
-          <img src={zoom} alt="proof" style={{ maxWidth: '92%', maxHeight: '88%', borderRadius: 12 }} />
-        </div>
-      )}
     </div>
   );
 }
