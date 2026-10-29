@@ -34,6 +34,10 @@ export default function TopBar({
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [editForm, setEditForm] = useState({ full_name: '', gcash_number: '', bank_name: '', bank_account_number: '', bank_account_name: '' });
   const [editLoading, setEditLoading] = useState(false);
+  // Notifications tapped here — only these turn read (not the whole list)
+  const [readIds, setReadIds] = useState(() => new Set());
+  const isRead = (n) => n.is_read || readIds.has(n.id);
+  const shownUnread = Math.max(0, unreadCount - notifications.filter(n => !n.is_read && readIds.has(n.id)).length);
   const [editSuccess, setEditSuccess] = useState(false);
 
   // Chat button + drawer on every screen (works with just `profile`, so screens
@@ -194,13 +198,15 @@ export default function TopBar({
   const linkOf = (n) => (n.type === 'member_left' ? null : n.link_path);
 
   const handleNotificationClick = async (notification) => {
-    // Mark this notification as read
-    if (!notification.is_read) {
-      await supabase
+    // Mark only this notification as read
+    if (!isRead(notification)) {
+      setReadIds(prev => new Set(prev).add(notification.id));
+      // wait briefly so the next screen's fetch already sees it as read
+      const { error } = await withTimeout(supabase
         .from('notifications')
         .update({ is_read: true })
-        .eq('id', notification.id);
-      if (onMarkAllRead) onMarkAllRead();
+        .eq('id', notification.id), 3000);
+      if (error) console.error('Failed to mark notification read:', error);
     }
 
     if (!linkOf(notification)) return;   // nothing to open — keep the panel up
@@ -298,7 +304,7 @@ export default function TopBar({
           {/* Bell / Notifications */}
           {showBell && (
             <button
-              className={`topbar-bell-btn ${ringing ? 'ringing' : ''} ${unreadCount > 0 ? 'has-unread' : ''}`}
+              className={`topbar-bell-btn ${ringing ? 'ringing' : ''} ${shownUnread > 0 ? 'has-unread' : ''}`}
               aria-label="Notifications"
               title="Notifications"
               onClick={() => {
@@ -307,8 +313,8 @@ export default function TopBar({
               }}
             >
               <Bell size={24} strokeWidth={1.75} className="bell-icon" aria-hidden="true" />
-              {unreadCount > 0 && (
-                <span className="topbar-bell-badge">{unreadCount > 99 ? '99+' : unreadCount}</span>
+              {shownUnread > 0 && (
+                <span className="topbar-bell-badge">{shownUnread > 99 ? '99+' : shownUnread}</span>
               )}
             </button>
           )}
@@ -346,7 +352,7 @@ export default function TopBar({
               notifications.map(n => (
                 <div
                   key={n.id}
-                  className={`notification-item ${!n.is_read ? 'unread' : ''} ${linkOf(n) ? 'notification-clickable' : ''}`}
+                  className={`notification-item ${!isRead(n) ? 'unread' : ''} ${linkOf(n) ? 'notification-clickable' : ''}`}
                   onClick={() => handleNotificationClick(n)}
                   role={linkOf(n) ? 'button' : undefined}
                   style={linkOf(n) ? { cursor: 'pointer' } : {}}
