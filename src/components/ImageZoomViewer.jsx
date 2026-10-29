@@ -1,6 +1,6 @@
 // Zoom for a picked proof image, so the user can double-check it before
 // submitting. Mounted once in App: tapping any proof preview
-// (img.proof-preview / img.xm-proof-img) opens it over the modal card that
+// (img.proof-preview / img.xm-proof-img) or chat photo opens it over the modal card that
 // holds the image (same size and corners), so it stays inside the phone screen.
 //   zoom: + / − buttons, mouse wheel, pinch, double-tap (1× ↔ 2.5×)
 //   pan:  drag while zoomed in        close: X, Esc, tap outside the image
@@ -9,7 +9,8 @@ import { createPortal } from 'react-dom';
 import { X, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
 import './ImageZoomViewer.css';
 
-const ZOOMABLE = 'img.proof-preview, img.xm-proof-img';
+// proof previews + chat photos (their link would otherwise open a new tab)
+const ZOOMABLE = 'img.proof-preview, img.xm-proof-img, img.chat-img-preview, .chat-media-tile img';
 const MIN = 1;
 const MAX = 5;
 const clamp = (v) => Math.min(MAX, Math.max(MIN, v));
@@ -123,10 +124,13 @@ function Viewer({ src, alt, frame, onClose }) {
 // The modal card around the image: the child of the nearest fixed overlay.
 // Returns its on-screen box (falls back to the whole screen).
 function frameOf(img) {
-  let card = img;
-  for (let el = img.parentElement; el && el !== document.body; el = el.parentElement) {
-    if (getComputedStyle(el).position === 'fixed') break;
-    card = el;
+  // the chat drawer sits on an absolute (not fixed) backdrop, so name it directly
+  let card = img.closest('.chat-drawer') || img;
+  if (card === img) {
+    for (let el = img.parentElement; el && el !== document.body; el = el.parentElement) {
+      if (getComputedStyle(el).position === 'fixed') break;
+      card = el;
+    }
   }
   if (card === img) return undefined;
   const r = card.getBoundingClientRect();

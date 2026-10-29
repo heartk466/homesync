@@ -1,5 +1,5 @@
 /* Full-screen proof image zoom (ImageZoomViewer.jsx) */
-.proof-preview, .xm-proof-img { cursor: zoom-in; }
+.proof-preview, .xm-proof-img, .chat-img-preview, .chat-media-tile img { cursor: zoom-in; }
 
 .izv-overlay {
   position: fixed;
