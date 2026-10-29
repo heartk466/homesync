@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
+import { withTimeout } from '../utils/withTimeout';
 import { Bell, X, LogOut, Camera, Edit, MessageCircle } from 'lucide-react';
 import './TopBar.css';
 import logo from '../assets/Homesync.svg';
@@ -141,7 +142,7 @@ export default function TopBar({
 
     setEditLoading(true);
 
-    const { error } = await supabase
+    const { error } = await withTimeout(supabase
       .from('profiles')
       .update({ 
         full_name: editForm.full_name.trim(),
@@ -150,7 +151,7 @@ export default function TopBar({
         bank_account_number: editForm.bank_account_number,
         bank_account_name: editForm.bank_account_name
       })
-      .eq('id', currentUser.id);
+      .eq('id', currentUser.id));
 
     if (error) {
       alert('Failed to update profile. Try again.');

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
+import { withTimeout } from '../utils/withTimeout';
 import {
   User, Bell, Palette, Shield,
   Database, Info, LogOut, ChevronRight,
@@ -471,7 +472,7 @@ export default function SettingsScreen() {
 
   const handleSavePaymentDetails = async () => {
     setPaymentLoading(true);
-    const { error } = await supabase
+    const { error } = await withTimeout(supabase
       .from('profiles')
       .update({
         gcash_number: paymentForm.gcash_number,
@@ -484,7 +485,7 @@ export default function SettingsScreen() {
         bank_account_number: paymentForm.bank_account_number,
         bank_account_name: paymentForm.bank_account_name,
       })
-      .eq('id', currentUser.id);
+      .eq('id', currentUser.id));
 
     if (error) {
       showToast('Failed to save payment details.', 'error');
