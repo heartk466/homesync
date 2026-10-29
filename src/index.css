@@ -66,3 +66,6 @@ body .toast {
     padding-bottom: env(safe-area-inset-bottom);
   }
 }
+
+/* no double-tap zoom on the page (taps also respond faster) */
+html, body { touch-action: manipulation; }
