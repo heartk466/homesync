@@ -4,7 +4,7 @@ import { supabase } from '../supabaseClient';
 import { rememberHousehold, pickRememberedHousehold } from '../utils/activeHousehold';
 import { uploadPaymentProof } from '../utils/paymentProofStorage';
 import {
-  Search, Filter, Plus, X, ChevronDown, ChevronLeft, ChevronRight, MoreVertical, Trash2, ExternalLink, Calendar,
+  Search, Filter, Plus, X, ChevronDown, ChevronLeft, ChevronRight, MoreVertical, Trash2, ExternalLink, Calendar, Zap,
 } from 'lucide-react';
 import TopBar from '../components/TopBar';
 import BottomNav from '../components/BottomNav';
@@ -14,6 +14,7 @@ import UploadProofAfterAddModal from '../components/UploadProofAfterAddModal';
 import DatePickerField from '../components/DatePickerField';
 import { softDeleteExpense, sendRefund, overpaidOf, followupDueOf, num as toNum } from '../utils/expenseEditUtils';
 import { deletionStateOf, DELETION_STATUS_META } from '../utils/refundsOwed';
+import { paidOfSplit } from '../utils/reportUtils';
 import { formatMoney, formatDate } from '../utils/format';
 import DeleteExpenseModal from '../components/DeleteExpenseModal';
 import RefundModal from '../components/RefundModal';
@@ -451,6 +452,12 @@ export default function UtilitiesScreen() {
   const presentCategories = useMemo(() => [...new Set(utilities.map(u => u.category))], [utilities]);
   const activeCount = useMemo(() => new Set(utilities.map(u => providerKey(u.expense))).size, [utilities]);
   const monthlyTotal = useMemo(() => utilities.reduce((a, u) => a + Number(u.amount || 0), 0), [utilities]);
+  // "Utilities Paid": your approved share of this month's bills (same rule as the Dashboard card)
+  const utilitiesPaid = useMemo(() => utilities.reduce((a, u) => {
+    if (!u.mySplit || u.approval_status !== 'approved') return a;
+    if (u.myDeletion === 'refunded') return a;
+    return a + (u.myDeletion === 'verifying' ? Number(u.mySplit.share_amount) || 0 : paidOfSplit(u.mySplit));
+  }, 0), [utilities]);
   const pendingSplits = useMemo(() => utilities.filter(u => (
     u.approval_status === 'pending_approval' || u.splits.some(s => s.status === 'pending_verification')
   )).length, [utilities]);
@@ -641,6 +648,15 @@ export default function UtilitiesScreen() {
               {dueTone === 'clear' ? 'Nothing due in 7 days' : dueInfo.overdue && dueInfo.soon ? `+${dueInfo.soon} due within 7 days` : 'Within the next 7 days'}
             </p>
           </div>
+        </div>
+
+        <div className="utility-summary-card full-width ut-paid-card">
+          <div>
+            <p className="summary-card-label">Utilities Paid</p>
+            <p className="summary-card-count">{formatMoney(utilitiesPaid)}</p>
+            <p className="ut-summary-sub">your share of utilities · {monthLabel(viewMonth)}</p>
+          </div>
+          <Zap size={28} color="#3B2AAB" aria-hidden="true" />
         </div>
 
         {pendingSplits > 0 && (

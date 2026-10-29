@@ -1124,3 +1124,13 @@
   .ut-card, .ut-pending-banner, .ut-menu-list, .ut-month-panel { animation: none; }
   .ut-chip, .ut-due, .ut-month-btn, .ut-month-label, .ut-month-caret, .ut-month-chip, .ut-menu-btn, .ut-fab, .ut-pay { transition: none; }
 }
+
+/* "Utilities Paid" card (same figure as the Dashboard card) */
+.ut-paid-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  box-sizing: border-box;
+}
