@@ -633,8 +633,10 @@ function OweCard({ total, details, loading }) {
     clearTimeout(closeTimer.current);
     const rect = cardRef.current?.getBoundingClientRect();
     if (!rect || !details.length) return;
-    const width = Math.min(300, window.innerWidth - 24);
-    setPos({ top: rect.bottom + 8, left: Math.max(12, Math.min(rect.left, window.innerWidth - width - 12)), width });
+    // keep it inside the app's screen (phone-width column on desktop), not just the window
+    const screen = cardRef.current.closest('.expenses-screen')?.getBoundingClientRect() || { left: 0, right: window.innerWidth };
+    const width = Math.min(300, screen.right - screen.left - 24);
+    setPos({ top: rect.bottom + 8, left: Math.max(screen.left + 12, Math.min(rect.left, screen.right - width - 12)), width });
   };
   const close = () => setPos(null);
   const closeSoon = () => { closeTimer.current = setTimeout(close, 150); };
