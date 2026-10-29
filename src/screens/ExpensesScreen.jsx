@@ -17,6 +17,7 @@ import PayOnlineModal from '../components/PayOnlineModal';
 import EditExpenseModal from '../components/EditExpenseModal';
 import DeleteExpenseModal from '../components/DeleteExpenseModal';
 import AddExpenseModal from '../components/AddExpenseModal';
+import MonthGroups from '../components/MonthGroups';
 import DatePickerField from '../components/DatePickerField';
 import { withFormerMemberNames } from '../utils/formerMembers';
 import FollowupPaymentModal from '../components/FollowupPaymentModal';
@@ -788,6 +789,7 @@ function ExpenseCardMenu({ title, onEdit, onDelete }) {
 
 export default function ExpensesScreen() {
   const navigate = useNavigate();
+  const location = useLocation();
   const proofInputRef = useRef(null);
   const initialHouseholdSet = useRef(false);
 
@@ -1159,6 +1161,8 @@ export default function ExpensesScreen() {
     ));
   }, [searchQuery, filterStatus, filterCategory, filterFrom, filterTo, expenses, expenseSplits, isAdmin, filterMyId, filterOwnerId, refundsMap]);
 
+  // a notification jump's target: its month section must be open
+  const jumpExpenseId = new URLSearchParams(location.search).get('expenseId');
   const activeFilterCount = filterStatus.length + filterCategory.length + (filterFrom || filterTo ? 1 : 0);
 
 
@@ -1775,7 +1779,12 @@ export default function ExpensesScreen() {
           </div>
         )}
 
-        {!dataLoading && filteredExpenses.map(expense => {
+        {!dataLoading && (
+          <MonthGroups
+            items={filteredExpenses}
+            openFor={jumpExpenseId}
+            expandAll={!!searchQuery.trim() || activeFilterCount > 0}
+            renderItem={expense => {
           const splits = expenseSplits[expense.id] || [];
           const mySplit = splits.find(s => s.user_id === currentUser?.id);
           const badge = getStatusBadge(expense, splits);
@@ -1968,7 +1977,9 @@ export default function ExpensesScreen() {
                   })}
             </CollapsibleExpenseCard>
           );
-        })}
+            }}
+          />
+        )}
         </LoadGate>
       </div>
 

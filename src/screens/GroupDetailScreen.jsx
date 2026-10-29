@@ -8,6 +8,7 @@ import {
 import './GroupDetailScreen.css';
 import '../styles/pendingApprovals.css';
 import AddExpenseModal from '../components/AddExpenseModal';
+import MonthGroups from '../components/MonthGroups';
 import { RemoveMemberModal } from '../components/HouseholdsSection';
 import '../screens/SettingsScreen.css';
 import { withFormerMemberNames } from '../utils/formerMembers';
@@ -2027,7 +2028,11 @@ export default function GroupDetailScreen() {
                 </div>
               )}
 
-              {visible.map(expense => {
+              <MonthGroups
+                items={visible}
+                openFor={notifTargetExpenseId}
+                expandAll={!!query || activeFilter !== 'all'}
+                renderItem={expense => {
                 const splits = expenseSplits[expense.id] || [];
                 const badge = getStatusBadge(expense, splits);
                 const isOwner = isAdmin;
@@ -2271,7 +2276,8 @@ export default function GroupDetailScreen() {
                     )}
                   </div>
                 );
-              })}
+                }}
+              />
             </>
           );
         })()}
