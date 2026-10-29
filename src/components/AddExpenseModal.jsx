@@ -211,10 +211,25 @@ export default function AddExpenseModal({
     onAdded(inserted, { paidUpfront: form.who_paid === currentUser.id, isAdmin, context: ctx });
   };
 
+  // Scroll the modal to the first problem (e.g. the "already exists" notice) and pulse it
+  const revealFirstError = () => requestAnimationFrame(() => {
+    const el = document.querySelector('.aem-body .cf-dup--active, .aem-body .aem-input--error, .aem-body .aem-error');
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.classList.remove('aem-attention');
+    void el.offsetWidth; // restart the animation
+    el.classList.add('aem-attention');
+    setTimeout(() => el.classList.remove('aem-attention'), 1600);
+  });
+
   const handleAdd = async (skipDuplicateCheck = false) => {
     const e = validate();
     setErrors(e);
-    if (Object.keys(e).length) { showToast(Object.values(e)[0], 'error'); return; }
+    if (Object.keys(e).length) {
+      showToast(Object.values(e)[0], 'error');
+      revealFirstError();
+      return;
+    }
     setSaving(true);
     if (!skipDuplicateCheck && ctx.type === 'household' && isUtilityCategory(form.category)) {
       const dupes = await checkDuplicate(ctx.id, form.category, Number(form.amount), todayStr());

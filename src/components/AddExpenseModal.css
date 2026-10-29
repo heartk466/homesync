@@ -100,3 +100,11 @@
 /* Shared fields inside this modal get the same compact size */
 .aem-card .dpf-field, .aem-card .cf-trigger { min-height: 40px; padding: 9px 14px; font-size: 12px; }
 .aem-card .cf-list { top: calc(40px + 6px); }
+
+/* pulse on the first invalid field when "Add Expense" is blocked */
+.aem-attention { animation: aem-attention 0.5s ease 3; }
+@keyframes aem-attention {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(229, 62, 62, 0); }
+  50% { box-shadow: 0 0 0 4px rgba(229, 62, 62, 0.35); }
+}
+@media (prefers-reduced-motion: reduce) { .aem-attention { animation: none; } }

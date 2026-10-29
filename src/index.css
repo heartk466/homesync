@@ -14,3 +14,15 @@ body {
   min-height: 100vh;
 }
 *::-webkit-scrollbar { display: none; }
+
+/* Screen toasts: always above modals (overlays use z-index 1000–2000) and wrap
+   inside the screen instead of running off its edges. */
+body .toast {
+  z-index: 3000;
+  width: max-content;
+  max-width: calc(100% - 32px);
+  box-sizing: border-box;
+  white-space: normal;
+  text-align: center;
+  line-height: 1.4;
+}
