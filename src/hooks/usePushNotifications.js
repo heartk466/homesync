@@ -27,7 +27,7 @@ function supportsPush() {
 
 // Register this browser for pushes with the current key (replacing an old-key
 // subscription) and save it for the user. Throws on failure.
-async function registerSubscription(userId) {
+async function registerSubscription() {
   const registration = await navigator.serviceWorker.register('/sw.js');
   await navigator.serviceWorker.ready;
   let subscription = await registration.pushManager.getSubscription();
@@ -41,10 +41,9 @@ async function registerSubscription(userId) {
       applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
     });
   }
-  const { error } = await supabase.from('push_subscriptions').upsert(
-    { user_id: userId, subscription: subscription.toJSON() },
-    { onConflict: 'user_id' }
-  );
+  // one row per device (a user can have several); the RPC also moves this
+  // device to whoever is logged in on it now
+  const { error } = await supabase.rpc('save_push_subscription', { p_subscription: subscription.toJSON() });
   if (error) throw error;
 }
 
@@ -68,7 +67,7 @@ export function usePushNotifications(userId) {
         const subscription = registration ? await registration.pushManager.getSubscription() : null;
         if (subscription && !usesCurrentKey(subscription) && Notification.permission === 'granted') {
           // made with the old key: it can never receive pushes — replace it now
-          await registerSubscription(userId);
+          await registerSubscription();
           if (active) setPushStatus('enabled');
           return;
         }
@@ -101,7 +100,8 @@ export function usePushNotifications(userId) {
     }
   }, []);
 
-  const subscribe = useCallback(async (userIdToSubscribe) => {
+  // the RPC saves the device for whoever is logged in (auth.uid())
+  const subscribe = useCallback(async () => {
     if (!supportsPush()) {
       setPushStatus('unsupported');
       return false;
@@ -112,7 +112,7 @@ export function usePushNotifications(userId) {
     }
 
     try {
-      await registerSubscription(userIdToSubscribe);
+      await registerSubscription();
       setPushStatus('enabled');
       return true;
     } catch (error) {
@@ -128,16 +128,17 @@ export function usePushNotifications(userId) {
         const registration = await navigator.serviceWorker.getRegistration();
         const subscription = registration ? await registration.pushManager.getSubscription() : null;
         if (subscription) {
+          // only this device: the user's other phones / browsers keep receiving
+          const { error } = await supabase
+            .from('push_subscriptions')
+            .delete()
+            .eq('user_id', userIdToUnsubscribe)
+            .eq('endpoint', subscription.endpoint);
+          if (error) throw error;
           const unsubscribed = await subscription.unsubscribe();
           if (!unsubscribed) throw new Error('The browser did not remove its push subscription.');
         }
       }
-
-      const { error } = await supabase
-        .from('push_subscriptions')
-        .delete()
-        .eq('user_id', userIdToUnsubscribe);
-      if (error) throw error;
 
       setPushStatus('not-enabled');
       return true;

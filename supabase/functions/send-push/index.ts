@@ -30,6 +30,7 @@ const prefKeyMap: Record<string, string> = {
   payment_confirmed:  'payment_confirmations',
   payment_rejected:   'payment_confirmations',
   utility_reminder:   'utility_reminders',
+  payment_reminder:   'utility_reminders',
   report_schedule:    'report_schedules',
   group_invite:       'group_invites',
 };
@@ -54,32 +55,38 @@ Deno.serve(async (req) => {
     return json({ skipped: true, reason: 'user preference off' });
   }
 
-  // The user's saved phone/browser subscription
-  const { data: sub } = await supabase
+  // Every phone/browser this user turned push on for (one row per device)
+  const { data: subs } = await supabase
     .from('push_subscriptions')
-    .select('subscription')
-    .eq('user_id', user_id)
-    .maybeSingle();
+    .select('id, subscription')
+    .eq('user_id', user_id);
 
-  if (!sub) {
+  if (!subs?.length) {
     return json({ skipped: true, reason: 'no subscription' });
   }
 
-  try {
-    await webpush.sendNotification(
-      sub.subscription,
-      // unique tag per notification so several pushes don't replace each other
-      JSON.stringify({ title, body, url: url || '/', tag })
-    );
-    return json({ sent: true });
-  } catch (err: any) {
-    // 404 / 410 = phone unsubscribed or subscription expired → clean it up
-    if (err?.statusCode === 404 || err?.statusCode === 410) {
-      await supabase.from('push_subscriptions').delete().eq('user_id', user_id);
-      return json({ skipped: true, reason: 'subscription expired, removed' });
+  // unique tag per notification so several pushes don't replace each other
+  const payload = JSON.stringify({ title, body, url: url || '/', tag });
+  const results = await Promise.all(subs.map(async (sub) => {
+    try {
+      await webpush.sendNotification(sub.subscription, payload);
+      return { sent: true };
+    } catch (err: any) {
+      // 404 / 410 = that device unsubscribed or its subscription expired → remove just it
+      if (err?.statusCode === 404 || err?.statusCode === 410) {
+        await supabase.from('push_subscriptions').delete().eq('id', sub.id);
+        return { removed: true };
+      }
+      console.error('Push send error:', err?.statusCode, err?.body, err);
+      return { error: err?.message || 'push failed', push_status: err?.statusCode ?? null, push_body: err?.body ?? null };
     }
-    console.error('Push send error:', err?.statusCode, err?.body, err);
-    // include the push service's answer (e.g. 403 BadJwtToken) so it shows in net._http_response
-    return json({ error: err?.message || 'push failed', push_status: err?.statusCode ?? null, push_body: err?.body ?? null }, 500);
-  }
+  }));
+
+  const sent = results.filter(r => 'sent' in r).length;
+  const failed = results.filter(r => 'error' in r);
+  // include the push service's answers (e.g. 403 BadJwtToken) so they show in net._http_response
+  return json(
+    { sent, devices: subs.length, removed: results.filter(r => 'removed' in r).length, errors: failed },
+    sent === 0 && failed.length ? 500 : 200,
+  );
 });
