@@ -14,8 +14,8 @@ self.addEventListener('push', (event) => {
 
   const options = {
     body: data.body || '',
-    icon: '/icon.png',       // replace with your actual app icon path
-    badge: '/badge.png',     // small monochrome icon shown in phone status bar
+    icon: '/icons/icon-192.png',   // HomeSync logo (Android; iPhone uses the Home Screen icon)
+    // no badge: Android needs a white-on-transparent image there, and the coloured logo would show as a blob
     tag: data.tag || 'homesync-notif',
     renotify: true,
     data: { url: data.url || '/' },
