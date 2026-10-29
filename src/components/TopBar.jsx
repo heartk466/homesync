@@ -154,7 +154,8 @@ export default function TopBar({
       .eq('id', currentUser.id));
 
     if (error) {
-      alert('Failed to update profile. Try again.');
+      console.error('Profile update failed:', error);
+      alert(`Failed to update profile: ${error.message || 'unknown error'}. Try again.`);
     } else {
       setProfile(prev => ({ ...prev, 
         full_name: editForm.full_name.trim(),
