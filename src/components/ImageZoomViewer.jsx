@@ -1,6 +1,7 @@
-// Full-screen zoom for a picked proof image, so the user can double-check it
-// before submitting. Mounted once in App: tapping any proof preview
-// (img.proof-preview / img.xm-proof-img) in any modal opens it.
+// Zoom for a picked proof image, so the user can double-check it before
+// submitting. Mounted once in App: tapping any proof preview
+// (img.proof-preview / img.xm-proof-img) opens it over the modal card that
+// holds the image (same size and corners), so it stays inside the phone screen.
 //   zoom: + / − buttons, mouse wheel, pinch, double-tap (1× ↔ 2.5×)
 //   pan:  drag while zoomed in        close: X, Esc, tap outside the image
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -13,7 +14,7 @@ const MIN = 1;
 const MAX = 5;
 const clamp = (v) => Math.min(MAX, Math.max(MIN, v));
 
-function Viewer({ src, alt, onClose }) {
+function Viewer({ src, alt, frame, onClose }) {
   const [view, setView] = useState({ scale: 1, x: 0, y: 0 });
   const pointers = useRef(new Map());
   const gesture = useRef(null);   // { startDist, startScale } | { startX, startY, x, y }
@@ -83,7 +84,7 @@ function Viewer({ src, alt, onClose }) {
   };
 
   return (
-    <div className="izv-overlay" role="dialog" aria-modal="true" aria-label="Image preview" onClick={() => { if (!moved.current) onClose(); }}>
+    <div className="izv-overlay" style={frame} role="dialog" aria-modal="true" aria-label="Image preview" onClick={() => { if (!moved.current) onClose(); }}>
       <button type="button" className="izv-close" aria-label="Close" onClick={(e) => { e.stopPropagation(); onClose(); }}>
         <X size={22} />
       </button>
@@ -119,6 +120,19 @@ function Viewer({ src, alt, onClose }) {
   );
 }
 
+// The modal card around the image: the child of the nearest fixed overlay.
+// Returns its on-screen box (falls back to the whole screen).
+function frameOf(img) {
+  let card = img;
+  for (let el = img.parentElement; el && el !== document.body; el = el.parentElement) {
+    if (getComputedStyle(el).position === 'fixed') break;
+    card = el;
+  }
+  if (card === img) return undefined;
+  const r = card.getBoundingClientRect();
+  return { top: r.top, left: r.left, width: r.width, height: r.height, right: 'auto', bottom: 'auto', borderRadius: getComputedStyle(card).borderRadius };
+}
+
 export default function ImageZoomHost() {
   const [image, setImage] = useState(null);   // { src, alt }
 
@@ -128,12 +142,12 @@ export default function ImageZoomHost() {
       if (!img || !img.src) return;
       e.preventDefault();
       e.stopPropagation();
-      setImage({ src: img.src, alt: img.alt });
+      setImage({ src: img.src, alt: img.alt, frame: frameOf(img) });
     };
     document.addEventListener('click', onClick, true);
     return () => document.removeEventListener('click', onClick, true);
   }, []);
 
   if (!image) return null;
-  return createPortal(<Viewer src={image.src} alt={image.alt} onClose={() => setImage(null)} />, document.body);
+  return createPortal(<Viewer src={image.src} alt={image.alt} frame={image.frame} onClose={() => setImage(null)} />, document.body);
 }
