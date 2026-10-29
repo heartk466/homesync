@@ -83,25 +83,34 @@ const needsRefundOf = (splits = [], refunds = [], ownerId) => splits.some(sp => 
 // resend form; once it was resent (or nothing is left to refund) it only jumps.
 function NotificationJump({
   households, selectedHouseholdId, expenses, refunds, expenseSplits, proofs, userId, isAdmin, pendingCount,
-  onSelectHousehold, onReveal, onResendRefund, showToast,
+  fresh, onRefresh, onSelectHousehold, onReveal, onResendRefund, showToast,
 }) {
   const location = useLocation();
   const navigate = useNavigate();
   // Each step runs once per notification (the callbacks are new every render).
-  const doneRef = useRef({ key: null, selected: false, revealed: false });
+  const doneRef = useRef({ key: null, selected: false, revealed: false, startedAt: 0, refreshed: false });
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const householdId = params.get('householdId');
     const expenseId = params.get('expenseId');
     if (!expenseId) return undefined;
-    if (doneRef.current.key !== location.search) doneRef.current = { key: location.search, selected: false, revealed: false };
+    if (doneRef.current.key !== location.search) {
+      doneRef.current = { key: location.search, selected: false, revealed: false, startedAt: Date.now(), refreshed: false };
+    }
     const done = doneRef.current;
 
     if (householdId && householdId !== selectedHouseholdId) {
       const target = households.find(h => h.id === householdId);
       if (target && !done.selected) { done.selected = true; onSelectHousehold(target); }
       return undefined; // runs again once that household's expenses load
+    }
+    // Wait for data fetched after this tap: the screen first shows its cached
+    // list, which can predate the proof / refund this notification is about
+    // (then the first tap fell through to the expense card).
+    if (!fresh || fresh.householdId !== selectedHouseholdId || fresh.startedAt < done.startedAt) {
+      if (fresh && !done.refreshed) { done.refreshed = true; onRefresh(); }
+      return undefined;
     }
     if (!expenses.some(e => e.id === expenseId)) return undefined; // still loading (or gone)
 
@@ -240,7 +249,7 @@ function NotificationJump({
       navigate('/expenses', { replace: true });
     }, 0);
     return () => clearTimeout(timer);
-  }, [location.search, households, selectedHouseholdId, expenses, refunds, expenseSplits, proofs, userId, isAdmin, pendingCount, onSelectHousehold, onReveal, onResendRefund, showToast, navigate]);
+  }, [location.search, households, selectedHouseholdId, fresh, onRefresh, expenses, refunds, expenseSplits, proofs, userId, isAdmin, pendingCount, onSelectHousehold, onReveal, onResendRefund, showToast, navigate]);
 
   return null;
 }
@@ -829,6 +838,8 @@ export default function ExpensesScreen() {
   const load = useScreenLoad('expenses');
   const { done: loadDone, fail: loadFail } = load;
   const contentReady = load.loaded && !load.showSkeleton;
+  // last fetch that finished in this visit (not cached): { householdId, startedAt } — notification jumps wait for it
+  const [fresh, setFresh] = useState(null);
   const loadedHouseholdRef = useRef(selectedHousehold?.id ?? null);                 // reloads of the same household keep the list
   const [toast, setToast] = useState(null);
 
@@ -871,6 +882,7 @@ export default function ExpensesScreen() {
 
   // ========== FIXED: fetchExpensesData with correct summary calculations ==========
   const fetchExpensesData = useCallback(async (profileData, user, adminStatus, memberData, householdId) => {
+    const startedAt = Date.now();
     const now = new Date();
     const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
     const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
@@ -972,6 +984,7 @@ export default function ExpensesScreen() {
     setReimburseDetails(reimburseList);
     setTotalSpent(userSpentTotal);
     loadedHouseholdRef.current = householdId;
+    setFresh({ householdId, startedAt });
     setDataLoading(false);
     loadDone();
   }, [fetchExpenseSplits, loadDone, setAllProofs, setExpenses, setExtras, setPendingApprovals, setPendingPaymentProofs, setReimburseDetails, setToReimburse, setTotalShared, setTotalSpent]);
@@ -1641,6 +1654,8 @@ export default function ExpensesScreen() {
           userId={currentUser?.id}
           isAdmin={isAdmin}
           pendingCount={pendingApprovals.length}
+          fresh={fresh}
+          onRefresh={reloadAll}
           onSelectHousehold={(hh) => handleHouseholdSelect(hh, currentUser, profile)}
           onReveal={() => { setSearchQuery(''); setFilterStatus([]); setFilterCategory([]); setFilterFrom(''); setFilterTo(''); }}
           onResendRefund={setRefundFor}
