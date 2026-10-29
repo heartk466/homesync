@@ -6,10 +6,11 @@ const supabase = createClient(
   Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 );
 
+// trim: a key pasted into the dashboard with a trailing newline crashed the function at boot
 webpush.setVapidDetails(
-  Deno.env.get('VAPID_EMAIL')!,
-  Deno.env.get('VAPID_PUBLIC_KEY')!,
-  Deno.env.get('VAPID_PRIVATE_KEY')!
+  Deno.env.get('VAPID_EMAIL')!.trim(),
+  Deno.env.get('VAPID_PUBLIC_KEY')!.trim(),
+  Deno.env.get('VAPID_PRIVATE_KEY')!.trim()
 );
 
 // Shared secret so only your database trigger can ask for pushes

@@ -1,9 +1,27 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { supabase } from '../supabaseClient';
 import './SplashScreen.css';
 
 export default function SplashScreen() {
   const navigate = useNavigate();
+  // The Home Screen app always opens here ("/"): already logged in → straight to
+  // the Dashboard instead of looking logged out. Nothing renders until we know.
+  const [checking, setChecking] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    supabase.auth.getSession()
+      .then(({ data: { session } }) => {
+        if (!alive) return;
+        if (session) navigate('/dashboard', { replace: true });
+        else setChecking(false);
+      })
+      .catch(() => { if (alive) setChecking(false); });
+    return () => { alive = false; };
+  }, [navigate]);
+
+  if (checking) return <div className="splash" aria-busy="true" />;
 
   return (
     <div className="splash">
