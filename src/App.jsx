@@ -10,6 +10,7 @@ import GroupDetailScreen from './screens/GroupDetailScreen';
 import ReportsScreen from './screens/ReportsScreen';
 import SettingsScreen from './screens/SettingsScreen';
 import ResetPasswordScreen from './screens/ResetPasswordScreen';
+import ImageZoomHost from './components/ImageZoomViewer';
 
 function App() {
   return (
@@ -27,6 +28,7 @@ function App() {
         <Route path="/settings" element={<SettingsScreen />} />
         <Route path="/reset-password" element={<ResetPasswordScreen />} />
       </Routes>
+      <ImageZoomHost />
     </BrowserRouter>
   );
 }

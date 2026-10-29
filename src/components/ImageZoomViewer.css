@@ -1,0 +1,90 @@
+/* Full-screen proof image zoom (ImageZoomViewer.jsx) */
+.proof-preview, .xm-proof-img { cursor: zoom-in; }
+
+.izv-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 4000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(13, 8, 32, 0.92);
+  animation: izv-in 0.18s ease;
+}
+@keyframes izv-in { from { opacity: 0; } to { opacity: 1; } }
+
+.izv-stage {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  touch-action: none;
+}
+.izv-img {
+  max-width: 92vw;
+  max-height: 80vh;
+  border-radius: 12px;
+  object-fit: contain;
+  user-select: none;
+  transition: transform 0.08s linear;
+  will-change: transform;
+}
+
+.izv-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 1;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  cursor: pointer;
+}
+
+.izv-controls {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 50px;
+  background: rgba(255, 255, 255, 0.14);
+  backdrop-filter: blur(6px);
+}
+.izv-controls button {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+}
+.izv-controls button:disabled { opacity: 0.35; cursor: default; }
+.izv-level {
+  min-width: 48px;
+  text-align: center;
+  color: #fff;
+  font-family: 'Poppins', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+}
+@media (prefers-reduced-motion: reduce) {
+  .izv-overlay { animation: none; }
+  .izv-img { transition: none; }
+}
