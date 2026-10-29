@@ -26,3 +26,43 @@ body .toast {
   text-align: center;
   line-height: 1.4;
 }
+
+/* Phones: fill the whole screen instead of the 390 × 844 desktop preview
+   frame. The bottom strip under the nav (iPhone home indicator area) is left
+   to the body, coloured like the nav, so nothing hides behind the indicator. */
+@media (max-width: 600px) {
+  body {
+    display: block;
+    min-height: 100vh;
+    min-height: 100dvh;
+    background: #fff;
+  }
+  :root[data-theme="dark"] body { background: var(--nav-bg, #1a1730); }
+
+  body .dashboard,
+  body .expenses-screen,
+  body .group-detail-screen,
+  body .groups-screen,
+  body .reports-screen,
+  body .settings-screen,
+  body .utilities-screen,
+  body .splash {
+    width: 100%;
+    height: calc(100vh - env(safe-area-inset-bottom));
+    height: calc(100dvh - env(safe-area-inset-bottom));
+  }
+  /* the desktop frame faked a status bar with 48px; a real phone has its own */
+  body .topbar,
+  body .dash-topbar,
+  body .expenses-topbar,
+  body .detail-header { padding-top: 18px; }
+
+  body .login,
+  body .register,
+  body .rp {
+    width: 100%;
+    min-height: 100vh;
+    min-height: 100dvh;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
