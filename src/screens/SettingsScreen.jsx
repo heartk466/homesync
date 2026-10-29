@@ -211,6 +211,22 @@ export default function SettingsScreen() {
   };
 
   // ── Toggle a notification preference + re-subscribe / unsubscribe if needed ─
+  // Explicit "Turn on phone notifications" (needs a tap: iPhones only ask for permission from a user action)
+  const [pushBusy, setPushBusy] = useState(false);
+  const handleEnablePush = async () => {
+    setPushBusy(true);
+    const permission = await requestPermission();
+    if (permission === 'granted') {
+      const ok = await subscribe(currentUser.id);
+      showToast(ok ? 'Phone notifications are on for this device.' : 'Could not turn on phone notifications here.', ok ? 'success' : 'error');
+    } else if (permission === 'unsupported') {
+      showToast('This browser can’t receive phone notifications. On iPhone, open HomeSync from your Home Screen.', 'error');
+    } else {
+      showToast('Notifications are blocked. Allow them in your phone settings for HomeSync.', 'error');
+    }
+    setPushBusy(false);
+  };
+
   const handleToggleNotif = async (key) => {
     const newPrefs = { ...notifPrefs, [key]: !notifPrefs[key] };
     setNotifPrefs(newPrefs);
@@ -684,6 +700,11 @@ export default function SettingsScreen() {
             }}>
               <InlineIcon as={ICONS.warning} /> Push notifications are blocked in your browser. Go to your browser settings → Site Settings → Notifications → Allow for this site.
             </div>
+          )}
+          {pushStatus === 'not-enabled' && (
+            <button type="button" className="push-enable-btn" onClick={handleEnablePush} disabled={pushBusy}>
+              <Bell size={15} aria-hidden="true" /> {pushBusy ? 'Turning on…' : 'Turn on phone notifications'}
+            </button>
           )}
           {pushStatus === 'unavailable' && (
             <div style={{
