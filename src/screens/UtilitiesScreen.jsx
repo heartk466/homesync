@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
+import { canHover } from '../utils/canHover';
 import { rememberHousehold, pickRememberedHousehold } from '../utils/activeHousehold';
 import { uploadPaymentProof } from '../utils/paymentProofStorage';
 import {
@@ -156,8 +157,6 @@ async function loadHouseholdUtilities(household, user, month) {
   return { items, prevKeys, months };
 }
 
-// Mouse/trackpad → menus open on hover; touch → on tap (same as ReportsScreen).
-const canHover = () => typeof window !== 'undefined' && window.matchMedia?.('(hover: hover) and (pointer: fine)').matches;
 
 // Month pill: ‹ arrows jump to the nearest month that has bills (hidden when
 // there is none); the label opens every month with bills at once.

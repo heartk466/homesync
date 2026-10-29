@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
+import { canHover } from '../utils/canHover';
 import { rememberHousehold, pickRememberedHousehold } from '../utils/activeHousehold';
 import {
   BarChart, Bar, XAxis, YAxis, ResponsiveContainer,
@@ -607,9 +608,6 @@ export default function ReportsScreen() {
     return (((current - last) / last) * 100).toFixed(1);
   };
 
-  // true on devices with a real mouse; touch devices fall back to tap-to-toggle
-  const canHover = () =>
-    typeof window !== 'undefined' && window.matchMedia('(hover: hover)').matches;
 
   const handleSwitchHousehold = async (h) => {
     setSelectedHousehold(h);

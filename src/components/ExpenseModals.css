@@ -157,7 +157,8 @@
   background: #fff; border: none; border-radius: 50%; width: 24px; height: 24px;
   display: flex; align-items: center; justify-content: center; cursor: pointer; color: #e53e3e; flex-shrink: 0;
 }
-.xm-icon-btn:disabled { color: #C4B5FD; cursor: not-allowed; }
+.xm-icon-btn:disabled, .xm-icon-btn[aria-disabled="true"] { color: #C4B5FD; cursor: help; }
+.xm-lock-note { color: #7C6BC4; }
 
 .xm-chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .xm-chip {

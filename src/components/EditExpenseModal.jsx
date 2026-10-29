@@ -42,6 +42,7 @@ export default function EditExpenseModal({
   const [category, setCategory] = useState(known ? expense.category : 'Other');
   const [otherType, setOtherType] = useState(known ? '' : expense.category || '');
   const [dueDate, setDueDate] = useState(expense.due_date || '');
+  const [lockTip, setLockTip] = useState(null); // member whose lock reason is shown (tap — phones have no hover)
   const [billingMonth, setBillingMonth] = useState((expense.billing_period || expense.expense_date || getTodayStr()).slice(0, 7));
   const [slotConflict, setSlotConflict] = useState(null);
   const categoryLock = categoryLockReason(expense, splits, actor?.id);
@@ -254,6 +255,7 @@ export default function EditExpenseModal({
                 <div className="xm-member-info">
                   <p className="xm-member-name">{profileOf(uid)?.full_name || 'Member'}</p>
                   {eff.text && <p className={`xm-member-note ${eff.cls}`}>{eff.text}</p>}
+                  {reason && lockTip === uid && <p className="xm-member-note xm-lock-note">{reason}</p>}
                   {meta && (
                     <span className="xm-badge" style={{ color: meta.color, background: meta.bg, display: 'inline-block', marginTop: 3 }}>
                       <StatusIcon status={meta.label} />{meta.label}
@@ -275,9 +277,10 @@ export default function EditExpenseModal({
                 )}
                 <button
                   className="xm-icon-btn"
-                  disabled={!!reason}
+                  aria-disabled={!!reason}
+                  aria-label={reason ? `Can't remove: ${reason}` : 'Remove from this expense'}
                   title={reason || 'Remove from this expense'}
-                  onClick={() => remove(uid)}
+                  onClick={() => (reason ? setLockTip(lockTip === uid ? null : uid) : remove(uid))}
                 >
                   {reason ? <Lock size={12} /> : <X size={14} />}
                 </button>

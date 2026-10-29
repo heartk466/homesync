@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { supabase } from '../supabaseClient';
+import { canHover } from '../utils/canHover';
 import { rememberHousehold, pickRememberedHousehold } from '../utils/activeHousehold';
 import {
   Search, Filter, X, Check, Plus,
@@ -627,7 +628,6 @@ function OweCard({ total, details, loading }) {
   const [pos, setPos] = useState(null); // null = closed
   const owes = details.filter(d => !d.refund);
   const refunds = details.filter(d => d.refund);
-  const canHover = () => typeof window !== 'undefined' && window.matchMedia('(hover: hover)').matches;
 
   const open = () => {
     clearTimeout(closeTimer.current);
