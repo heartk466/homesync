@@ -50,19 +50,17 @@ async function loadHouseholdMembers(householdId) {
  *   householdChoices [{ id, name, created_by }] → household picker as the first field
  *   categories       full category list for this screen ('Other' last)
  *   categoryScope    'utilities' → only utility categories
- *   defaultCategory
  *   currentUser, profile
  *   onOpenExpense    (expense) => void   "Electricity already exists…" link
  *   onAdded          (expense, { paidUpfront, isAdmin, context }) => void
  *   onClose, showToast
  */
 export default function AddExpenseModal({
-  context, members: membersProp, householdChoices, categories, categoryScope, defaultCategory,
+  context, members: membersProp, householdChoices, categories, categoryScope,
   currentUser, profile, onOpenExpense, onAdded, onClose, showToast,
 }) {
   const scoped = categoryScope === 'utilities';
   const categoryList = scoped ? UTILITY_SCOPE_CATEGORIES : categories;
-  const startCategory = defaultCategory && categoryList.includes(defaultCategory) ? defaultCategory : categoryList[0];
 
   const [ctx, setCtx] = useState(context);
   const [loadedMembers, setLoadedMembers] = useState(null);   // { id, list } for a picked household
@@ -71,7 +69,7 @@ export default function AddExpenseModal({
   const isAdmin = !!ctx && ctx.ownerId === currentUser?.id;
   const isSolo = members.length <= 1;
 
-  const [form, setForm] = useState(() => emptyForm(startCategory, context?.ownerId === currentUser?.id ? currentUser?.id : ''));
+  const [form, setForm] = useState(() => emptyForm('', context?.ownerId === currentUser?.id ? currentUser?.id : ''));
   const [errors, setErrors] = useState({});
   const [otherType, setOtherType] = useState('');
   const [categoryTouched, setCategoryTouched] = useState(false);
@@ -118,6 +116,7 @@ export default function AddExpenseModal({
     if (!form.title.trim()) e.title = 'Title is required';
     if (!form.amount || Number.isNaN(Number(form.amount)) || Number(form.amount) <= 0) e.amount = 'Valid amount is required';
     if (form.due_date && form.due_date < todayStr()) e.due_date = 'Due date cannot be in the past';
+    if (!form.category) e.category = 'Please choose a category';
     if (!form.who_paid) e.who_paid = 'Please select who paid';
     if (!isSolo && form.selected_members.length === 0) e.members = 'Select at least one member to split with';
     if (slotConflict) e.category = `${slotConflict.category} already exists for this month. Edit that expense instead.`;
@@ -330,7 +329,10 @@ export default function AddExpenseModal({
                 onBillingMonthChange={setBillingMonth}
                 onConflictChange={setSlotConflict}
                 onOpenExpense={onOpenExpense}
+                placeholder="Choose category"
+                hasError={!!errors.category && !slotConflict}
               />
+              {errors.category && !slotConflict && <span className="aem-error">{errors.category}</span>}
               {categoryAutoDetected && !categoryTouched && <span className="aem-hint"><InlineIcon as={ICONS.sparkle} /> Picked from your description — change it anytime.</span>}
               {form.category === 'Other' && (
                 <input

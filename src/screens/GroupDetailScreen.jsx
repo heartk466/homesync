@@ -2286,7 +2286,6 @@ export default function GroupDetailScreen() {
           context={{ type: contextType === 'household' ? 'household' : 'group', id, name: group.name, ownerId: group.created_by }}
           members={members}
           categories={ALL_EXPENSE_CATEGORIES}
-          defaultCategory="Food"
           currentUser={currentUser}
           profile={profile}
           showToast={showToast}

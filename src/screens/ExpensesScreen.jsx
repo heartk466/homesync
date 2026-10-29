@@ -1955,7 +1955,6 @@ export default function ExpensesScreen() {
           context={{ type: 'household', id: selectedHousehold.id, name: selectedHousehold.name, ownerId: selectedHousehold.created_by }}
           members={householdMembers}
           categories={ALL_CATEGORIES}
-          defaultCategory="Rent"
           currentUser={currentUser}
           profile={profile}
           showToast={showToast}

@@ -17,11 +17,13 @@ import './ExpenseModals.css';
  *
  * props: categories, value, onChange, lockReason, householdId, groupId,
  *        excludeId, billingMonth ('YYYY-MM'), onBillingMonthChange,
- *        onOpenExpense, onConflictChange, labelOf (value → display label)
+ *        onOpenExpense, onConflictChange, labelOf (value → display label),
+ *        placeholder (shown while no category is chosen), hasError
  */
 export default function CategoryField({
   categories, value, onChange, lockReason, householdId, groupId, excludeId,
   billingMonth, onBillingMonthChange, onOpenExpense, onConflictChange, labelOf = (c) => c,
+  placeholder = 'Choose category', hasError = false,
 }) {
   const [taken, setTaken] = useState({});
   const [open, setOpen] = useState(false);
@@ -84,7 +86,7 @@ export default function CategoryField({
       <button
         ref={triggerRef}
         type="button"
-        className={`cf-trigger${open ? ' cf-trigger--open' : ''}`}
+        className={`cf-trigger${open ? ' cf-trigger--open' : ''}${hasError ? ' aem-input--error' : ''}`}
         disabled={!!lockReason}
         aria-haspopup="listbox"
         aria-expanded={open}
@@ -93,7 +95,7 @@ export default function CategoryField({
         onClick={() => (open ? setOpen(false) : openList())}
         onKeyDown={onKeyDown}
       >
-        <span>{labelOf(value)}</span>
+        {value ? <span>{labelOf(value)}</span> : <span className="cf-placeholder">{placeholder}</span>}
         {lockReason
           ? <Lock size={14} aria-hidden="true" className="cf-lock-icon" />
           : <ChevronDown size={15} aria-hidden="true" className={`cf-chevron${open ? ' open' : ''}`} />}

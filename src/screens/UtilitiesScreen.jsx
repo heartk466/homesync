@@ -791,7 +791,6 @@ export default function UtilitiesScreen() {
           context={isAll ? null : { type: 'household', id: activeHousehold.id, name: activeHousehold.name, ownerId: activeHousehold.created_by }}
           householdChoices={isAll ? allHouseholds : undefined}
           categoryScope="utilities"
-          defaultCategory="Electricity"
           currentUser={currentUser}
           profile={profile}
           showToast={showToast}
