@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { supabase } from '../supabaseClient';
 import { canHover } from '../utils/canHover';
+import { paidOfSplit } from '../utils/reportUtils';
 import { rememberHousehold, pickRememberedHousehold } from '../utils/activeHousehold';
 import {
   Search, Filter, X, Check, Plus,
@@ -797,7 +798,7 @@ export default function ExpensesScreen() {
   // Summary
   const [totalShared, setTotalShared] = useCachedState('expenses', 'totalShared', 0);
   const [toReimburse, setToReimburse] = useCachedState('expenses', 'toReimburse', 0);
-  const [totalSaved, setTotalSaved] = useCachedState('expenses', 'totalSaved', 0);
+  const [totalSpent, setTotalSpent] = useCachedState('expenses', 'totalSpent', 0);
   const [reimburseDetails, setReimburseDetails] = useCachedState('expenses', 'reimburseDetails', []);
 
   // UI State
@@ -917,9 +918,10 @@ export default function ExpensesScreen() {
     // ========== SUMMARY CALCULATIONS ==========
     // Total Shared = sum of all approved expense amounts in the current month (household total)
     // To Reimburse = sum of user's unpaid splits (split.status !== 'approved') for approved expenses in current month
-    // Total Saved = same as Total Shared (as requested)
+    // Spent = what the user actually paid (admin-approved) this month — same rule as the Dashboard's "Your Total Spent"
     let householdTotal = 0;
     let userUnpaidTotal = 0;
+    let userSpentTotal = 0;
     const reimburseList = [];
 
     for (const expense of expensesData) {
@@ -934,6 +936,11 @@ export default function ExpensesScreen() {
       // Find user's split
       const splits = groupedSplits[expense.id] || [];
       const mySplit = splits.find(s => s.user_id === user.id);
+      if (mySplit) {
+        const deletion = deletionStateOf(mySplit, expenseExtras.refunds[expense.id]);
+        // refunded for deletion: the money went back — not spent
+        userSpentTotal += deletion === 'refunded' ? 0 : deletion === 'verifying' ? toNum(mySplit.share_amount) : paidOfSplit(mySplit);
+      }
       // a deletion refund sent / confirmed means nothing is owed (the expense is being deleted)
       if (mySplit && mySplit.status !== 'approved' && !deletionStateOf(mySplit, expenseExtras.refunds[expense.id])) {
         // only what is still owed: share minus what the admin already approved
@@ -963,11 +970,11 @@ export default function ExpensesScreen() {
     setTotalShared(householdTotal);
     setToReimburse(userUnpaidTotal);
     setReimburseDetails(reimburseList);
-    setTotalSaved(householdTotal); // Same as Total Shared
+    setTotalSpent(userSpentTotal);
     loadedHouseholdRef.current = householdId;
     setDataLoading(false);
     loadDone();
-  }, [fetchExpenseSplits, loadDone, setAllProofs, setExpenses, setExtras, setPendingApprovals, setPendingPaymentProofs, setReimburseDetails, setToReimburse, setTotalSaved, setTotalShared]);
+  }, [fetchExpenseSplits, loadDone, setAllProofs, setExpenses, setExtras, setPendingApprovals, setPendingPaymentProofs, setReimburseDetails, setToReimburse, setTotalShared, setTotalSpent]);
 
   const fetchNotifications = async (userId) => {
     const { data } = await supabase
@@ -1639,7 +1646,7 @@ export default function ExpensesScreen() {
           onResendRefund={setRefundFor}
           showToast={showToast}
         />
-        <StatCarousel labels={['Shared', 'You owe', 'Saved']}>
+        <StatCarousel labels={['Shared', 'You owe', 'Spent']}>
           <div className="stat-card stat-card--indigo">
             <div className="stat-card-top">
               <span className="stat-card-emoji"><Icon as={ICONS.wallet} size={18} /></span>
@@ -1653,11 +1660,11 @@ export default function ExpensesScreen() {
 
           <div className="stat-card stat-card--emerald">
             <div className="stat-card-top">
-              <span className="stat-card-emoji"><Icon as={ICONS.saved} size={18} /></span>
-              <span className="stat-card-label">Saved</span>
+              <span className="stat-card-emoji"><Icon as={ICONS.expense} size={18} /></span>
+              <span className="stat-card-label">Total Spent</span>
             </div>
-            <p className="stat-card-amount">{dataLoading ? <AmountSkeleton /> : formatMoney(totalSaved)}</p>
-            <p className="stat-card-sub">vs solo</p>
+            <p className="stat-card-amount">{dataLoading ? <AmountSkeleton /> : formatMoney(totalSpent)}</p>
+            <p className="stat-card-sub">your total this month · {selectedHousehold?.name || '—'}</p>
           </div>
         </StatCarousel>
 
