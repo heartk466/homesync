@@ -9,6 +9,7 @@ import TopBar from '../components/TopBar';
 import BottomNav from '../components/BottomNav';
 import PayOnlineModal from '../components/PayOnlineModal';
 import AddExpenseModal from '../components/AddExpenseModal';
+import UploadProofAfterAddModal from '../components/UploadProofAfterAddModal';
 import DatePickerField from '../components/DatePickerField';
 import { softDeleteExpense, sendRefund, overpaidOf, followupDueOf, num as toNum } from '../utils/expenseEditUtils';
 import { deletionStateOf, DELETION_STATUS_META } from '../utils/refundsOwed';
@@ -267,6 +268,7 @@ export default function UtilitiesScreen() {
   const [householdSearch, setHouseholdSearch] = useState('');
   const [showFilter, setShowFilter] = useState(false);
   const [showAddExpense, setShowAddExpense] = useState(false);
+  const [proofAfterAdd, setProofAfterAdd] = useState(null); // { expense, isAdmin }
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [selectedUtility, setSelectedUtility] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -546,7 +548,8 @@ export default function UtilitiesScreen() {
 
   const handleExpenseAdded = (inserted, { paidUpfront, isAdmin: addedAsAdmin }) => {
     setShowAddExpense(false);
-    if (paidUpfront && addedAsAdmin) showToast('Utility added! Upload your payment proof from Expenses.');
+    // Whoever marked themselves as the payer gets the "upload proof now" step.
+    if (paidUpfront) setProofAfterAdd({ expense: inserted, isAdmin: addedAsAdmin });
     else showToast(addedAsAdmin ? 'Utility added!' : 'Utility submitted for approval!');
     // Jump to the month it belongs to so it's visible right away
     const month = monthOfExpense(inserted);
@@ -795,6 +798,17 @@ export default function UtilitiesScreen() {
           onOpenExpense={(e) => { setShowAddExpense(false); navigate(`/expenses?householdId=${e.household_id}&expenseId=${e.id}`); }}
           onAdded={handleExpenseAdded}
           onClose={() => setShowAddExpense(false)}
+        />
+      )}
+
+      {proofAfterAdd && (
+        <UploadProofAfterAddModal
+          expense={proofAfterAdd.expense}
+          isAdmin={proofAfterAdd.isAdmin}
+          currentUser={currentUser}
+          profile={profile}
+          showToast={showToast}
+          onDone={() => { setProofAfterAdd(null); reload(); }}
         />
       )}
 
