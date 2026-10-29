@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
+import { rememberHousehold, pickRememberedHousehold } from '../utils/activeHousehold';
 import {
   BarChart, Bar, XAxis, YAxis, ResponsiveContainer,
   PieChart, Pie, Cell, Legend, Tooltip
@@ -502,7 +503,7 @@ export default function ReportsScreen() {
       }));
       setAllHouseholds(households);
 
-      const primary = households.find(h => h.id === profileData.household_id) || households[0];
+      const primary = pickRememberedHousehold(households, households.find(h => h.id === profileData.household_id) || households[0]);
       setHousehold(primary);
       setSelectedHousehold(primary);
       setReportForm(prev => ({ ...prev, group_filter: primary?.name || '' }));
@@ -612,6 +613,7 @@ export default function ReportsScreen() {
 
   const handleSwitchHousehold = async (h) => {
     setSelectedHousehold(h);
+    rememberHousehold(h.id);
     setShowHouseholdDropdown(false);
     setHouseholdSearch('');
     await fetchHouseholdMembers(h.id, currentUser?.id);

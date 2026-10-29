@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { supabase } from '../supabaseClient';
+import { rememberHousehold, pickRememberedHousehold } from '../utils/activeHousehold';
 import {
   Search, Filter, X, Check, Plus,
   Trash2, AlertCircle, ChevronDown, Camera, Pencil, Eye, MoreVertical
@@ -1053,7 +1054,7 @@ export default function ExpensesScreen() {
       await fetchNotifications(user.id);
 
       if (householdsData && householdsData.length > 0 && !initialHouseholdSet.current) {
-        const firstHH = householdsData[0];
+        const firstHH = pickRememberedHousehold(householdsData, householdsData[0]);
         await handleHouseholdSelect(firstHH, user, profileData);
         initialHouseholdSet.current = true;
       }
@@ -1607,7 +1608,7 @@ export default function ExpensesScreen() {
                   <button
                     key={hh.id}
                     className={`hh-toggle-pill${selectedHousehold?.id === hh.id ? ' active' : ''}`}
-                    onClick={() => handleHouseholdSelect(hh, currentUser, profile)}
+                    onClick={() => { rememberHousehold(hh.id); handleHouseholdSelect(hh, currentUser, profile); }}
                   >
                     <InlineIcon as={ICONS.household} /> {hh.name}
                     {selectedHousehold?.id === hh.id && <span className="hh-pill-dot" />}

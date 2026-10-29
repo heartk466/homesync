@@ -1,6 +1,7 @@
 import React, { useCallback, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
+import { rememberHousehold, pickRememberedHousehold } from '../utils/activeHousehold';
 import {
   BarChart, Bar, XAxis, ResponsiveContainer,
 } from 'recharts';
@@ -273,10 +274,10 @@ export default function DashboardScreen() {
       setAllHouseholds(households);
 
       if (households.length > 0) {
-        setHousehold(prev => {
-          if (prev && households.find(h => h.id === prev.id)) return prev;
-          return households[0];
-        });
+        setHousehold(prev => pickRememberedHousehold(
+          households,
+          (prev && households.find(h => h.id === prev.id)) || households[0],
+        ));
       }
     } catch (err) {
       load.fail(err);
@@ -515,7 +516,7 @@ export default function DashboardScreen() {
             <button
               key={hh.id}
               className={`household-pill ${household?.id === hh.id ? 'active' : ''}`}
-              onClick={() => setHousehold(hh)}
+              onClick={() => { setHousehold(hh); rememberHousehold(hh.id); }}
             >
               <InlineIcon as={ICONS.household} /> {hh.name}
             </button>

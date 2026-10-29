@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
+import { rememberHousehold, pickRememberedHousehold } from '../utils/activeHousehold';
 import { uploadPaymentProof } from '../utils/paymentProofStorage';
 import {
   Search, Filter, Plus, X, ChevronDown, ChevronLeft, ChevronRight, MoreVertical, Trash2, ExternalLink, Calendar,
@@ -373,8 +374,8 @@ export default function UtilitiesScreen() {
         role: memberData.find(m => m.household_id === h.id)?.role || 'member',
       }));
       setAllHouseholds(householdsWithRole);
-      // Default stays the current (owned, else first) household
-      setActiveHousehold(householdsWithRole.find(h => h.role === 'owner') || householdsWithRole[0]);
+      // Default: the household picked last on any screen, else owned, else first
+      setActiveHousehold(pickRememberedHousehold(householdsWithRole, householdsWithRole.find(h => h.role === 'owner') || householdsWithRole[0]));
       await fetchNotifications(user.id);
     } catch (err) {
       loadFail(err);
@@ -487,6 +488,7 @@ export default function UtilitiesScreen() {
 
   const handleSwitchHousehold = (household) => {
     setActiveHousehold(household);
+    if (household.id !== ALL) rememberHousehold(household.id);
     setOpenMenu(null);
     setHouseholdSearch('');
     setChip(null);
