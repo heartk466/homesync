@@ -193,9 +193,10 @@ export default function TopBar({
    * "/groups/<id>" matches no route, so React Router rendered nothing → blank gray page.
    * We now rewrite the path here, so it also fixes OLD notifications already in the DB.
    */
-  // Information-only notifications (e.g. "Member Left") never open a screen,
+  // Information-only notifications (e.g. "Member Left", "Expense Deleted") never open a screen,
   // even old ones that were saved with a link.
-  const linkOf = (n) => (n.type === 'member_left' ? null : n.link_path);
+  const INFO_ONLY = ['member_left', 'expense_deleted'];
+  const linkOf = (n) => (INFO_ONLY.includes(n.type) ? null : n.link_path);
 
   const handleNotificationClick = async (notification) => {
     // Mark only this notification as read
