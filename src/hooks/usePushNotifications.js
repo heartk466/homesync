@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 
-const VAPID_PUBLIC_KEY = 'BBcMhS6ZOXie4qlsAsjdMhgVqYVoS697eMkuiHI4J_PiB20t6J6vT4npuIFiHPO9kavudjoyg9w_VP4zHOnPNMA';
+// Must be the pair of the VAPID_PRIVATE_KEY secret on the send-push Edge Function
+// (rotated 2026-10-29: the old app key didn't match the server → Apple answered VapidPkHashMismatch).
+const VAPID_PUBLIC_KEY = 'BGeApZy06idUqGgln9QANgEE3c2aDHPBrJrIhLYUkAheBOOXmH5H0ilr1fMmsVA_2EVSj7PIv7SwygH6nONcIqQ';
 
 function urlBase64ToUint8Array(base64String) {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
@@ -10,8 +12,40 @@ function urlBase64ToUint8Array(base64String) {
   return Uint8Array.from([...rawData].map((character) => character.charCodeAt(0)));
 }
 
+// Was this browser subscription made with the current VAPID key? (old ones can never receive pushes)
+function usesCurrentKey(subscription) {
+  const key = subscription?.options?.applicationServerKey;
+  if (!key) return true;   // browser doesn't expose it — assume fine
+  const current = urlBase64ToUint8Array(VAPID_PUBLIC_KEY);
+  const bytes = new Uint8Array(key);
+  return bytes.length === current.length && bytes.every((b, i) => b === current[i]);
+}
+
 function supportsPush() {
   return 'Notification' in window && 'serviceWorker' in navigator && 'PushManager' in window;
+}
+
+// Register this browser for pushes with the current key (replacing an old-key
+// subscription) and save it for the user. Throws on failure.
+async function registerSubscription(userId) {
+  const registration = await navigator.serviceWorker.register('/sw.js');
+  await navigator.serviceWorker.ready;
+  let subscription = await registration.pushManager.getSubscription();
+  if (subscription && !usesCurrentKey(subscription)) {
+    await subscription.unsubscribe();
+    subscription = null;
+  }
+  if (!subscription) {
+    subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+    });
+  }
+  const { error } = await supabase.from('push_subscriptions').upsert(
+    { user_id: userId, subscription: subscription.toJSON() },
+    { onConflict: 'user_id' }
+  );
+  if (error) throw error;
 }
 
 export function usePushNotifications(userId) {
@@ -32,6 +66,12 @@ export function usePushNotifications(userId) {
       try {
         const registration = await navigator.serviceWorker.getRegistration();
         const subscription = registration ? await registration.pushManager.getSubscription() : null;
+        if (subscription && !usesCurrentKey(subscription) && Notification.permission === 'granted') {
+          // made with the old key: it can never receive pushes — replace it now
+          await registerSubscription(userId);
+          if (active) setPushStatus('enabled');
+          return;
+        }
         if (active) setPushStatus(subscription ? 'enabled' : 'not-enabled');
       } catch (error) {
         console.error('Could not check browser push status:', error);
@@ -72,26 +112,7 @@ export function usePushNotifications(userId) {
     }
 
     try {
-      const registration = await navigator.serviceWorker.register('/sw.js');
-      await navigator.serviceWorker.ready;
-      let subscription = await registration.pushManager.getSubscription();
-
-      if (!subscription) {
-        subscription = await registration.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
-        });
-      }
-
-      const { error } = await supabase.from('push_subscriptions').upsert(
-        {
-          user_id: userIdToSubscribe,
-          subscription: subscription.toJSON(),
-        },
-        { onConflict: 'user_id' }
-      );
-      if (error) throw error;
-
+      await registerSubscription(userIdToSubscribe);
       setPushStatus('enabled');
       return true;
     } catch (error) {
