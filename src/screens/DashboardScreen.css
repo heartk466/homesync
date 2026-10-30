@@ -537,31 +537,6 @@
   box-shadow: 0 4px 16px rgba(59,42,171,0.3);
 }
 
-/* Bottom Navigation */
-
-
-.nav-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 4px 8px;
-  color: #C4B5FD;
-  font-family: 'Poppins', sans-serif;
-}
-
-.nav-item span {
-  font-size: 9px;
-  font-weight: 500;
-}
-
-.nav-item.active {
-  color: #3B2AAB;
-}
-
 /* Avatar Image */
 .avatar-img {
   width: 100%;

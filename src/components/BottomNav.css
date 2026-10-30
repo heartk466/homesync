@@ -1,31 +1,42 @@
+/* Bottom nav: white bar with rounded top corners; the active tab's icon pops up
+   into a white circle sitting in a "notch" (ring in the screen's background
+   colour), with a bold label under it. */
 .bottom-nav {
+  --nav-notch: #B7A2FF;          /* ring = the bottom of the screens' purple gradient */
+  --nav-circle: #fff;
   position: absolute;
   bottom: 0;
   left: 0;
   right: 0;
   height: 72px;
+  padding: 0 6px;
   background: white;
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: space-around;
-  border-top: 1px solid #F0EDFF;
+  border-radius: 24px 24px 0 0;
+  box-shadow: 0 -6px 20px rgba(59, 42, 171, 0.08);
   flex-shrink: 0;
   z-index: 50;
 }
 
 .nav-item {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 4px;
+  justify-content: flex-end;
+  gap: 5px;
+  height: 100%;
+  padding: 0 2px 12px;
   background: none;
   border: none;
   cursor: pointer;
-  padding: 8px 4px;
-  color: #C4B5FD;
+  color: #8E84B8;
   font-family: 'Poppins', sans-serif;
   flex: 1;
+  min-width: 0;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .nav-icon-wrap {
@@ -33,17 +44,38 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  transition: transform 0.28s cubic-bezier(0.34, 1.4, 0.64, 1), width 0.28s ease, height 0.28s ease, background 0.2s ease;
 }
+.nav-icon-wrap svg { transition: fill 0.2s ease, color 0.2s ease; }
 
 .nav-label {
-  font-size: 9px;
+  font-size: 9.5px;
   font-weight: 500;
   line-height: 1;
+  white-space: nowrap;
+  transition: color 0.2s ease, font-weight 0.2s ease;
 }
 
-.nav-item.active {
-  color: #3B2AAB;
+/* active tab: raised circle in a notch */
+.nav-item.active { color: #3B2AAB; }
+.nav-item.active .nav-icon-wrap {
+  width: 54px;
+  height: 54px;
+  transform: translateY(-14px);
+  background: var(--nav-circle);
+  box-shadow: 0 0 0 6px var(--nav-notch), 0 8px 18px rgba(59, 42, 171, 0.25);
 }
+.nav-item.active .nav-icon-wrap svg { fill: #CFC4FF; }
+.nav-item.active .nav-label {
+  color: #1F1450;
+  font-weight: 700;
+  transform: translateY(-4px);
+}
+
+.nav-item:not(.active):active .nav-icon-wrap { transform: scale(0.92); }
 
 .nav-badge {
   position: absolute;
@@ -59,4 +91,20 @@
   display: flex;
   align-items: center;
   justify-content: center;
+}
+.nav-item.active .nav-badge { top: 2px; right: 2px; }
+
+/* dark mode: dark bar and circle, ring in the dark screen colour */
+[data-theme="dark"] .bottom-nav {
+  --nav-notch: #1a1730;
+  --nav-circle: #2A2350;
+  box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.35);
+}
+[data-theme="dark"] .nav-item { color: #8F86B8; }
+[data-theme="dark"] .nav-item.active { color: #C9BCFF; }
+[data-theme="dark"] .nav-item.active .nav-label { color: #fff; }
+[data-theme="dark"] .nav-item.active .nav-icon-wrap svg { fill: rgba(201, 188, 255, 0.25); }
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-icon-wrap, .nav-icon-wrap svg, .nav-label { transition: none; }
 }
