@@ -298,9 +298,10 @@ export default function ReportsScreen() {
       // Check split-level status — this is the authoritative source
       const userSplit = (splitsMap[expense.id] || []).find(s => s.user_id === targetUserId);
       if (userSplit) {
-        // 'approved' = owner confirmed payment — not pending
-        // 'pending_verification' = member submitted proof, awaiting owner — already paid by member, not pending
-        if (userSplit.status === 'approved' || userSplit.status === 'pending_verification') return 0;
+        // 'approved' = owner confirmed payment — not pending.
+        // 'pending_verification' (proof sent, not reviewed yet) still counts as
+        // pending until the owner approves it.
+        if (userSplit.status === 'approved') return 0;
         // being deleted (deletion refund sent or confirmed) — nothing left to pay
         if (deletionOf(expense, userSplit)) return 0;
         // 'unpaid' = still owes the whole share; 'partly_paid' = owes the rest
@@ -365,15 +366,18 @@ export default function ReportsScreen() {
     const lastPending = lastYearExpenses.reduce((sum, e) => sum + getPendingAmountForUser(e), 0);
     setLastYearPending(lastPending);
 
-    // Pending by category (for grouped bar chart)
+    // Pending by category (grouped bar chart): Total = the full amounts of the
+    // expenses with something pending, Pending = the member's unpaid share of them
     const pendingCats = {};
     thisYearExpenses.forEach(e => {
       const amt = getPendingAmountForUser(e);
       if (amt > 0 && e.category) {
-        pendingCats[e.category] = (pendingCats[e.category] || 0) + amt;
+        const row = pendingCats[e.category] || (pendingCats[e.category] = { total: 0, pending: 0 });
+        row.total += Number(e.amount) || 0;
+        row.pending += amt;
       }
     });
-    setPendingByCategory(Object.entries(pendingCats).map(([name, value]) => ({ name, value })));
+    setPendingByCategory(Object.entries(pendingCats).map(([name, v]) => ({ name, total: v.total, pending: v.pending })));
 
     // ── Card 4: overpayment refunds still owed (any year — they're still owed).
     //    Kept for every member; the card shows the admin all of them, a member theirs. ──
@@ -1140,7 +1144,9 @@ export default function ReportsScreen() {
 
         {/* Card 3 — Pending Member Balances (unpaid splits across ALL households) */}
         <div className="report-card">
-          <p className="report-card-label">Pending Member Balances</p>
+          <p className="report-card-label">
+            {!selectedMemberId || selectedMemberId === currentUser?.id ? 'Your Pending Balances' : 'Pending Member Balances'}
+          </p>
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
             <div>
               <p className="report-card-amount">
@@ -1194,13 +1200,13 @@ export default function ReportsScreen() {
                     }
                   />
                   <Bar
-                    dataKey="value"
+                    dataKey="total"
                     name="Total"
                     radius={[4, 4, 0, 0]}
                     fill="url(#balanceBar)"
                   />
                   <Bar
-                    dataKey="value"
+                    dataKey="pending"
                     name="Pending"
                     radius={[4, 4, 0, 0]}
                     fill="#AE96FF"

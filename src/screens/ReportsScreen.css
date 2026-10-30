@@ -1161,3 +1161,15 @@
 .household-option:hover, .household-option:focus-visible { background: #F8F6FF; outline: none; }
 .household-option.active:hover { background: #F0EDFF; }
 .household-option-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; margin-right: 8px; }
+
+/* Chart hover: soft highlight instead of Recharts' grey block, and a tooltip
+   that follows dark mode (it was a white box with white text) */
+.recharts-tooltip-cursor { fill: rgba(174, 150, 255, 0.14); }
+[data-theme="dark"] .recharts-default-tooltip {
+  background: #241f45 !important;
+  border-color: #3a3166 !important;
+  border-radius: 10px;
+  color: #EDE7FF;
+}
+[data-theme="dark"] .recharts-default-tooltip .recharts-tooltip-label { color: #EDE7FF !important; }
+.recharts-default-tooltip { border-radius: 10px; }
