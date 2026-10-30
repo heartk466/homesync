@@ -1187,6 +1187,10 @@ export default function ReportsScreen() {
                       <stop offset="0%" stopColor="#6B46C1" />
                       <stop offset="100%" stopColor="#3B2AAB" />
                     </linearGradient>
+                    <linearGradient id="pendingBar" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#D4C5FF" />
+                      <stop offset="100%" stopColor="#9F7AEA" />
+                    </linearGradient>
                   </defs>
                   <XAxis
                     dataKey="name"
@@ -1209,8 +1213,7 @@ export default function ReportsScreen() {
                     dataKey="pending"
                     name="Pending"
                     radius={[4, 4, 0, 0]}
-                    fill="#AE96FF"
-                    fillOpacity={0.55}
+                    fill="url(#pendingBar)"
                   />
                 </BarChart>
               </ResponsiveContainer>
