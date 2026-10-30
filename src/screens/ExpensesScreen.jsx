@@ -89,7 +89,8 @@ function NotificationJump({
   const location = useLocation();
   const navigate = useNavigate();
   // Each step runs once per notification (the callbacks are new every render).
-  const doneRef = useRef({ key: null, selected: false, revealed: false, startedAt: 0, refreshed: false });
+  const doneRef = useRef({ key: null, selected: false, revealed: false, startedAt: 0, refreshed: false, request: undefined });
+  const [, setTick] = useState(0);   // re-run once the request's status is fetched
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -97,7 +98,7 @@ function NotificationJump({
     const expenseId = params.get('expenseId');
     if (!expenseId) return undefined;
     if (doneRef.current.key !== location.search) {
-      doneRef.current = { key: location.search, selected: false, revealed: false, startedAt: Date.now(), refreshed: false };
+      doneRef.current = { key: location.search, selected: false, revealed: false, startedAt: Date.now(), refreshed: false, request: undefined };
     }
     const done = doneRef.current;
 
@@ -112,6 +113,48 @@ function NotificationJump({
     if (!fresh || fresh.householdId !== selectedHouseholdId || fresh.startedAt < done.startedAt) {
       if (fresh && !done.refreshed) { done.refreshed = true; onRefresh(); }
       return undefined;
+    }
+
+    // Admin + "New Expense Pending Approval" (&request=1): while the request still
+    // waits, open its card in Pending Approvals; once approved, fall through to
+    // the expense card below; once rejected (or deleted), just say so.
+    if (params.get('request') && isAdmin && !expenses.some(e => e.id === expenseId)) {
+      if (done.request === undefined) {
+        done.request = null;   // fetching
+        supabase.from('expenses').select('approval_status, deleted_at').eq('id', expenseId).maybeSingle()
+          .then(({ data }) => {
+            done.request = !data || data.deleted_at ? 'deleted' : data.approval_status;
+            setTick(t => t + 1);
+          }, () => { done.request = 'deleted'; setTick(t => t + 1); });
+        return undefined;
+      }
+      if (done.request === null || done.revealed) return undefined;
+      if (done.request === 'pending_approval') {
+        // the section loads its own pending list — open it and wait for the card
+        let tries = 0;
+        let timer;
+        const reveal = () => {
+          const card = document.getElementById(`pending-expense-${expenseId}`);
+          if (!card) {
+            document.getElementById('pending-approvals')?.dispatchEvent(new CustomEvent('pending-open'));
+            if (++tries < 40) timer = setTimeout(reveal, 150);
+            return;
+          }
+          done.revealed = true;
+          card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          card.classList.add('notif-pulse-card');
+          setTimeout(() => card.classList.remove('notif-pulse-card'), 3600);
+          navigate('/expenses', { replace: true });
+        };
+        timer = setTimeout(reveal, 0);
+        return () => clearTimeout(timer);
+      }
+      if (done.request !== 'approved') {
+        done.revealed = true;
+        showToast(done.request === 'rejected' ? 'You rejected this expense request.' : 'This expense request no longer exists.', 'success');
+        navigate('/expenses', { replace: true });
+        return undefined;
+      }
     }
     if (!expenses.some(e => e.id === expenseId)) return undefined; // still loading (or gone)
 
@@ -377,7 +420,7 @@ function PendingApprovalsSection({
       {total > 0 && (
         <PendingSectionShell total={total}>
             {pendingExpenses.map(expense => (
-              <div key={`exp-${expense.id}`} className="pa-card">
+              <div key={`exp-${expense.id}`} id={`pending-expense-${expense.id}`} className="pa-card">
                 <div
                   className="pa-top pa-top-tap"
                   role="button"

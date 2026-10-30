@@ -245,6 +245,15 @@ export default function TopBar({
     params.set('type', type);
     state = { ...state, type };
 
+    // "New Expense Pending Approval" for a household → the Expenses screen, which
+    // opens the request in Pending Approvals (or the expense once it's approved).
+    // Also fixes old notifications saved with the household-screen link.
+    if (notification.type === 'approval_request' && type === 'household' && params.get('expenseId')) {
+      const qs = new URLSearchParams({ householdId: groupId, expenseId: params.get('expenseId'), request: '1' });
+      setTimeout(() => navigate(`/expenses?${qs.toString()}`), 100);
+      return;
+    }
+
     const detailUrl = `/group-detail/${groupId}?${params.toString()}`;
     const onGroupsScreen = location.pathname === '/groups';
     const onSameDetail = location.pathname === `/group-detail/${groupId}`;
