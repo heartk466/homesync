@@ -95,7 +95,7 @@
   background: radial-gradient(circle at 100% 100%, var(--bar-bg) 11.5px, var(--nav-notch) 12px);
 }
 .nav-item.active .nav-label {
-  color: #1F1450;
+  color: #3B2AAB;
   font-weight: 700;
   transform: translateY(-4px);
 }
