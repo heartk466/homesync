@@ -11,6 +11,9 @@ body .reminder-chip.active,
 body .currency-chip.active,
 body .push-enable-btn {
   background: linear-gradient(135deg, #3B2AAB, #6B46C1);
+  /* paint under the (transparent) border too — otherwise the gradient repeats
+     there and shows as an outline on bordered pills */
+  background-origin: border-box;
   border-color: transparent;
   color: #fff;
   box-shadow: 0 4px 14px rgba(59, 42, 171, 0.35);
@@ -18,6 +21,6 @@ body .push-enable-btn {
 
 /* dark mode forces a flat accent on household pills with !important */
 :root[data-theme="dark"] body .household-pill.active {
-  background: linear-gradient(135deg, #3B2AAB, #6B46C1) !important;
+  background: linear-gradient(135deg, #3B2AAB, #6B46C1) border-box !important;
   border-color: transparent !important;
 }
