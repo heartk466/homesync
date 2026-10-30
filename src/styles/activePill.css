@@ -1,0 +1,23 @@
+/* One "selected" look for pills / chips across screens — the gradient the
+   Expenses household pill uses, instead of flat #3B2AAB:
+   Dashboard household pills · Groups Households/Groups tab · Utilities
+   household switcher + provider chips · Reports household switcher ·
+   Settings reminder / currency chips + "Turn on phone notifications". */
+body .household-pill.active,
+body .search-toggle-btn.active,
+body .ut-chip.active,
+body .household-switcher-pill:not(.member-pill),
+body .reminder-chip.active,
+body .currency-chip.active,
+body .push-enable-btn {
+  background: linear-gradient(135deg, #3B2AAB, #6B46C1);
+  border-color: transparent;
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(59, 42, 171, 0.35);
+}
+
+/* dark mode forces a flat accent on household pills with !important */
+:root[data-theme="dark"] body .household-pill.active {
+  background: linear-gradient(135deg, #3B2AAB, #6B46C1) !important;
+  border-color: transparent !important;
+}

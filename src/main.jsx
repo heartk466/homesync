@@ -4,6 +4,7 @@ import './index.css'
 import './styles/searchBar.css'
 import './styles/icons.css'
 import './global-dark.css'         
+import './styles/activePill.css'
 import App from './App.jsx'
 import { AppProvider } from './AppContext'  
 
