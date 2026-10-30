@@ -24,6 +24,10 @@ import { useCachedState, useScreenLoad } from '../utils/screenCache';
 import { LoadGate, ReportsSkeleton } from '../components/Skeleton';
 
 const COLORS = ['#3B2AAB', '#2D1A7A', '#D4C5FF', '#AE96FF', '#6B46C1', '#9F7AEA', '#7C3AED', '#C4B5FD'];
+// lighter tint of a #rrggbb colour (t = 0…1), for the chart gradients
+const lighten = (hex, t) => '#' + [1, 3, 5]
+  .map((i) => Math.round(parseInt(hex.slice(i, i + 2), 16) + (255 - parseInt(hex.slice(i, i + 2), 16)) * t).toString(16).padStart(2, '0'))
+  .join('');
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 // Tap-friendly category chips with a one-click "Select all".
@@ -1059,8 +1063,14 @@ export default function ReportsScreen() {
             <div style={{ width: '100%', height: 80 }}>
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={monthlyData} barCategoryGap="20%">
+                  <defs>
+                    <linearGradient id="spentBar" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#6B46C1" />
+                      <stop offset="100%" stopColor="#3B2AAB" />
+                    </linearGradient>
+                  </defs>
                   <XAxis dataKey="month" tick={{ fontSize: 9, fill: '#3B2AAB' }} axisLine={false} tickLine={false} />
-                  <Bar dataKey="amount" fill="#3B2AAB" radius={[4, 4, 0, 0]}/>
+                  <Bar dataKey="amount" fill="url(#spentBar)" radius={[4, 4, 0, 0]}/>
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -1080,6 +1090,14 @@ export default function ReportsScreen() {
               <div style={{ flexShrink: 0, width: 120, height: 120 }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
+                    <defs>
+                      {COLORS.map((c, i) => (
+                        <linearGradient key={c} id={`catSlice${i}`} x1="0" y1="0" x2="1" y2="1">
+                          <stop offset="0%" stopColor={lighten(c, 0.28)} />
+                          <stop offset="100%" stopColor={c} />
+                        </linearGradient>
+                      ))}
+                    </defs>
                     <Pie
                       data={categoryData}
                       cx="50%"
@@ -1090,7 +1108,7 @@ export default function ReportsScreen() {
                       paddingAngle={2}
                     >
                       {categoryData.map((_, i) => (
-                        <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                        <Cell key={i} fill={`url(#catSlice${i % COLORS.length})`} />
                       ))}
                     </Pie>
                     <Tooltip
@@ -1158,6 +1176,12 @@ export default function ReportsScreen() {
                   barCategoryGap="25%"
                   barGap={2}
                 >
+                  <defs>
+                    <linearGradient id="balanceBar" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#6B46C1" />
+                      <stop offset="100%" stopColor="#3B2AAB" />
+                    </linearGradient>
+                  </defs>
                   <XAxis
                     dataKey="name"
                     tick={{ fontSize: 9, fill: '#3B2AAB' }}
@@ -1173,7 +1197,7 @@ export default function ReportsScreen() {
                     dataKey="value"
                     name="Total"
                     radius={[4, 4, 0, 0]}
-                    fill="#3B2AAB"
+                    fill="url(#balanceBar)"
                   />
                   <Bar
                     dataKey="value"

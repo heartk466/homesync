@@ -69,7 +69,7 @@ function ForecastCard({ icon, title, barColor, history, showDetail, onToggleDeta
         </div>
 
         {/* Forecast pill */}
-        <div className="fc-pill" style={{ background: barColor }}>
+        <div className="fc-pill" style={{ '--bar-color': barColor }}>
           <span className="fc-pill-label">Est. {forecast.label} payment</span>
           <span className="fc-pill-amt">{currencySymbol} {forecast.amount.toLocaleString()}</span>
         </div>

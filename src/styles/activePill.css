@@ -7,10 +7,19 @@ body .hh-toggle-pill.active,
 body .household-pill.active,
 body .search-toggle-btn.active,
 body .ut-chip.active,
-body .household-switcher-pill:not(.member-pill),
+body .household-switcher-pill,
 body .reminder-chip.active,
 body .currency-chip.active,
-body .push-enable-btn {
+body .push-enable-btn,
+/* main buttons: Login / Register, Dashboard quick actions + Your Code,
+   the + buttons on Expenses / Groups / Utilities, Reports generate button */
+body .login-btn,
+body .register-btn,
+body .quick-btn,
+body .floating-code-btn,
+body .fab-btn,
+body .fab-btn-group,
+body .export-icon-btn {
   background: linear-gradient(135deg, #3B2AAB, #6B46C1);
   /* paint under the (transparent) border too — otherwise the gradient repeats
      there and shows as an outline on bordered pills */
@@ -24,4 +33,23 @@ body .push-enable-btn {
 :root[data-theme="dark"] body .household-pill.active {
   background: linear-gradient(135deg, #3B2AAB, #6B46C1) border-box !important;
   border-color: transparent !important;
+}
+
+/* secondary floating button (Groups → Join): lighter gradient */
+body .fab-btn-join {
+  background: linear-gradient(135deg, #5A4AAA, #8B6FD6);
+  border-color: transparent;
+  box-shadow: 0 4px 14px rgba(90, 74, 170, 0.35);
+}
+
+/* Dashboard forecasts: this month's bar and the "Est. … payment" pill get a
+   gradient of the utility's own colour (purple electricity, blue water) */
+body .fc-bar-fill.fc-actual {
+  background: var(--bar-color, #3B2AAB);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--bar-color, #3B2AAB) 62%, #B9A6FF), var(--bar-color, #3B2AAB));
+}
+body .fc-pill {
+  background: var(--bar-color, #3B2AAB);
+  background: linear-gradient(135deg, var(--bar-color, #3B2AAB), color-mix(in srgb, var(--bar-color, #3B2AAB) 62%, #A78BFA));
+  box-shadow: 0 4px 14px rgba(59, 42, 171, 0.3);
 }
