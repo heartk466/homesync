@@ -65,11 +65,11 @@
 /* active tab: raised circle in a notch */
 .nav-item.active { color: #3B2AAB; }
 .nav-item.active .nav-icon-wrap {
-  width: 54px;
-  height: 54px;
-  transform: translateY(-14px);
+  width: 46px;
+  height: 46px;
+  transform: translateY(-18px);
   background: var(--nav-circle);
-  box-shadow: 0 0 0 6px var(--nav-notch), 0 8px 18px rgba(59, 42, 171, 0.25);
+  box-shadow: 0 0 0 5px var(--nav-notch), 0 6px 14px rgba(59, 42, 171, 0.22);
 }
 .nav-item.active .nav-icon-wrap svg { fill: #CFC4FF; }
 /* Home: its door is drawn first, so a fill would cover it — keep it outlined */
@@ -82,17 +82,17 @@
   content: '';
   position: absolute;
   top: 0;
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   pointer-events: none;
 }
 .nav-item.active::before {
-  left: calc(50% - 44px);
-  background: radial-gradient(circle at 0 100%, var(--bar-bg) 13.5px, var(--nav-notch) 14px);
+  left: calc(50% - 37px);
+  background: radial-gradient(circle at 0 100%, var(--bar-bg) 11.5px, var(--nav-notch) 12px);
 }
 .nav-item.active::after {
-  left: calc(50% + 30px);
-  background: radial-gradient(circle at 100% 100%, var(--bar-bg) 13.5px, var(--nav-notch) 14px);
+  left: calc(50% + 25px);
+  background: radial-gradient(circle at 100% 100%, var(--bar-bg) 11.5px, var(--nav-notch) 12px);
 }
 .nav-item.active .nav-label {
   color: #1F1450;
