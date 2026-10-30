@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import { finishPendingSignup } from '../utils/signupSetup';
-import { Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff, Mail, MailCheck, MailWarning } from 'lucide-react';
 import './LoginScreen.css';
 
 export default function LoginScreen() {
@@ -97,7 +97,7 @@ export default function LoginScreen() {
     setErrors({});
     setResend(error
       ? { busy: false, ok: false, msg: error.message.includes('rate limit') ? 'Please wait a minute before sending another email.' : error.message }
-      : { busy: false, ok: true, msg: `New verification link sent to ${formData.email.trim()}. Use the newest email.` });
+      : { busy: false, ok: true, msg: 'sent' });
   };
 
   const handleForgotPassword = async () => {
@@ -142,24 +142,32 @@ export default function LoginScreen() {
         <p>Log into HomeSync</p>
       </div>
 
-      {/* Expired / used verification link */}
-      {linkError && !errors.general && !resend.msg && (
-        <div className="login-info-banner">
-          That verification link has expired or was already used. If you already verified, just sign in.
-          Otherwise enter your email below and tap <strong>Resend verification email</strong>.
-        </div>
-      )}
-
-      {/* General Error */}
-      {errors.general && (
+      {/* General Error (the verify card below explains "Email not confirmed") */}
+      {errors.general && !needsVerify && (
         <div className="login-error-banner">{errors.general}</div>
       )}
 
+      {/* Not verified yet / expired link: one card with the message and Resend */}
       {needsVerify && (
-        <div className="login-resend">
-          {resend.msg && <p className={resend.ok ? 'login-resend-ok' : 'login-resend-err'}>{resend.msg}</p>}
-          <button type="button" className="login-resend-btn" onClick={handleResend} disabled={resend.busy}>
-            {resend.busy ? 'Sending…' : 'Resend verification email'}
+        <div className={`login-verify${resend.ok ? ' is-ok' : resend.msg ? ' is-err' : ''}`} role="status">
+          <span className="login-verify-icon" aria-hidden="true">
+            {resend.ok ? <MailCheck size={20} /> : resend.msg ? <MailWarning size={20} /> : <Mail size={20} />}
+          </span>
+          <div className="login-verify-body">
+            <p className="login-verify-title">
+              {resend.ok ? 'Verification email sent' : resend.msg ? 'Couldn’t send the email' : linkError ? 'That link has expired' : 'Verify your email first'}
+            </p>
+            <p className="login-verify-text">
+              {resend.ok
+                ? <>Check <strong>{formData.email.trim()}</strong> and open the newest email.</>
+                : resend.msg
+                  || (linkError
+                    ? 'It was already used or is too old. Already verified? Just log in. Otherwise send a new link.'
+                    : 'Open the link we emailed you, or send a new one.')}
+            </p>
+          </div>
+          <button type="button" className="login-verify-btn" onClick={handleResend} disabled={resend.busy}>
+            {resend.busy ? 'Sending…' : resend.ok ? 'Send again' : 'Resend'}
           </button>
         </div>
       )}
