@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import { finishPendingSignup } from '../utils/signupSetup';
 import { Eye, EyeOff } from 'lucide-react';
@@ -7,6 +7,9 @@ import './LoginScreen.css';
 
 export default function LoginScreen() {
   const navigate = useNavigate();
+  const location = useLocation();
+  // arrived from a verification link that expired or was already used
+  const linkError = location.state?.linkError;
 
   const [formData, setFormData] = useState({
     email: '',
@@ -16,6 +19,9 @@ export default function LoginScreen() {
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  // "Email not confirmed" (or an expired link): offer to send a new link
+  const [needsVerify, setNeedsVerify] = useState(Boolean(linkError));
+  const [resend, setResend] = useState({ busy: false, msg: '', ok: false });
 
   const validate = () => {
     const newErrors = {};
@@ -49,6 +55,7 @@ export default function LoginScreen() {
 
       if (error) {
         if (error.message.includes('Email not confirmed')) {
+          setNeedsVerify(true);
           setErrors({
             general: 'Please verify your email before logging in. Check your inbox.',
           });
@@ -74,6 +81,23 @@ export default function LoginScreen() {
     }
 
     setLoading(false);
+  };
+
+  const handleResend = async () => {
+    if (!/\S+@\S+\.\S+/.test(formData.email)) {
+      setErrors({ email: 'Enter your email above first.' });
+      return;
+    }
+    setResend({ busy: true, msg: '', ok: false });
+    const { error } = await supabase.auth.resend({
+      type: 'signup',
+      email: formData.email.trim(),
+      options: { emailRedirectTo: `${window.location.origin}/` },
+    });
+    setErrors({});
+    setResend(error
+      ? { busy: false, ok: false, msg: error.message.includes('rate limit') ? 'Please wait a minute before sending another email.' : error.message }
+      : { busy: false, ok: true, msg: `New verification link sent to ${formData.email.trim()}. Use the newest email.` });
   };
 
   const handleForgotPassword = async () => {
@@ -118,9 +142,26 @@ export default function LoginScreen() {
         <p>Log into HomeSync</p>
       </div>
 
+      {/* Expired / used verification link */}
+      {linkError && !errors.general && !resend.msg && (
+        <div className="login-info-banner">
+          That verification link has expired or was already used. If you already verified, just sign in.
+          Otherwise enter your email below and tap <strong>Resend verification email</strong>.
+        </div>
+      )}
+
       {/* General Error */}
       {errors.general && (
         <div className="login-error-banner">{errors.general}</div>
+      )}
+
+      {needsVerify && (
+        <div className="login-resend">
+          {resend.msg && <p className={resend.ok ? 'login-resend-ok' : 'login-resend-err'}>{resend.msg}</p>}
+          <button type="button" className="login-resend-btn" onClick={handleResend} disabled={resend.busy}>
+            {resend.busy ? 'Sending…' : 'Resend verification email'}
+          </button>
+        </div>
       )}
 
       {/* Form */}

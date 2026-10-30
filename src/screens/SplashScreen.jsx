@@ -12,6 +12,13 @@ export default function SplashScreen() {
 
   useEffect(() => {
     let alive = true;
+    // An expired / already-used verification link comes back as
+    // #error=access_denied&error_code=otp_expired — explain it on Sign In.
+    const hash = new URLSearchParams(window.location.hash.slice(1));
+    if (hash.get('error_code') || hash.get('error')) {
+      navigate('/login', { replace: true, state: { linkError: hash.get('error_code') || hash.get('error') } });
+      return undefined;
+    }
     supabase.auth.getSession()
       .then(async ({ data: { session } }) => {
         if (!alive) return;

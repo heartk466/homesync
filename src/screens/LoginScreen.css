@@ -201,3 +201,31 @@
   cursor: pointer;
   text-decoration: underline;
 }
+/* Expired verification link + "Resend verification email" */
+.login-info-banner {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: #F0EDFF;
+  color: #3B2AAB;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+}
+.login-resend { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.login-resend-btn {
+  padding: 8px 18px;
+  border: 1.5px solid #C9BCFF;
+  border-radius: 50px;
+  background: #fff;
+  color: #3B2AAB;
+  font-family: 'Poppins', sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.login-resend-btn:disabled { opacity: 0.6; cursor: default; }
+.login-resend-ok, .login-resend-err { margin: 0; font-size: 12px; text-align: center; }
+.login-resend-ok { color: #2F855A; }
+.login-resend-err { color: #e53e3e; }
