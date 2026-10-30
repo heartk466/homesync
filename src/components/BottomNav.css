@@ -4,6 +4,7 @@
 .bottom-nav {
   --nav-notch: #B7A2FF;          /* ring = the bottom of the screens' purple gradient */
   --nav-circle: #fff;
+  --bar-bg: #fff;
   position: absolute;
   bottom: 0;
   left: 0;
@@ -41,6 +42,8 @@
 
 .nav-icon-wrap {
   position: relative;
+  z-index: 1;
+  flex-shrink: 0;            /* the 72px bar must not squash the circle into an oval */
   display: flex;
   align-items: center;
   justify-content: center;
@@ -69,6 +72,28 @@
   box-shadow: 0 0 0 6px var(--nav-notch), 0 8px 18px rgba(59, 42, 171, 0.25);
 }
 .nav-item.active .nav-icon-wrap svg { fill: #CFC4FF; }
+/* Home: its door is drawn first, so a fill would cover it — keep it outlined */
+.nav-item.active .nav-icon-wrap svg.lucide-house { fill: none; }
+
+/* smooth curve where the bar dips into the notch: two small rounded
+   "shoulders" in the ring colour on either side of the circle */
+.nav-item.active::before,
+.nav-item.active::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  width: 14px;
+  height: 14px;
+  pointer-events: none;
+}
+.nav-item.active::before {
+  left: calc(50% - 44px);
+  background: radial-gradient(circle at 0 100%, var(--bar-bg) 13.5px, var(--nav-notch) 14px);
+}
+.nav-item.active::after {
+  left: calc(50% + 30px);
+  background: radial-gradient(circle at 100% 100%, var(--bar-bg) 13.5px, var(--nav-notch) 14px);
+}
 .nav-item.active .nav-label {
   color: #1F1450;
   font-weight: 700;
@@ -98,6 +123,7 @@
 [data-theme="dark"] .bottom-nav {
   --nav-notch: #1a1730;
   --nav-circle: #2A2350;
+  --bar-bg: var(--nav-bg, #1a1635);
   box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.35);
 }
 [data-theme="dark"] .nav-item { color: #8F86B8; }
