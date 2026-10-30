@@ -1303,7 +1303,11 @@ select.detail-input {
 }
 
 /* Notification jumps scroll a card to the top — keep it below the sticky header (~110px) */
-.expense-item-detail { scroll-margin-top: 120px; }
+/* notification jumps scroll these to the top — keep them below the sticky header */
+.expense-item-detail,
+.pa-card,
+[id^="refund-approval-"],
+[id^="refund-payment-"] { scroll-margin-top: 120px; }
 
 /* ── Rename requests: quota, reject reason, "rejected" modal ── */
 .rn-quota {
