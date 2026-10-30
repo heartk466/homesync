@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
+import { finishPendingSignup } from '../utils/signupSetup';
 import './SplashScreen.css';
 
 export default function SplashScreen() {
@@ -12,10 +13,13 @@ export default function SplashScreen() {
   useEffect(() => {
     let alive = true;
     supabase.auth.getSession()
-      .then(({ data: { session } }) => {
+      .then(async ({ data: { session } }) => {
         if (!alive) return;
-        if (session) navigate('/dashboard', { replace: true });
-        else setChecking(false);
+        if (!session) { setChecking(false); return; }
+        // the email verification link lands here: finish the sign-up setup first
+        const setupError = await finishPendingSignup(session.user);
+        if (setupError) console.error('Finishing sign-up setup failed:', setupError);
+        if (alive) navigate('/dashboard', { replace: true });
       })
       .catch(() => { if (alive) setChecking(false); });
     return () => { alive = false; };

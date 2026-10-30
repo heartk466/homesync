@@ -213,3 +213,10 @@
   cursor: pointer;
   text-decoration: underline;
 }
+/* "Check your email" screen after sign-up (email confirmation on) */
+.register-check-note {
+  margin: 4px 0 20px;
+  text-align: center;
+  font-size: 12px;
+  color: #7C6BC4;
+}

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
+import { finishPendingSignup } from '../utils/signupSetup';
 import { Eye, EyeOff } from 'lucide-react';
 import './LoginScreen.css';
 
@@ -41,7 +42,7 @@ export default function LoginScreen() {
     setErrors({});
 
     try {
-      const { error } = await supabase.auth.signInWithPassword({
+      const { data: signIn, error } = await supabase.auth.signInWithPassword({
         email: formData.email,
         password: formData.password,
       });
@@ -59,6 +60,11 @@ export default function LoginScreen() {
         setLoading(false);
         return;
       }
+
+      // First login after verifying the email: create the profile / household
+      // chosen at sign-up (does nothing for accounts that are already set up)
+      const setupError = await finishPendingSignup(signIn?.user);
+      if (setupError) console.error('Finishing sign-up setup failed:', setupError);
 
       // Success — go to Dashboard
       navigate('/dashboard');

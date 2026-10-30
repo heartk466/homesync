@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import { Eye, EyeOff } from 'lucide-react';
 import './RegisterScreen.css';
-import { generateInviteCode } from '../utils/generateInviteCode';
+import { completeSignupSetup } from '../utils/signupSetup';
 
 export default function RegisterScreen() {
   const navigate = useNavigate();
@@ -21,6 +21,8 @@ export default function RegisterScreen() {
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  // email confirmation is on: account made, waiting for the Gmail link
+  const [checkEmail, setCheckEmail] = useState(false);
 
   const validate = () => {
     const newErrors = {};
@@ -71,9 +73,15 @@ export default function RegisterScreen() {
         email: formData.email,
         password: formData.password,
         options: {
+          // saved with the account so the setup can finish on the first login
+          // when email confirmation is on (no session until the link is clicked)
           data: {
             full_name: formData.fullName,
-          }
+            household_type: formData.householdType,
+            household_value: formData.householdType === 'none' ? '' : formData.householdCode.trim(),
+          },
+          // the verification link opens the app, which finishes the setup
+          emailRedirectTo: `${window.location.origin}/`,
         }
       });
 
@@ -96,154 +104,29 @@ export default function RegisterScreen() {
         return;
       }
 
-      const userId = authData.user.id;
-
-      // 2. Handle household creation/joining
-      if (formData.householdType === 'none') {
-        // No household — just create a bare profile
-        const { error: profileError } = await supabase
-          .from('profiles')
-          .insert({
-            id: userId,
-            full_name: formData.fullName.trim(),
-            email: formData.email,
-            household_id: null,
-          });
-
-        if (profileError) {
-          console.error('Profile creation error:', profileError);
-          setErrors({ general: `Failed to create profile: ${profileError.message}` });
-          setLoading(false);
-          return;
-        }
-
-      } else if (formData.householdType === 'create') {
-        // Create new household
-        const code = generateInviteCode();
-        const { data: household, error: householdError } = await supabase
-          .from('households')
-          .insert({
-            name: formData.householdCode.trim(),
-            code: code,
-            created_by: userId,
-          })
-          .select()
-          .single();
-
-        if (householdError) {
-          console.error('Household creation error:', householdError);
-          setErrors({ general: `Failed to create household: ${householdError.message}` });
-          setLoading(false);
-          return;
-        }
-
-        // Create the profile before adding the owner membership
-        const { error: profileError } = await supabase
-          .from('profiles')
-          .insert({
-            id: userId,
-            full_name: formData.fullName.trim(),
-            email: formData.email,
-            household_id: null,
-          });
-
-        if (profileError) {
-          console.error('Profile creation error:', profileError);
-          setErrors({ general: `Failed to create profile: ${profileError.message}` });
-          setLoading(false);
-          return;
-        }
-
-        // Add to household_members as owner
-        const { error: memberError } = await supabase
-          .from('household_members')
-          .insert({
-            household_id: household.id,
-            user_id: userId,
-            role: 'owner',
-            status: 'active',
-          });
-
-        if (memberError) {
-          console.error('Member insertion error:', memberError);
-          setErrors({ general: `Failed to add you to the household: ${memberError.message}` });
-          setLoading(false);
-          return;
-        }
-
-        const { error: profileUpdateError } = await supabase
-          .from('profiles')
-          .update({ household_id: household.id })
-          .eq('id', userId);
-
-        if (profileUpdateError) {
-          console.error('Profile household update error:', profileUpdateError);
-          setErrors({ general: `Household created, but profile update failed: ${profileUpdateError.message}` });
-          setLoading(false);
-          return;
-        }
-
-      } else {
-        // Join existing household
-        const { data: household, error: findError } = await supabase.rpc('lookup_household_by_code', {
-          p_code: formData.householdCode.trim().toUpperCase(),
-        });
-
-        if (findError) {
-          console.error('Find household error:', findError);
-          setErrors({ general: `Error finding household: ${findError.message}` });
-          setLoading(false);
-          return;
-        }
-
-        if (!household) {
-          setErrors({ householdCode: 'Household not found. Check the invite code.' });
-          setLoading(false);
-          return;
-        }
-
-        // Create the profile before joining through the invite RPC
-        const { error: profileError } = await supabase
-          .from('profiles')
-          .insert({
-            id: userId,
-            full_name: formData.fullName.trim(),
-            email: formData.email,
-            household_id: null,
-          });
-
-        if (profileError) {
-          console.error('Profile creation error:', profileError);
-          setErrors({ general: `Failed to create profile: ${profileError.message}` });
-          setLoading(false);
-          return;
-        }
-
-        const { error: memberError } = await supabase.rpc('join_household_by_code', {
-          p_code: formData.householdCode.trim().toUpperCase(),
-        });
-
-        if (memberError) {
-          console.error('Member insertion error:', memberError);
-          setErrors({ general: `Failed to join household: ${memberError.message}` });
-          setLoading(false);
-          return;
-        }
-
-        const { error: profileUpdateError } = await supabase
-          .from('profiles')
-          .update({ household_id: household.id })
-          .eq('id', userId);
-
-        if (profileUpdateError) {
-          console.error('Profile household update error:', profileUpdateError);
-          setErrors({ general: `Joined household, but profile update failed: ${profileUpdateError.message}` });
-          setLoading(false);
-          return;
-        }
+      // 2. Email confirmation on → no session yet: nothing can be written until
+      //    they verify. The saved choices finish the setup on their first login.
+      if (!authData.session) {
+        setCheckEmail(true);
+        setLoading(false);
+        return;
       }
 
-      // 5. Success – navigate to dashboard
+      // 3. Logged in right away → profile + household now
+      const { error: setupError, field } = await completeSignupSetup({
+        userId: authData.user.id,
+        email: formData.email,
+        fullName: formData.fullName,
+        type: formData.householdType,
+        value: formData.householdCode,
+      });
+      if (setupError) {
+        setErrors(field ? { [field]: setupError } : { general: setupError });
+        setLoading(false);
+        return;
+      }
+
+      // 4. Success – navigate to dashboard
       navigate('/dashboard');
 
     } catch (err) {
@@ -258,6 +141,23 @@ export default function RegisterScreen() {
     setFormData({ ...formData, [e.target.name]: e.target.value });
     setErrors({ ...errors, [e.target.name]: '' });
   };
+
+  if (checkEmail) {
+    return (
+      <div className="register">
+        <div className="register-logo-row">
+          <img src="/Homesync.svg" alt="HomeSync" className="register-logo-icon" />
+          <span className="register-logo-text">HomeSync</span>
+        </div>
+        <div className="register-heading">
+          <h1>Check your email</h1>
+          <p>We sent a verification link to <strong>{formData.email}</strong>. Open it to activate your account, then sign in.</p>
+        </div>
+        <p className="register-check-note">Can’t find it? Check your Spam or Promotions folder.</p>
+        <button className="register-btn" onClick={() => navigate('/login')}>Go to Sign In</button>
+      </div>
+    );
+  }
 
   return (
     <div className="register">
