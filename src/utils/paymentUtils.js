@@ -10,7 +10,7 @@ export const PAYMENT_METHODS = {
     icon: Wallet,
     scheme: 'gcash://',
     androidPackage: 'com.globe.gcash.android',
-    storeUrl: 'https://www.gcash.com/app',
+    siteUrl: 'https://www.gcash.com/',   // desktop (no app); gcash.com/app is a 404
   },
   paymaya: {
     key: 'paymaya',
@@ -19,7 +19,7 @@ export const PAYMENT_METHODS = {
     icon: Wallet,
     scheme: 'paymaya://',
     androidPackage: 'com.paymaya',
-    storeUrl: 'https://www.maya.ph/app',
+    siteUrl: 'https://www.maya.ph/',
   },
 };
 
@@ -56,9 +56,11 @@ export async function uploadPaymentQr(userId, methodKey, file) {
 // ── Open the GCash / PayMaya app. The recipient's number (if given) is copied
 //    to the clipboard first so it can be pasted into "Send Money" — the apps
 //    don't accept a prefilled recipient via deep link.
-//    • Android: intent:// URL — Chrome opens the app, or the fallback page if
+//    • Android: intent:// URL — Chrome opens the app, or the Play Store page if
 //      it isn't installed (a bare gcash:// is silently ignored by Chrome).
-//    • iOS: URL scheme, falling back to the store page if the page never hides.
+//    • iOS: just the URL scheme. No timed web fallback: from the Home Screen app
+//      iOS often doesn't report that the page was hidden, so the fallback fired
+//      even though the app had opened, leaving a gcash.com page behind.
 //    • Desktop: no app exists, so open the provider's site in a new tab
 //      instead of navigating HomeSync away. ──
 export function openPaymentApp(methodKey, number) {
@@ -73,26 +75,16 @@ export function openPaymentApp(methodKey, number) {
 
   if (isAndroid) {
     const scheme = config.scheme.replace('://', '');
+    const playStore = `https://play.google.com/store/apps/details?id=${config.androidPackage}`;
     window.location.href = `intent://#Intent;scheme=${scheme};package=${config.androidPackage};`
-      + `S.browser_fallback_url=${encodeURIComponent(config.storeUrl)};end`;
+      + `S.browser_fallback_url=${encodeURIComponent(playStore)};end`;
     return;
   }
 
-  if (!isIOS) {
-    window.open(config.storeUrl, '_blank', 'noopener');
+  if (isIOS) {
+    window.location.href = config.scheme;
     return;
   }
 
-  let left = false;
-  const onHide = () => { if (document.hidden) left = true; };
-  document.addEventListener('visibilitychange', onHide);
-  window.addEventListener('pagehide', onHide);
-
-  window.location.href = config.scheme;
-
-  setTimeout(() => {
-    document.removeEventListener('visibilitychange', onHide);
-    window.removeEventListener('pagehide', onHide);
-    if (!left && !document.hidden) window.location.href = config.storeUrl;
-  }, 1500);
+  window.open(config.siteUrl, '_blank', 'noopener');
 }
