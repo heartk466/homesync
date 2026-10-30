@@ -7,7 +7,7 @@ import {
   Database, Info, LogOut, ChevronRight,
   Trash2,
   Download, X, AlertCircle, QrCode, ImagePlus,
-  LifeBuoy, Bug, MessageSquare, Plus
+  LifeBuoy, Bug, MessageSquare, Plus, Smartphone, Tablet, Monitor
 } from 'lucide-react';
 
 // ─── Support inbox — bug reports & feedback land here ─────────────────────────
@@ -18,6 +18,7 @@ import HouseholdsSection from '../components/HouseholdsSection';
 import { exportMyMonthlyData } from '../utils/myDataExport';
 import { usePushNotifications } from '../hooks/usePushNotifications';
 import { uploadPaymentQr } from '../utils/paymentUtils';
+import { describeDevice } from '../utils/deviceInfo';
 import './SettingsScreen.css';
 
 // Custom due-date reminders: how many a user can have, and the furthest-ahead day allowed
@@ -100,6 +101,13 @@ export default function SettingsScreen() {
   const load = useScreenLoad('settings');
   const { done: loadDone, fail: loadFail } = load;
   const [expandedSection, setExpandedSection] = useState(null);
+  // Active Sessions: what this device is (model, OS, app or browser)
+  const [thisDevice, setThisDevice] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    describeDevice().then((d) => { if (alive) setThisDevice(d); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
 
   // Delete account password confirmation
   const [deletePassword, setDeletePassword] = useState('');
@@ -853,8 +861,15 @@ export default function SettingsScreen() {
           {expandedSection === 'sessions' && (
             <div className="settings-expanded">
               <div className="session-item">
-                <span className="session-device"><InlineIcon as={ICONS.web} /> Web Browser</span>
-                <span className="session-active">Active now</span>
+                <span className="session-icon" aria-hidden="true">
+                  {thisDevice?.kind === 'phone' ? <Smartphone size={18} /> : thisDevice?.kind === 'tablet' ? <Tablet size={18} /> : <Monitor size={18} />}
+                </span>
+                <span className="session-info">
+                  <span className="session-device">{thisDevice?.name || 'This device'}</span>
+                  {thisDevice?.detail && <span className="session-detail">{thisDevice.detail}</span>}
+                  {thisDevice?.guess && <span className="session-guess">Likely {thisDevice.guess} (by screen size)</span>}
+                </span>
+                <span className="session-active">This device · Active now</span>
               </div>
             </div>
           )}

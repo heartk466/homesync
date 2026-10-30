@@ -366,9 +366,23 @@
 /* Session */
 .session-item {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  gap: 10px;
 }
+.session-icon {
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: #F0EDFF;
+  color: #3B2AAB;
+}
+.session-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.session-detail { font-size: 11px; color: var(--text-muted, #9E8FCC); }
+.session-guess { font-size: 10px; color: var(--text-muted, #9E8FCC); font-style: italic; }
 
 .session-device {
   font-size: 12px;
@@ -377,6 +391,9 @@
 }
 
 .session-active {
+  flex-shrink: 0;
+  align-self: flex-start;
+  white-space: nowrap;
   font-size: 10px;
   color: #38a169;
   font-weight: 600;
