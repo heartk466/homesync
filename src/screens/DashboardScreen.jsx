@@ -544,8 +544,14 @@ export default function DashboardScreen() {
           <div className="card-chart">
             <ResponsiveContainer width={120} height={80}>
               <BarChart data={monthlyData}>
+                <defs>
+                  <linearGradient id="dashSpentBar" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#6B46C1" />
+                    <stop offset="100%" stopColor="#3B2AAB" />
+                  </linearGradient>
+                </defs>
                 <XAxis dataKey="month" tick={{ fontSize: 10, fill: '#3B2AAB' }} axisLine={false} tickLine={false} />
-                <Bar dataKey="amount" fill="#3B2AAB" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="amount" fill="url(#dashSpentBar)" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
