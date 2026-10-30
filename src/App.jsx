@@ -11,6 +11,7 @@ import ReportsScreen from './screens/ReportsScreen';
 import SettingsScreen from './screens/SettingsScreen';
 import ResetPasswordScreen from './screens/ResetPasswordScreen';
 import ImageZoomHost from './components/ImageZoomViewer';
+import TermsGate from './components/TermsGate';
 
 function App() {
   return (
@@ -29,6 +30,7 @@ function App() {
         <Route path="/reset-password" element={<ResetPasswordScreen />} />
       </Routes>
       <ImageZoomHost />
+      <TermsGate />
     </BrowserRouter>
   );
 }
