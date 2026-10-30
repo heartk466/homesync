@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
-import { Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff, MailCheck } from 'lucide-react';
 import './RegisterScreen.css';
 import { completeSignupSetup } from '../utils/signupSetup';
 
@@ -144,17 +144,25 @@ export default function RegisterScreen() {
 
   if (checkEmail) {
     return (
-      <div className="register">
+      <div className="register register--check">
         <div className="register-logo-row">
           <img src="/Homesync.svg" alt="HomeSync" className="register-logo-icon" />
           <span className="register-logo-text">HomeSync</span>
         </div>
-        <div className="register-heading">
-          <h1>Check your email</h1>
-          <p>We sent a verification link to <strong>{formData.email}</strong>. Open it to activate your account, then sign in.</p>
+        <div className="check-card" role="status">
+          <span className="check-icon" aria-hidden="true"><MailCheck size={30} /></span>
+          <h1 className="check-title">Check your email</h1>
+          <p className="check-text">We sent a verification link to</p>
+          <p className="check-email">{formData.email}</p>
+          <ol className="check-steps">
+            <li>Open the email from <strong>HomeSync</strong></li>
+            <li>Tap the <strong>confirmation link</strong> inside</li>
+            <li>Come back and sign in</li>
+          </ol>
+          <p className="check-note">Can’t find it? Check your Spam or Promotions folder.</p>
+          <button className="register-btn check-btn" onClick={() => navigate('/login')}>Go to Sign In</button>
+          <button type="button" className="check-back" onClick={() => setCheckEmail(false)}>Used the wrong email? Go back</button>
         </div>
-        <p className="register-check-note">Can’t find it? Check your Spam or Promotions folder.</p>
-        <button className="register-btn" onClick={() => navigate('/login')}>Go to Sign In</button>
       </div>
     );
   }
