@@ -3,6 +3,7 @@
    Dashboard household pills · Groups Households/Groups tab · Utilities
    household switcher + provider chips · Reports household switcher ·
    Settings reminder / currency chips + "Turn on phone notifications". */
+body .hh-toggle-pill.active,
 body .household-pill.active,
 body .search-toggle-btn.active,
 body .ut-chip.active,
