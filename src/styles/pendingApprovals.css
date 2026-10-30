@@ -130,3 +130,7 @@
 /* Member's rejected proof that still needs resubmitting */
 .pa-icon-rejected { background: #FEE2E2; }
 .pa-tag-rejected { background: #FEE2E2; color: #e53e3e; }
+
+/* dark mode: the auto-dark version of #F0EDFF was nearly the card colour */
+[data-theme="dark"] .pa-tag-expense,
+[data-theme="dark"] .pa-tag-name { background: #3B2AAB; color: #EDE7FF; }
