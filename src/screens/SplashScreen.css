@@ -110,3 +110,6 @@
 .splash-btn:active {
   transform: scale(0.97);
 }
+/* "Email verified!" (verification link opened in a phone browser) — the card
+   styles (.check-*) come from RegisterScreen.css */
+.splash--verified { justify-content: center; }
