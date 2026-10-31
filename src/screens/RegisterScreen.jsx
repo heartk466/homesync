@@ -4,6 +4,7 @@ import { supabase } from '../supabaseClient';
 import { Eye, EyeOff, MailCheck } from 'lucide-react';
 import './RegisterScreen.css';
 import { completeSignupSetup } from '../utils/signupSetup';
+import { checkEmailDeliverable } from '../utils/emailCheck';
 
 export default function RegisterScreen() {
   const navigate = useNavigate();
@@ -66,6 +67,15 @@ export default function RegisterScreen() {
 
     setLoading(true);
     setErrors({});
+
+    // 0. Catch wrong addresses (typos, domains that can't receive mail) before
+    //    an account is created for them
+    const emailProblem = await checkEmailDeliverable(formData.email);
+    if (emailProblem) {
+      setErrors({ email: emailProblem });
+      setLoading(false);
+      return;
+    }
 
     try {
       // 1. Sign up with Supabase Auth
