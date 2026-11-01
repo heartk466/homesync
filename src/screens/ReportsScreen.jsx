@@ -1096,8 +1096,8 @@ export default function ReportsScreen() {
         <div className="report-card">
           <p className="report-card-label">Largest Expense Category</p>
           {categoryData.length > 0 ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
-              {/* Donut chart on the left */}
+            <div className="cat-chart">
+              {/* Donut chart (centred), legend below in two columns */}
               {(() => {
                 const selIndex = categoryData.findIndex(c => c.name === selectedCat);
                 const sel = selIndex >= 0 ? categoryData[selIndex] : null;
@@ -1120,8 +1120,8 @@ export default function ReportsScreen() {
                             data={categoryData}
                             cx="50%"
                             cy="50%"
-                            innerRadius={32}
-                            outerRadius={52}
+                            innerRadius={46}
+                            outerRadius={72}
                             dataKey="value"
                             paddingAngle={2}
                             activeShape={activeSlice}
@@ -1142,8 +1142,8 @@ export default function ReportsScreen() {
                               data={categoryData}
                               cx="50%"
                               cy="50%"
-                              innerRadius={30}
-                              outerRadius={58}
+                              innerRadius={43}
+                              outerRadius={79}
                               dataKey="value"
                               paddingAngle={2}
                               isAnimationActive={false}
@@ -1164,7 +1164,7 @@ export default function ReportsScreen() {
                         </div>
                       )}
                     </div>
-                    {/* Legend on the right — tap a category to highlight its slice */}
+                    {/* Legend — tap a category to highlight its slice */}
                     <div className="cat-legend">
                       {categoryData.map((entry, i) => (
                         <button

@@ -1186,7 +1186,8 @@
 
 /* Largest Expense Category: tappable legend highlights its slice (even tiny
    ones) and shows its amount in the middle of the donut */
-.cat-donut { position: relative; flex-shrink: 0; width: 124px; height: 124px; }
+.cat-chart { display: flex; flex-direction: column; align-items: center; gap: 12px; margin-top: 10px; }
+.cat-donut { position: relative; flex-shrink: 0; width: 164px; height: 164px; }
 .cat-donut-highlight { pointer-events: none; }
 .cat-donut-center {
   position: absolute;
@@ -1199,22 +1200,31 @@
   text-align: center;
 }
 .cat-donut-name {
-  max-width: 54px;
+  max-width: 78px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 8.5px;
+  font-size: 10px;
   font-weight: 600;
   color: #7C6BC4;
 }
-.cat-donut-amt { font-size: 9.5px; font-weight: 800; color: #2D1A7A; }
+.cat-donut-amt { font-size: 12px; font-weight: 800; color: #2D1A7A; }
 
-.cat-legend { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+/* two columns, filled top to bottom (4 per column) */
+.cat-legend {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: repeat(4, auto);
+  grid-auto-flow: column;
+  gap: 4px 12px;
+}
 .cat-legend-item {
-  display: flex;
+  justify-self: start;      /* the highlight hugs the dot + label, not the whole column */
+  max-width: 100%;
+  display: inline-flex;
   align-items: center;
   gap: 7px;
-  width: 100%;
   padding: 4px 8px;
   border: none;
   border-radius: 50px;
