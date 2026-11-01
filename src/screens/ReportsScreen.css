@@ -1183,3 +1183,61 @@
 .recharts-sector:focus,
 .recharts-layer:focus { outline: none; }
 .recharts-sector { transition: d 0.15s ease; }
+
+/* Largest Expense Category: tappable legend highlights its slice (even tiny
+   ones) and shows its amount in the middle of the donut */
+.cat-donut { position: relative; flex-shrink: 0; width: 124px; height: 124px; }
+.cat-donut-highlight { pointer-events: none; }
+.cat-donut-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  text-align: center;
+}
+.cat-donut-name {
+  max-width: 54px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 8.5px;
+  font-weight: 600;
+  color: #7C6BC4;
+}
+.cat-donut-amt { font-size: 9.5px; font-weight: 800; color: #2D1A7A; }
+
+.cat-legend { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.cat-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 50px;
+  background: transparent;
+  font-family: 'Poppins', sans-serif;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.cat-legend-item:hover { background: #F5F3FF; }
+.cat-legend-item.active { background: #EDE9FF; }
+.cat-legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.cat-legend-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 500;
+  color: #3B2AAB;
+}
+.cat-legend-item.active .cat-legend-name { font-weight: 700; }
+[data-theme="dark"] .cat-legend-item:hover { background: rgba(174, 150, 255, 0.10); }
+[data-theme="dark"] .cat-legend-item.active { background: rgba(174, 150, 255, 0.20); }
+[data-theme="dark"] .cat-donut-amt { color: #EDE7FF; }

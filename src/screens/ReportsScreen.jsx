@@ -104,6 +104,8 @@ export default function ReportsScreen() {
   const [lastYearTotal, setLastYearTotal] = useCachedState('reports', 'lastYearTotal', 0);
   const [monthlyData, setMonthlyData] = useCachedState('reports', 'monthlyData', []);
   const [categoryData, setCategoryData] = useCachedState('reports', 'categoryData', []);
+  // donut: category picked from the legend (or by tapping its slice) — highlighted
+  const [selectedCat, setSelectedCat] = useState(null);
   const [pendingBalances, setPendingBalances] = useCachedState('reports', 'pendingBalances', 0);
   const [lastYearPending, setLastYearPending] = useCachedState('reports', 'lastYearPending', 0);
   const [pendingByCategory, setPendingByCategory] = useCachedState('reports', 'pendingByCategory', []);
@@ -1096,52 +1098,90 @@ export default function ReportsScreen() {
           {categoryData.length > 0 ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
               {/* Donut chart on the left */}
-              <div style={{ flexShrink: 0, width: 120, height: 120 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <defs>
-                      {COLORS.map((c, i) => (
-                        <linearGradient key={c} id={`catSlice${i}`} x1="0" y1="0" x2="1" y2="1">
-                          <stop offset="0%" stopColor={lighten(c, 0.28)} />
-                          <stop offset="100%" stopColor={c} />
-                        </linearGradient>
+              {(() => {
+                const selIndex = categoryData.findIndex(c => c.name === selectedCat);
+                const sel = selIndex >= 0 ? categoryData[selIndex] : null;
+                const toggle = (name) => setSelectedCat(prev => (prev === name ? null : name));
+                const money = (v) => `₱${Number(v).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
+                return (
+                  <>
+                    <div className="cat-donut">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <defs>
+                            {COLORS.map((c, i) => (
+                              <linearGradient key={c} id={`catSlice${i}`} x1="0" y1="0" x2="1" y2="1">
+                                <stop offset="0%" stopColor={lighten(c, 0.28)} />
+                                <stop offset="100%" stopColor={c} />
+                              </linearGradient>
+                            ))}
+                          </defs>
+                          <Pie
+                            data={categoryData}
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={32}
+                            outerRadius={52}
+                            dataKey="value"
+                            paddingAngle={2}
+                            activeShape={activeSlice}
+                            onClick={(_, i) => toggle(categoryData[i]?.name)}
+                          >
+                            {categoryData.map((_, i) => (
+                              <Cell
+                                key={i}
+                                fill={`url(#catSlice${i % COLORS.length})`}
+                                fillOpacity={sel && i !== selIndex ? 0.35 : 1}
+                                style={{ cursor: 'pointer' }}
+                              />
+                            ))}
+                          </Pie>
+                          {/* same angles, drawn on top: only the picked slice, a bit larger */}
+                          {sel && (
+                            <Pie
+                              data={categoryData}
+                              cx="50%"
+                              cy="50%"
+                              innerRadius={30}
+                              outerRadius={58}
+                              dataKey="value"
+                              paddingAngle={2}
+                              isAnimationActive={false}
+                              className="cat-donut-highlight"
+                            >
+                              {categoryData.map((_, i) => (
+                                <Cell key={i} fill={i === selIndex ? `url(#catSlice${i % COLORS.length})` : 'transparent'} stroke="none" />
+                              ))}
+                            </Pie>
+                          )}
+                          {!sel && <Tooltip formatter={(value) => money(value)} />}
+                        </PieChart>
+                      </ResponsiveContainer>
+                      {sel && (
+                        <div className="cat-donut-center" aria-live="polite">
+                          <span className="cat-donut-name">{sel.name}</span>
+                          <span className="cat-donut-amt">{money(sel.value)}</span>
+                        </div>
+                      )}
+                    </div>
+                    {/* Legend on the right — tap a category to highlight its slice */}
+                    <div className="cat-legend">
+                      {categoryData.map((entry, i) => (
+                        <button
+                          key={entry.name}
+                          type="button"
+                          className={`cat-legend-item${i === selIndex ? ' active' : ''}`}
+                          aria-pressed={i === selIndex}
+                          onClick={() => toggle(entry.name)}
+                        >
+                          <span className="cat-legend-dot" style={{ background: COLORS[i % COLORS.length] }} />
+                          <span className="cat-legend-name">{entry.name}</span>
+                        </button>
                       ))}
-                    </defs>
-                    <Pie
-                      data={categoryData}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={32}
-                      outerRadius={52}
-                      dataKey="value"
-                      paddingAngle={2}
-                      activeShape={activeSlice}
-                    >
-                      {categoryData.map((_, i) => (
-                        <Cell key={i} fill={`url(#catSlice${i % COLORS.length})`} />
-                      ))}
-                    </Pie>
-                    <Tooltip
-                      formatter={(value) =>
-                        `₱${Number(value).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`
-                      }
-                    />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-              {/* Legend on the right */}
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {categoryData.map((entry, i) => (
-                  <div key={entry.name} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{
-                      width: 10, height: 10, borderRadius: '50%',
-                      background: COLORS[i % COLORS.length],
-                      flexShrink: 0, display: 'inline-block'
-                    }}/>
-                    <span style={{ fontSize: 11, color: '#3B2AAB', fontWeight: 500 }}>{entry.name}</span>
-                  </div>
-                ))}
-              </div>
+                    </div>
+                  </>
+                );
+              })()}
             </div>
           ) : (
             <p className="no-data">No expense data yet</p>
