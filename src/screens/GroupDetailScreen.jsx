@@ -56,6 +56,21 @@ const fmtDate = formatDate;
 // Scroll a (just expanded) expense card into view. Waits two frames so the
 // member rows have rendered, then aligns the card's top under the header —
 // centring a tall card would push its bottom half off screen.
+// Manual "Remind": once per member per expense every 24 h (enforced by the
+// send_payment_reminder RPC). Returns { ago: '3h ago', left: '21h' } while
+// the cooldown runs, else null.
+const REMIND_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+const remindCooldownOf = (sentAt) => {
+  if (!sentAt) return null;
+  const elapsed = Date.now() - Date.parse(sentAt);
+  if (!(elapsed >= 0) || elapsed >= REMIND_COOLDOWN_MS) return null;
+  const fmt = (ms) => {
+    const mins = Math.max(1, Math.round(ms / 60000));
+    return mins < 60 ? `${mins}m` : `${Math.round(mins / 60)}h`;
+  };
+  return { ago: `${fmt(elapsed)} ago`, left: fmt(REMIND_COOLDOWN_MS - elapsed) };
+};
+
 const scrollExpenseIntoView = (expenseId) => {
   requestAnimationFrame(() => requestAnimationFrame(() => {
     document.getElementById(`expense-${expenseId}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -149,7 +164,8 @@ export default function GroupDetailScreen() {
   const [expandedExpenseIds, setExpandedExpenseIds] = useState(() => new Set());
   const [expenseFilter, setExpenseFilter] = useState('all'); // 'all' | 'unpaid' | 'partial' | 'paid'
   const [expenseSearch, setExpenseSearch] = useState('');
-  const [remindedSplitIds, setRemindedSplitIds] = useState(() => new Set());
+  // last manual reminder per "expenseId:userId" (ISO time), from payment_reminder_log
+  const [remindedAt, setRemindedAt] = useState({});
   const [xmLoading, setXmLoading] = useState(false);
 
   // Rename household / group
@@ -400,6 +416,18 @@ export default function GroupDetailScreen() {
 
     loadSplitsAndProofs();
   }, [expenses, fetchExpenseSplits, isAdmin, currentUser?.id]);
+
+  // When each unpaid member was last reminded (survives refreshes / devices)
+  useEffect(() => {
+    if (!isAdmin || !expenses.length) return undefined;
+    let alive = true;
+    supabase.from('payment_reminder_log').select('expense_id, user_id, sent_at').in('expense_id', expenses.map(e => e.id))
+      .then(({ data, error }) => {
+        if (!alive || error) return;   // table missing until the migration runs — no cooldown shown
+        setRemindedAt(Object.fromEntries((data || []).map(r => [`${r.expense_id}:${r.user_id}`, r.sent_at])));
+      });
+    return () => { alive = false; };
+  }, [expenses, isAdmin]);
 
   // ── Scroll to + briefly highlight the specific expense when arriving from
   // a "New Expense Pending Approval" / "Expense Approved" / "Expense Amount
@@ -1014,22 +1042,35 @@ export default function GroupDetailScreen() {
   };
 
   const handleRemind = async (expense, split) => {
-    setRemindedSplitIds(prev => new Set(prev).add(split.id));
-    const { error } = await supabase.from('notifications').insert({
-      user_id: split.user_id,
-      title: '🔔 Payment Reminder',
-      message: `${profile?.full_name || 'The owner'} reminded you to pay your ${formatMoney(toNum(split.share_amount))} share for "${expense.title}".`,
-      type: 'payment_reminder',
-      link_path: `/groups/${id}?type=${contextType}`,
-      link_state: JSON.stringify({ type: contextType }),
-      link_query: `expenseId=${expense.id}`,
-    });
-    if (error) {
-      setRemindedSplitIds(prev => { const next = new Set(prev); next.delete(split.id); return next; });
-      showToast('Could not send the reminder. Try again.', 'error');
-    } else {
-      showToast(`Reminder sent to ${split.profiles?.full_name?.split(' ')[0] || 'member'}`);
+    const key = `${expense.id}:${split.user_id}`;
+    const firstName = split.profiles?.full_name?.split(' ')[0] || 'member';
+    setRemindedAt(prev => ({ ...prev, [key]: new Date().toISOString() }));
+    const { error } = await supabase.rpc('send_payment_reminder', { p_expense: expense.id, p_user: split.user_id });
+    if (!error) { showToast(`Reminder sent to ${firstName}`); return; }
+
+    const cooldown = /REMIND_COOLDOWN\|(\S+)/.exec(error.message || '');
+    if (cooldown) {
+      // already reminded in the last 24 h (e.g. from another device) — show when
+      const nextAt = Date.parse(cooldown[1]);
+      setRemindedAt(prev => ({ ...prev, [key]: new Date(nextAt - REMIND_COOLDOWN_MS).toISOString() }));
+      showToast(`You already reminded ${firstName} today. You can remind again in ${remindCooldownOf(new Date(nextAt - REMIND_COOLDOWN_MS).toISOString())?.left || 'a while'}.`, 'error');
+      return;
     }
+    // RPC not installed yet (migration not run): fall back to the plain notification
+    if (/send_payment_reminder|function/i.test(error.message || '') && /not find|does not exist/i.test(error.message || '')) {
+      const { error: insertError } = await supabase.from('notifications').insert({
+        user_id: split.user_id,
+        title: '🔔 Payment Reminder',
+        message: `${profile?.full_name || 'The owner'} reminded you to pay your ${formatMoney(toNum(split.share_amount))} share for "${expense.title}".`,
+        type: 'payment_reminder',
+        link_path: `/groups/${id}?type=${contextType}`,
+        link_state: JSON.stringify({ type: contextType }),
+        link_query: `expenseId=${expense.id}`,
+      });
+      if (!insertError) { showToast(`Reminder sent to ${firstName}`); return; }
+    }
+    setRemindedAt(prev => { const next = { ...prev }; delete next[key]; return next; });
+    showToast('Could not send the reminder. Try again.', 'error');
   };
 
   const closeDeleteGroupModal = () => {
@@ -2138,7 +2179,7 @@ export default function GroupDetailScreen() {
                             const proofCount = proofCountFor(split);
                             // Upload is offered where the old "You owe" / "Submit as Owner" boxes appeared.
                             const canUpload = mine && unpaid && (isOwner ? !ownerVerifiedProof : expense.status !== 'paid');
-                            const reminded = remindedSplitIds.has(split.id);
+                            const remindWait = remindCooldownOf(remindedAt[`${expense.id}:${split.user_id}`]);
                             // Members see the refund proofs the admin sent them (approved,
                             // rejected or pending) on the admin's row, so they can always
                             // check what was actually sent.
@@ -2172,8 +2213,15 @@ export default function GroupDetailScreen() {
                                           {myRejectedProof && !isOwner ? 'Re-upload proof' : 'Upload proof'}
                                         </button>
                                       ) : isOwner && !mine ? (
-                                        <button className="split-action-chip" disabled={reminded} onClick={() => handleRemind(expense, split)}>
-                                          {reminded ? <><InlineIcon as={ICONS.check} size={12} />Reminded</> : <><InlineIcon as={ICONS.bell} size={12} />Remind</>}
+                                        <button
+                                          className="split-action-chip"
+                                          disabled={!!remindWait}
+                                          title={remindWait ? `You can remind again in ${remindWait.left}` : 'Send a payment reminder'}
+                                          onClick={() => handleRemind(expense, split)}
+                                        >
+                                          {remindWait
+                                            ? <><InlineIcon as={ICONS.check} size={12} />Reminded · {remindWait.ago}</>
+                                            : <><InlineIcon as={ICONS.bell} size={12} />Remind</>}
                                         </button>
                                       ) : null
                                     ) : (
