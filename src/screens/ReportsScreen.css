@@ -1173,3 +1173,13 @@
 }
 [data-theme="dark"] .recharts-default-tooltip .recharts-tooltip-label { color: #EDE7FF !important; }
 .recharts-default-tooltip { border-radius: 10px; }
+
+/* Charts: no square focus box / tap flash when a slice or bar is tapped —
+   the active donut slice grows instead (activeSlice in ReportsScreen.jsx) */
+.recharts-wrapper,
+.recharts-wrapper * { -webkit-tap-highlight-color: transparent; }
+.recharts-wrapper :focus,
+.recharts-surface:focus,
+.recharts-sector:focus,
+.recharts-layer:focus { outline: none; }
+.recharts-sector { transition: d 0.15s ease; }

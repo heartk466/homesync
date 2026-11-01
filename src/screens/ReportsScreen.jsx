@@ -5,7 +5,7 @@ import { canHover } from '../utils/canHover';
 import { rememberHousehold, pickRememberedHousehold } from '../utils/activeHousehold';
 import {
   BarChart, Bar, XAxis, YAxis, ResponsiveContainer,
-  PieChart, Pie, Cell, Legend, Tooltip
+  PieChart, Pie, Cell, Legend, Tooltip, Sector
 } from 'recharts';
 import { Search, Filter, X, ChevronDown, FileText, Eye, Download, Users, Check } from 'lucide-react';
 import TopBar from '../components/TopBar';
@@ -24,6 +24,11 @@ import { useCachedState, useScreenLoad } from '../utils/screenCache';
 import { LoadGate, ReportsSkeleton } from '../components/Skeleton';
 
 const COLORS = ['#3B2AAB', '#2D1A7A', '#D4C5FF', '#AE96FF', '#6B46C1', '#9F7AEA', '#7C3AED', '#C4B5FD'];
+// Tapped / hovered donut slice: the slice itself grows a little (follows its
+// own curve) instead of the browser's square focus box
+const activeSlice = (props) => (
+  <Sector {...props} outerRadius={props.outerRadius + 6} />
+);
 // lighter tint of a #rrggbb colour (t = 0…1), for the chart gradients
 const lighten = (hex, t) => '#' + [1, 3, 5]
   .map((i) => Math.round(parseInt(hex.slice(i, i + 2), 16) + (255 - parseInt(hex.slice(i, i + 2), 16)) * t).toString(16).padStart(2, '0'))
@@ -1110,6 +1115,7 @@ export default function ReportsScreen() {
                       outerRadius={52}
                       dataKey="value"
                       paddingAngle={2}
+                      activeShape={activeSlice}
                     >
                       {categoryData.map((_, i) => (
                         <Cell key={i} fill={`url(#catSlice${i % COLORS.length})`} />
