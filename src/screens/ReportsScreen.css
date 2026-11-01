@@ -1251,3 +1251,4 @@
 [data-theme="dark"] .cat-legend-item:hover { background: rgba(174, 150, 255, 0.10); }
 [data-theme="dark"] .cat-legend-item.active { background: rgba(174, 150, 255, 0.20); }
 [data-theme="dark"] .cat-donut-amt { color: #EDE7FF; }
+.form-hint-inline { font-weight: 400; font-size: 10px; color: #9E8FCC; }

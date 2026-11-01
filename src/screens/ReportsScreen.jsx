@@ -841,8 +841,13 @@ export default function ReportsScreen() {
     try {
       const payload = {
         frequency: scheduleForm.frequency,
-        day_of_month: scheduleForm.day_of_month,
-        custom_interval_days: scheduleForm.custom_interval_days,
+        // the table only accepts day 1–28 (a cleared box is 0, 29–31 don't exist in every month)
+        day_of_month: scheduleForm.frequency === 'monthly'
+          ? Math.min(Math.max(Number(scheduleForm.day_of_month) || 1, 1), 28)
+          : null,
+        custom_interval_days: scheduleForm.frequency === 'custom'
+          ? Math.max(Math.round(Number(scheduleForm.custom_interval_days) || 1), 1)
+          : null,
         category_filter: scheduleForm.category_filter || [],
         // null = All Members (household total); a member's schedule is always their own
         member_id: isAdmin ? (scheduleForm.member_filter === 'all' ? null : scheduleForm.member_filter) : currentUser.id,
@@ -866,7 +871,7 @@ export default function ReportsScreen() {
       setShowGenerateModal(false);
     } catch (err) {
       console.error('Save schedule failed:', err);
-      showToast('Failed to save schedule.', 'error');
+      showToast(`Failed to save schedule: ${err?.message || 'unknown error'}`, 'error');
     }
     setLoading(false);
   };
@@ -1558,8 +1563,15 @@ export default function ReportsScreen() {
 
                   {scheduleForm.frequency === 'monthly' && (
                     <div className="form-group">
-                      <label>Day of Month</label>
-                      <input type="number" min="1" max="28" value={scheduleForm.day_of_month} onChange={e => setScheduleForm(prev => ({ ...prev, day_of_month: Number(e.target.value) }))} />
+                      <label>Day of Month <span className="form-hint-inline">(1–28)</span></label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="28"
+                        value={scheduleForm.day_of_month}
+                        onChange={e => setScheduleForm(prev => ({ ...prev, day_of_month: Number(e.target.value) }))}
+                        onBlur={() => setScheduleForm(prev => ({ ...prev, day_of_month: Math.min(Math.max(Number(prev.day_of_month) || 1, 1), 28) }))}
+                      />
                     </div>
                   )}
 
