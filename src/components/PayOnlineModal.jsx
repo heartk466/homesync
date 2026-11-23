@@ -1,0 +1,194 @@
+import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
+import { X, ChevronLeft, Copy, Check as CheckIcon, ExternalLink, Download } from 'lucide-react';
+import { PAYMENT_METHODS, fetchReceiverPaymentDetails, openPaymentApp } from '../utils/paymentUtils';
+import './PayOnlineModal.css';
+import { Icon, InlineIcon, CategoryIcon, StatusIcon } from './Icon';
+import { ICONS, CATEGORY_ICON, SUBSCRIPTION_ICON, NOTIF_ICON } from '../utils/iconMap';
+import { Skeleton, SkeletonLines } from './Skeleton';
+
+/**
+ * Shared "Pay Online" flow used across GroupDetailScreen, ExpensesScreen and
+ * UtilitiesScreen. Pure UI/flow component — the parent screen still owns the
+ * actual proof-of-payment upload step.
+ *
+ * Props:
+ *  show          – boolean
+ *  onClose       – () => void
+ *  receiverId    – user id of the group admin who should receive payment
+ *  itemTitle     – e.g. expense/utility title, shown in the summary
+ *  amount        – numeric amount owed
+ *  onProceed     – ({ method, email }) => void, called once the user has
+ *                  "sent" the payment and entered their receipt email.
+ *                  The parent should close this modal and open its own
+ *                  Upload Screenshot modal, carrying `email` forward.
+ */
+export default function PayOnlineModal({ show, ...props }) {
+  // The body mounts fresh each time the modal opens, so it always starts at
+  // step 1 with nothing selected (no state resets inside an effect).
+  if (!show) return null;
+  // Rendered on <body> so no scrolling / positioned parent can clip the backdrop.
+  return createPortal(<PayOnlineModalBody {...props} />, document.body);
+}
+
+function PayOnlineModalBody({ onClose, receiverId, itemTitle, amount, onProceed }) {
+  const [step, setStep] = useState(1);
+  const [method, setMethod] = useState(null);
+  const [receiverDetails, setReceiverDetails] = useState(null);
+  const [loading, setLoading] = useState(!!receiverId);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!receiverId) return undefined;
+    let cancelled = false;
+    fetchReceiverPaymentDetails(receiverId).then((d) => {
+      if (cancelled) return;
+      setReceiverDetails(d);
+      setLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [receiverId]);
+
+  const config = method ? PAYMENT_METHODS[method] : null;
+  const getNumber = () => (method === 'gcash' ? receiverDetails?.gcash_number : receiverDetails?.paymaya_number);
+  const getName = () => (method === 'gcash' ? receiverDetails?.gcash_account_name : receiverDetails?.paymaya_account_name);
+  const getQrUrl = () => (method === 'gcash' ? receiverDetails?.gcash_qr_url : receiverDetails?.paymaya_qr_url);
+  const hasDetails = !loading && !!getNumber();
+  const hasQr = !loading && !!getQrUrl();
+
+  const selectMethod = (key) => {
+    setMethod(key);
+    setStep(2);
+  };
+
+  const handleCopy = () => {
+    if (!getNumber()) return;
+    navigator.clipboard?.writeText(getNumber());
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  const handleContinue = () => {
+    openPaymentApp(method, getNumber());
+  };
+
+  const handleDownloadQr = async () => {
+    const qrUrl = getQrUrl();
+    if (!qrUrl) return;
+    try {
+      const res = await fetch(qrUrl);
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objectUrl;
+      a.download = `${config?.label || 'payment'}-qr.png`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(objectUrl);
+    } catch {
+      // Fallback: open the QR image in a new tab if the download fetch fails
+      window.open(qrUrl, '_blank', 'noopener,noreferrer');
+    }
+  };
+
+  const handleDone = () => {
+    onProceed({ method });
+  };
+
+  const stepLabel = step === 1 ? 'Select Payment Method' : 'Account Details';
+
+  return (
+    <div className="pom-overlay">
+      <div className="pom-card">
+        <div className="pom-header">
+          <div className="pom-header-left">
+            {step > 1 && (
+              <button className="pom-back-btn" onClick={() => setStep(step - 1)} aria-label="Back">
+                <ChevronLeft size={18} />
+              </button>
+            )}
+            <h2>{stepLabel}</h2>
+          </div>
+          <button className="pom-close" onClick={onClose} aria-label="Close"><X size={20} /></button>
+        </div>
+
+        <div className="pom-steps-row">
+          {[1, 2].map((n) => (
+            <div key={n} className={`pom-step-dot ${step >= n ? 'active' : ''}`}>{n}</div>
+          ))}
+        </div>
+
+        {itemTitle && (
+          <div className="pom-item-summary">
+            <span className="pom-item-title">{itemTitle}</span>
+            {amount != null && <span className="pom-item-amount">₱{Number(amount).toFixed(2)}</span>}
+          </div>
+        )}
+
+        {step === 1 && (
+          <div className="pom-method-list">
+            {Object.values(PAYMENT_METHODS).map((m) => (
+              <button
+                key={m.key}
+                className="pom-method-btn"
+                style={{ '--method-color': m.color }}
+                onClick={() => selectMethod(m.key)}
+              >
+                <span className="pom-method-icon"><Icon as={m.icon} /></span>
+                <span className="pom-method-label">{m.label}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {step === 2 && (
+          <div className="pom-account-details">
+            {loading ? (
+              <div className="pom-loading" aria-busy="true">
+                <span className="sk-sr-only">Loading</span>
+                <SkeletonLines lines={3} lastWidth="50%" height={12} />
+                <Skeleton height={150} radius={14} style={{ marginTop: 14 }} />
+              </div>
+            ) : !hasDetails ? (
+              <div className="pom-empty">
+                The admin hasn't added their {config?.label} details yet. Ask them to add it in
+                Settings, or upload your proof of payment another way.
+              </div>
+            ) : (
+              <>
+                {hasQr && (
+                  <div className="pom-qr-card">
+                    <img src={getQrUrl()} alt={`${config.label} QR code`} className="pom-qr-img" />
+                    <button className="pom-qr-download-btn" onClick={handleDownloadQr}>
+                      <Download size={13} /> Download QR
+                    </button>
+                  </div>
+                )}
+                <div className="pom-account-card">
+                  <span className="pom-account-method"><InlineIcon as={config.icon} /> {config.label}</span>
+                  <span className="pom-account-name">{getName() || 'Household Admin'}</span>
+                  <div className="pom-account-number-row">
+                    <span className="pom-account-number">{getNumber()}</span>
+                    <button className="pom-copy-btn" onClick={handleCopy} aria-label="Copy number">
+                      {copied ? <CheckIcon size={14} /> : <Copy size={14} />}
+                    </button>
+                  </div>
+                </div>
+                <p className="pom-hint">
+                  {hasQr
+                    ? `Scan the QR code or send the exact amount to this number in the ${config.label} app, then come back and upload your screenshot.`
+                    : `Send the exact amount to this number in the ${config.label} app, then come back and upload your screenshot.`}
+                </p>
+                <button className="pom-continue-btn" onClick={handleContinue}>
+                  <ExternalLink size={16} /> Continue to {config.label}
+                </button>
+                <button className="pom-submit-btn" onClick={handleDone}>I've Sent the Payment</button>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

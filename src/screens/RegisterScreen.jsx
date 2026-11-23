@@ -1,7 +1,10 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
+import { Eye, EyeOff, MailCheck } from 'lucide-react';
 import './RegisterScreen.css';
+import { completeSignupSetup } from '../utils/signupSetup';
+import { checkEmailDeliverable } from '../utils/emailCheck';
 
 export default function RegisterScreen() {
   const navigate = useNavigate();
@@ -11,7 +14,7 @@ export default function RegisterScreen() {
     email: '',
     password: '',
     confirmPassword: '',
-    householdType: 'join',
+    householdType: 'none',
     householdCode: '',
   });
 
@@ -19,6 +22,8 @@ export default function RegisterScreen() {
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  // email confirmation is on: account made, waiting for the Gmail link
+  const [checkEmail, setCheckEmail] = useState(false);
 
   const validate = () => {
     const newErrors = {};
@@ -45,16 +50,12 @@ export default function RegisterScreen() {
     else if (formData.password !== formData.confirmPassword)
       newErrors.confirmPassword = 'Passwords do not match';
 
-    if (!formData.householdCode.trim())
+    if (formData.householdType !== 'none' && !formData.householdCode.trim())
       newErrors.householdCode = formData.householdType === 'join'
-        ? 'Household code or name is required'
+        ? 'Household invite code is required'
         : 'Household name is required';
 
     return newErrors;
-  };
-
-  const generateCode = () => {
-    return Math.random().toString(36).substring(2, 8).toUpperCase();
   };
 
   const handleRegister = async () => {
@@ -67,15 +68,30 @@ export default function RegisterScreen() {
     setLoading(true);
     setErrors({});
 
+    // 0. Catch wrong addresses (typos, domains that can't receive mail) before
+    //    an account is created for them
+    const emailProblem = await checkEmailDeliverable(formData.email);
+    if (emailProblem) {
+      setErrors({ email: emailProblem });
+      setLoading(false);
+      return;
+    }
+
     try {
       // 1. Sign up with Supabase Auth
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: formData.email,
         password: formData.password,
         options: {
+          // saved with the account so the setup can finish on the first login
+          // when email confirmation is on (no session until the link is clicked)
           data: {
             full_name: formData.fullName,
-          }
+            household_type: formData.householdType,
+            household_value: formData.householdType === 'none' ? '' : formData.householdCode.trim(),
+          },
+          // the verification link opens the app, which finishes the setup
+          emailRedirectTo: `${window.location.origin}/`,
         }
       });
 
@@ -98,116 +114,29 @@ export default function RegisterScreen() {
         return;
       }
 
-      const userId = authData.user.id;
-
-      // 2. Handle household creation/joining
-      if (formData.householdType === 'create') {
-        // Create new household
-        const code = generateCode();
-        const { data: household, error: householdError } = await supabase
-          .from('households')
-          .insert({
-            name: formData.householdCode.trim(),
-            code: code,
-            created_by: userId,
-          })
-          .select()
-          .single();
-
-        if (householdError) {
-          console.error('Household creation error:', householdError);
-          setErrors({ general: `Failed to create household: ${householdError.message}` });
-          setLoading(false);
-          return;
-        }
-
-        // Create profile with household_id
-        const { error: profileError } = await supabase
-          .from('profiles')
-          .insert({
-            id: userId,
-            full_name: formData.fullName.trim(),
-            email: formData.email,
-            household_id: household.id,
-          });
-
-        if (profileError) {
-          console.error('Profile creation error:', profileError);
-          setErrors({ general: `Failed to create profile: ${profileError.message}` });
-          setLoading(false);
-          return;
-        }
-
-        // Add to household_members as owner
-        const { error: memberError } = await supabase
-          .from('household_members')
-          .insert({
-            household_id: household.id,
-            user_id: userId,
-            role: 'owner',
-            status: 'active',
-          });
-
-        if (memberError) {
-          console.error('Member insertion error:', memberError);
-          // Non-fatal, but log it
-        }
-
-      } else {
-        // Join existing household
-        const { data: household, error: findError } = await supabase
-          .from('households')
-          .select('id, name, created_by')
-          .or(`code.eq.${formData.householdCode.trim()},name.eq.${formData.householdCode.trim()}`)
-          .maybeSingle(); // Use maybeSingle to avoid 0 rows error
-
-        if (findError) {
-          console.error('Find household error:', findError);
-          setErrors({ general: `Error finding household: ${findError.message}` });
-          setLoading(false);
-          return;
-        }
-
-        if (!household) {
-          setErrors({ householdCode: 'Household not found. Check the code or name.' });
-          setLoading(false);
-          return;
-        }
-
-        // Create profile with household_id
-        const { error: profileError } = await supabase
-          .from('profiles')
-          .insert({
-            id: userId,
-            full_name: formData.fullName.trim(),
-            email: formData.email,
-            household_id: household.id,
-          });
-
-        if (profileError) {
-          console.error('Profile creation error:', profileError);
-          setErrors({ general: `Failed to create profile: ${profileError.message}` });
-          setLoading(false);
-          return;
-        }
-
-        // Add to household_members as member
-        const { error: memberError } = await supabase
-          .from('household_members')
-          .insert({
-            household_id: household.id,
-            user_id: userId,
-            role: 'member',
-            status: 'active',
-          });
-
-        if (memberError) {
-          console.error('Member insertion error:', memberError);
-          // Non-fatal, but log it
-        }
+      // 2. Email confirmation on → no session yet: nothing can be written until
+      //    they verify. The saved choices finish the setup on their first login.
+      if (!authData.session) {
+        setCheckEmail(true);
+        setLoading(false);
+        return;
       }
 
-      // 5. Success – navigate to dashboard
+      // 3. Logged in right away → profile + household now
+      const { error: setupError, field } = await completeSignupSetup({
+        userId: authData.user.id,
+        email: formData.email,
+        fullName: formData.fullName,
+        type: formData.householdType,
+        value: formData.householdCode,
+      });
+      if (setupError) {
+        setErrors(field ? { [field]: setupError } : { general: setupError });
+        setLoading(false);
+        return;
+      }
+
+      // 4. Success – navigate to dashboard
       navigate('/dashboard');
 
     } catch (err) {
@@ -223,13 +152,35 @@ export default function RegisterScreen() {
     setErrors({ ...errors, [e.target.name]: '' });
   };
 
+  if (checkEmail) {
+    return (
+      <div className="register register--check">
+        <div className="register-logo-row">
+          <img src="/Homesync.svg" alt="HomeSync" className="register-logo-icon" />
+          <span className="register-logo-text">HomeSync</span>
+        </div>
+        <div className="check-card" role="status">
+          <span className="check-icon" aria-hidden="true"><MailCheck size={30} /></span>
+          <h1 className="check-title">Check your email</h1>
+          <p className="check-text">We sent a verification link to</p>
+          <p className="check-email">{formData.email}</p>
+          <ol className="check-steps">
+            <li>Open the email from <strong>HomeSync</strong></li>
+            <li>Tap the <strong>confirmation link</strong> inside</li>
+            <li>Come back and sign in</li>
+          </ol>
+          <p className="check-note">Can’t find it? Check your Spam or Promotions folder.</p>
+          <button className="register-btn check-btn" onClick={() => navigate('/login')}>Go to Sign In</button>
+          <button type="button" className="check-back" onClick={() => setCheckEmail(false)}>Used the wrong email? Go back</button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="register">
       <div className="register-logo-row">
-        <svg className="register-logo-icon" viewBox="0 0 32 32" fill="none">
-          <rect width="32" height="32" rx="8" fill="#3B2AAB"/>
-          <path d="M16 6L6 14v12h7v-6h6v6h7V14L16 6z" fill="white"/>
-        </svg>
+        <img src="/Homesync.svg" alt="HomeSync" className="register-logo-icon" />
         <span className="register-logo-text">HomeSync</span>
       </div>
 
@@ -282,7 +233,7 @@ export default function RegisterScreen() {
               onClick={() => setShowPassword(!showPassword)}
               type="button"
             >
-              {showPassword ? '🙈' : '👁️'}
+              {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
             </button>
           </div>
           {errors.password && <span className="error-text">{errors.password}</span>}
@@ -303,7 +254,7 @@ export default function RegisterScreen() {
               onClick={() => setShowConfirmPassword(!showConfirmPassword)}
               type="button"
             >
-              {showConfirmPassword ? '🙈' : '👁️'}
+              {showConfirmPassword ? <EyeOff size={16} /> : <Eye size={16} />}
             </button>
           </div>
           {errors.confirmPassword && <span className="error-text">{errors.confirmPassword}</span>}
@@ -330,23 +281,35 @@ export default function RegisterScreen() {
             />
             Create Household
           </label>
+          <label className="radio-label">
+            <input
+              type="radio"
+              name="householdType"
+              value="none"
+              checked={formData.householdType === 'none'}
+              onChange={handleChange}
+            />
+            I don't want to join or create a household
+          </label>
         </div>
 
-        <div className="input-group">
-          <input
-            type="text"
-            name="householdCode"
-            placeholder={
-              formData.householdType === 'join'
-                ? 'Household Code / Name'
-                : 'Create a Household Name'
-            }
-            value={formData.householdCode}
-            onChange={handleChange}
-            className={errors.householdCode ? 'input-error' : ''}
-          />
-          {errors.householdCode && <span className="error-text">{errors.householdCode}</span>}
-        </div>
+        {formData.householdType !== 'none' && (
+          <div className="input-group">
+            <input
+              type="text"
+              name="householdCode"
+              placeholder={
+                formData.householdType === 'join'
+                  ? 'Household Invite Code'
+                  : 'Create a Household Name'
+              }
+              value={formData.householdCode}
+              onChange={handleChange}
+              className={errors.householdCode ? 'input-error' : ''}
+            />
+            {errors.householdCode && <span className="error-text">{errors.householdCode}</span>}
+          </div>
+        )}
 
         <button
           className="register-btn"

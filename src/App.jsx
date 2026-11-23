@@ -8,6 +8,10 @@ import UtilitiesScreen from './screens/UtilitiesScreen';
 import GroupsScreen from './screens/GroupsScreen';
 import GroupDetailScreen from './screens/GroupDetailScreen';
 import ReportsScreen from './screens/ReportsScreen';
+import SettingsScreen from './screens/SettingsScreen';
+import ResetPasswordScreen from './screens/ResetPasswordScreen';
+import ImageZoomHost from './components/ImageZoomViewer';
+import TermsGate from './components/TermsGate';
 
 function App() {
   return (
@@ -22,7 +26,11 @@ function App() {
         <Route path="/groups" element={<GroupsScreen />} />
         <Route path="/group-detail/:id" element={<GroupDetailScreen />} />
         <Route path="/reports" element={<ReportsScreen />} />
+        <Route path="/settings" element={<SettingsScreen />} />
+        <Route path="/reset-password" element={<ResetPasswordScreen />} />
       </Routes>
+      <ImageZoomHost />
+      <TermsGate />
     </BrowserRouter>
   );
 }

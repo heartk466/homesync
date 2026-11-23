@@ -1,8 +1,13 @@
-import React, { useState, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useRef, useEffect } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
-import { Bell, X, LogOut, Camera, Edit } from 'lucide-react';
+import { withTimeout } from '../utils/withTimeout';
+import { Bell, X, LogOut, Camera, Edit, MessageCircle } from 'lucide-react';
 import './TopBar.css';
+import logo from '../assets/Homesync.svg';
+import useChatLauncher from './useChatLauncher';
+import { Icon, InlineIcon, CategoryIcon, StatusIcon } from './Icon';
+import { ICONS, CATEGORY_ICON, SUBSCRIPTION_ICON, NOTIF_ICON, stripEmoji } from '../utils/iconMap';
 
 export default function TopBar({
   profile,
@@ -14,8 +19,12 @@ export default function TopBar({
   onMarkAllRead,
   title = 'HomeSync',
   showBell = true,
+  onChatOpen,            // legacy: a screen can still supply its own chat handling
+  chatUnreadCount = 0,
+  hideChat = false,      // set true on a screen that should NOT show the chat button
 }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const fileInputRef = useRef(null);
 
   const [showProfileCard, setShowProfileCard] = useState(false);
@@ -23,9 +32,35 @@ export default function TopBar({
   const [showSignOutModal, setShowSignOutModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
-  const [editForm, setEditForm] = useState({ full_name: '' });
+  const [editForm, setEditForm] = useState({ full_name: '', gcash_number: '', bank_name: '', bank_account_number: '', bank_account_name: '' });
   const [editLoading, setEditLoading] = useState(false);
+  // Notifications tapped here — only these turn read (not the whole list)
+  const [readIds, setReadIds] = useState(() => new Set());
+  const isRead = (n) => n.is_read || readIds.has(n.id);
+  const shownUnread = Math.max(0, unreadCount - notifications.filter(n => !n.is_read && readIds.has(n.id)).length);
   const [editSuccess, setEditSuccess] = useState(false);
+
+  // Chat button + drawer on every screen (works with just `profile`, so screens
+  // that don't pass `currentUser` get it too)
+  const chatUser = currentUser || (profile?.id ? { id: profile.id } : null);
+  const internalChat = !hideChat && !onChatOpen;
+  const chat = useChatLauncher({ chatUser, profile, enabled: internalChat });
+  const chatBadge = onChatOpen ? chatUnreadCount : chat.unread;
+  const showChatButton = !hideChat && (!!onChatOpen || !!chatUser);
+
+  // Ring the bell once whenever a new notification arrives
+  const prevUnread = useRef(unreadCount);
+  const [ringing, setRinging] = useState(false);
+  useEffect(() => {
+    if (unreadCount > prevUnread.current) {
+      setRinging(true);
+      const t = setTimeout(() => setRinging(false), 1400);
+      prevUnread.current = unreadCount;
+      return () => clearTimeout(t);
+    }
+    prevUnread.current = unreadCount;
+    return undefined;
+  }, [unreadCount]);
 
   const getInitials = () => {
     if (!profile?.full_name) return 'U';
@@ -91,7 +126,13 @@ export default function TopBar({
   };
 
   const handleEditProfile = () => {
-    setEditForm({ full_name: profile?.full_name || '' });
+    setEditForm({ 
+      full_name: profile?.full_name || '',
+      gcash_number: profile?.gcash_number || '',
+      bank_name: profile?.bank_name || '',
+      bank_account_number: profile?.bank_account_number || '',
+      bank_account_name: profile?.bank_account_name || ''
+    });
     setEditSuccess(false);
     setShowProfileCard(false);
     setShowEditModal(true);
@@ -105,15 +146,28 @@ export default function TopBar({
 
     setEditLoading(true);
 
-    const { error } = await supabase
+    const { error } = await withTimeout(supabase
       .from('profiles')
-      .update({ full_name: editForm.full_name.trim() })
-      .eq('id', currentUser.id);
+      .update({ 
+        full_name: editForm.full_name.trim(),
+        gcash_number: editForm.gcash_number,
+        bank_name: editForm.bank_name,
+        bank_account_number: editForm.bank_account_number,
+        bank_account_name: editForm.bank_account_name
+      })
+      .eq('id', currentUser.id));
 
     if (error) {
-      alert('Failed to update profile. Try again.');
+      console.error('Profile update failed:', error);
+      alert(`Failed to update profile: ${error.message || 'unknown error'}. Try again.`);
     } else {
-      setProfile(prev => ({ ...prev, full_name: editForm.full_name.trim() }));
+      setProfile(prev => ({ ...prev, 
+        full_name: editForm.full_name.trim(),
+        gcash_number: editForm.gcash_number,
+        bank_name: editForm.bank_name,
+        bank_account_number: editForm.bank_account_number,
+        bank_account_name: editForm.bank_account_name
+      }));
       setEditSuccess(true);
       setTimeout(() => {
         setShowEditModal(false);
@@ -129,9 +183,98 @@ export default function TopBar({
     navigate('/');
   };
 
+  /**
+   * Handle notification tap — works like Facebook notifications.
+   *
+   * Flow:  current screen  →  /groups (GroupsScreen)  →  /group-detail/:id (GroupDetailScreen)
+   *
+   * Why this was broken: notifications are saved with link_path "/groups/<id>?type=...",
+   * but GroupDetailScreen actually lives at "/group-detail/<id>" (see GroupsScreen).
+   * "/groups/<id>" matches no route, so React Router rendered nothing → blank gray page.
+   * We now rewrite the path here, so it also fixes OLD notifications already in the DB.
+   */
+  // Information-only notifications (e.g. "Member Left", "Expense Deleted") never open a screen,
+  // even old ones that were saved with a link.
+  const INFO_ONLY = ['member_left', 'expense_deleted'];
+  const linkOf = (n) => (INFO_ONLY.includes(n.type) ? null : n.link_path);
+
+  const handleNotificationClick = async (notification) => {
+    // Mark only this notification as read
+    if (!isRead(notification)) {
+      setReadIds(prev => new Set(prev).add(notification.id));
+      // wait briefly so the next screen's fetch already sees it as read
+      const { error } = await withTimeout(supabase
+        .from('notifications')
+        .update({ is_read: true })
+        .eq('id', notification.id), 3000);
+      if (error) console.error('Failed to mark notification read:', error);
+    }
+
+    if (!linkOf(notification)) return;   // nothing to open — keep the panel up
+
+    // Close notification panel
+    setShowNotifications(false);
+
+    // 1) Split link_path into "path" + its own query string, then merge link_query
+    //    (expenseId / openProof / proofId) in as proper separate params.
+    const [rawPath, rawQuery = ''] = notification.link_path.split('?');
+    const params = new URLSearchParams(rawQuery);
+    if (notification.link_query) {
+      new URLSearchParams(notification.link_query).forEach((value, key) => params.set(key, value));
+    }
+
+    // 2) Restore router state (e.g. { type: 'household' | 'group' })
+    let state = {};
+    try {
+      if (notification.link_state) state = JSON.parse(notification.link_state);
+    } catch { /* malformed link_state — fall back to no router state */ }
+
+    // 3) Pull the group/household id out of the path. Accepts both the old
+    //    "/groups/<id>" and the correct "/group-detail/<id>" formats.
+    const match = rawPath.match(/^\/(?:groups|group-detail)\/([^/]+)/);
+
+    // Not a group link (future notification types) → navigate as-is
+    if (!match) {
+      const qs = params.toString();
+      setTimeout(() => navigate(qs ? `${rawPath}?${qs}` : rawPath, { state }), 100);
+      return;
+    }
+
+    const groupId = match[1];
+    const type = params.get('type') || state.type || 'group';
+    params.set('type', type);
+    state = { ...state, type };
+
+    // "New Expense Pending Approval" for a household → the Expenses screen, which
+    // opens the request in Pending Approvals (or the expense once it's approved).
+    // Also fixes old notifications saved with the household-screen link.
+    if (notification.type === 'approval_request' && type === 'household' && params.get('expenseId')) {
+      const qs = new URLSearchParams({ householdId: groupId, expenseId: params.get('expenseId'), request: '1' });
+      setTimeout(() => navigate(`/expenses?${qs.toString()}`), 100);
+      return;
+    }
+
+    const detailUrl = `/group-detail/${groupId}?${params.toString()}`;
+    const onGroupsScreen = location.pathname === '/groups';
+    const onSameDetail = location.pathname === `/group-detail/${groupId}`;
+
+    // 4) Step one: land on GroupsScreen so the back button returns there
+    if (!onGroupsScreen && !onSameDetail) {
+      navigate('/groups');
+    }
+
+    // 5) Step two: open the exact GroupDetailScreen (it handles the highlight / proof modal)
+    setTimeout(() => {
+      navigate(detailUrl, { state, replace: onSameDetail });
+    }, onGroupsScreen || onSameDetail ? 100 : 150);
+  };
+
+  // type → icon (components/Icon.jsx); unknown types get the bell
+  const getNotificationIcon = (type) => <Icon as={NOTIF_ICON[type] || ICONS.bell} size={20} />;
+
   return (
     <>
-      {/* Hidden file input */}
+      {/* Hidden file input for avatar upload */}
       <input
         type="file"
         ref={fileInputRef}
@@ -143,26 +286,50 @@ export default function TopBar({
       {/* Top Bar */}
       <div className="topbar">
         <div className="topbar-title">
-          <svg viewBox="0 0 32 32" fill="none" className="topbar-logo-icon">
-            <path d="M16 4L2 14v16h10v-8h8v8h10V14L16 4z" fill="#3B2AAB"/>
-          </svg>
+          <img src={logo} alt="homesync" className="topbar-logo-icon" />
           <span>{title}</span>
         </div>
+
         <div className="topbar-actions">
-          {showBell && (
+          {/* Chat — sits beside the bell on every screen */}
+          {showChatButton && (
             <button
-              className="topbar-bell-btn"
+              className="topbar-chat-btn"
+              aria-label="Messages"
+              title="Messages"
               onClick={() => {
-                setShowNotifications(!showNotifications);
-                if (!showNotifications && onMarkAllRead) onMarkAllRead();
+                setShowProfileCard(false);
+                setShowNotifications(false);
+                if (onChatOpen) onChatOpen();
+                else chat.toggle();
               }}
             >
-              <Bell size={20}/>
-              {unreadCount > 0 && (
-                <span className="topbar-bell-badge">{unreadCount}</span>
+              <MessageCircle size={24} strokeWidth={1.75} className="chat-icon" aria-hidden="true" />
+              {chatBadge > 0 && (
+                <span className="topbar-chat-badge">{chatBadge > 99 ? '99+' : chatBadge}</span>
               )}
             </button>
           )}
+
+          {/* Bell / Notifications */}
+          {showBell && (
+            <button
+              className={`topbar-bell-btn ${ringing ? 'ringing' : ''} ${shownUnread > 0 ? 'has-unread' : ''}`}
+              aria-label="Notifications"
+              title="Notifications"
+              onClick={() => {
+                setShowNotifications(!showNotifications);
+                setShowProfileCard(false);
+              }}
+            >
+              <Bell size={24} strokeWidth={1.75} className="bell-icon" aria-hidden="true" />
+              {shownUnread > 0 && (
+                <span className="topbar-bell-badge">{shownUnread > 99 ? '99+' : shownUnread}</span>
+              )}
+            </button>
+          )}
+
+          {/* Avatar / Profile */}
           <button
             className="topbar-avatar-btn"
             onClick={() => setShowProfileCard(!showProfileCard)}
@@ -176,13 +343,16 @@ export default function TopBar({
         </div>
       </div>
 
+      {/* Chat drawer (covers the whole screen) */}
+      {chat.drawer}
+
       {/* Notifications Panel */}
       {showNotifications && (
         <div className="topbar-overlay" onClick={() => setShowNotifications(false)}>
           <div className="topbar-notifications-panel" onClick={e => e.stopPropagation()}>
             <div className="notifications-header">
               <span>Notifications</span>
-              <button className="mark-read-btn" onClick={onMarkAllRead}>
+              <button className="mark-read-btn" onClick={() => { if (onMarkAllRead) onMarkAllRead(); }}>
                 Mark all read
               </button>
             </div>
@@ -190,12 +360,32 @@ export default function TopBar({
               <p className="no-notifications">No notifications yet</p>
             ) : (
               notifications.map(n => (
-                <div key={n.id} className={`notification-item ${!n.is_read ? 'unread' : ''}`}>
-                  <p className="notification-title">{n.title}</p>
-                  <p className="notification-msg">{n.message}</p>
-                  <p className="notification-time">
-                    {new Date(n.created_at).toLocaleString()}
-                  </p>
+                <div
+                  key={n.id}
+                  className={`notification-item ${!isRead(n) ? 'unread' : ''} ${linkOf(n) ? 'notification-clickable' : ''}`}
+                  onClick={() => handleNotificationClick(n)}
+                  role={linkOf(n) ? 'button' : undefined}
+                  style={linkOf(n) ? { cursor: 'pointer' } : {}}
+                >
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                    <span className="notification-icon" style={{ flexShrink: 0, color: '#6B46C1', marginTop: 1 }}>
+                      {getNotificationIcon(n.type)}
+                    </span>
+                    <div style={{ flex: 1 }}>
+                      <p className="notification-title">{stripEmoji(n.title)}</p>
+                      <p className="notification-msg">{n.message}</p>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <p className="notification-time">
+                          {new Date(n.created_at).toLocaleString()}
+                        </p>
+                        {linkOf(n) && (
+                          <span style={{ fontSize: 10, color: '#3B2AAB', fontWeight: 600, fontFamily: 'Poppins, sans-serif' }}>
+                            Tap to view →
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
                 </div>
               ))
             )}
@@ -207,7 +397,7 @@ export default function TopBar({
       {showProfileCard && (
         <div className="topbar-overlay" onClick={() => setShowProfileCard(false)}>
           <div className="topbar-profile-card" onClick={e => e.stopPropagation()}>
-            <button
+            <button aria-label="Close"
               className="topbar-profile-close"
               onClick={() => setShowProfileCard(false)}
             >
@@ -231,7 +421,7 @@ export default function TopBar({
             <p className="topbar-profile-name">{profile?.full_name}</p>
             <p className="topbar-profile-email">{profile?.email}</p>
             <div className="topbar-household-badge">
-              🏠 {household?.name} · {household?.created_by === profile?.id ? 'Owner' : 'Member'}
+              <InlineIcon as={ICONS.household} /> {household?.name || 'No Household'} · {household?.created_by === profile?.id ? 'Owner' : 'Member'}
             </div>
             <button className="topbar-edit-btn" onClick={handleEditProfile}>
               <Edit size={14}/> Edit Profile
@@ -250,7 +440,7 @@ export default function TopBar({
       {showEditModal && (
         <div className="topbar-modal-overlay">
           <div className="topbar-edit-modal">
-            <button
+            <button aria-label="Close"
               className="topbar-modal-close"
               onClick={() => setShowEditModal(false)}
             >
@@ -267,7 +457,7 @@ export default function TopBar({
 
             {editSuccess ? (
               <div className="topbar-edit-success">
-                ✅ Profile updated successfully!
+                <InlineIcon as={ICONS.approved} /> Profile updated successfully!
               </div>
             ) : (
               <>
@@ -276,7 +466,7 @@ export default function TopBar({
                   <input
                     type="text"
                     value={editForm.full_name}
-                    onChange={e => setEditForm({ full_name: e.target.value })}
+                    onChange={e => setEditForm({ ...editForm, full_name: e.target.value })}
                     placeholder="Enter your full name"
                   />
                 </div>
@@ -294,8 +484,8 @@ export default function TopBar({
                   <label>GCash Number</label>
                   <input
                     type="text"
-                    value={editForm.gcash_number || profile?.gcash_number || ''}
-                    onChange={e => setEditForm(prev => ({ ...prev, gcash_number: e.target.value }))}
+                    value={editForm.gcash_number}
+                    onChange={e => setEditForm({ ...editForm, gcash_number: e.target.value })}
                     placeholder="e.g. 09XX XXX XXXX"
                   />
                 </div>
@@ -303,8 +493,8 @@ export default function TopBar({
                   <label>Bank Name</label>
                   <input
                     type="text"
-                    value={editForm.bank_name || profile?.bank_name || ''}
-                    onChange={e => setEditForm(prev => ({ ...prev, bank_name: e.target.value }))}
+                    value={editForm.bank_name}
+                    onChange={e => setEditForm({ ...editForm, bank_name: e.target.value })}
                     placeholder="e.g. BDO, BPI, Metrobank"
                   />
                 </div>
@@ -312,8 +502,8 @@ export default function TopBar({
                   <label>Bank Account Number</label>
                   <input
                     type="text"
-                    value={editForm.bank_account_number || profile?.bank_account_number || ''}
-                    onChange={e => setEditForm(prev => ({ ...prev, bank_account_number: e.target.value }))}
+                    value={editForm.bank_account_number}
+                    onChange={e => setEditForm({ ...editForm, bank_account_number: e.target.value })}
                     placeholder="Account number"
                   />
                 </div>
@@ -321,8 +511,8 @@ export default function TopBar({
                   <label>Account Name</label>
                   <input
                     type="text"
-                    value={editForm.bank_account_name || profile?.bank_account_name || ''}
-                    onChange={e => setEditForm(prev => ({ ...prev, bank_account_name: e.target.value }))}
+                    value={editForm.bank_account_name}
+                    onChange={e => setEditForm({ ...editForm, bank_account_name: e.target.value })}
                     placeholder="Account name"
                   />
                 </div>
@@ -349,7 +539,7 @@ export default function TopBar({
       {showSignOutModal && (
         <div className="topbar-modal-overlay">
           <div className="topbar-signout-modal">
-            <p className="topbar-modal-emoji">🥺</p>
+            <p className="topbar-modal-emoji"><Icon as={ICONS.sad} size={40} /></p>
             <h2>DON'T GO YET!</h2>
             <p className="topbar-modal-msg">
               Your expenses might get lonely without you!<br/>
@@ -365,7 +555,7 @@ export default function TopBar({
               STAY
             </button>
             <button className="topbar-logout-btn" onClick={handleSignOut}>
-              Log out 😢
+              Log out
             </button>
           </div>
         </div>

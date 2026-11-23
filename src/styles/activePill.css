@@ -1,0 +1,71 @@
+/* One "selected" look for pills / chips across screens — the gradient the
+   Expenses household pill uses, instead of flat #3B2AAB:
+   Dashboard household pills · Groups Households/Groups tab · Utilities
+   household switcher + provider chips · Reports household switcher ·
+   Settings reminder / currency chips + "Turn on phone notifications". */
+body .hh-toggle-pill.active,
+body .household-pill.active,
+body .search-toggle-btn.active,
+body .ut-chip.active,
+body .household-switcher-pill,
+body .reminder-chip.active,
+body .currency-chip.active,
+body .push-enable-btn,
+/* main buttons: Login / Register, Dashboard quick actions + Your Code,
+   the + buttons on Expenses / Groups / Utilities, Reports generate button */
+body .login-btn,
+body .register-btn,
+body .quick-btn,
+body .floating-code-btn,
+body .fab-btn,
+body .fab-btn-group,
+body .export-icon-btn {
+  background: linear-gradient(135deg, #3B2AAB, #6B46C1);
+  /* paint under the (transparent) border too — otherwise the gradient repeats
+     there and shows as an outline on bordered pills */
+  background-origin: border-box;
+  border-color: transparent;
+  color: #fff;
+  box-shadow: 0 4px 12px -2px rgba(59, 42, 171, 0.3);
+}
+
+/* dark mode forces a flat accent on household pills with !important */
+:root[data-theme="dark"] body .household-pill.active {
+  background: linear-gradient(135deg, #3B2AAB, #6B46C1) border-box !important;
+  border-color: transparent !important;
+}
+
+/* small chips sit in tight (often scrolling) rows: a softer, closer shadow */
+body .ut-chip.active,
+body .reminder-chip.active,
+body .currency-chip.active {
+  box-shadow: 0 2px 6px rgba(59, 42, 171, 0.18);
+}
+/* room for that shadow inside the scrolling provider row (it clipped it) */
+body .ut-chips { padding-bottom: 8px; margin-bottom: -4px; }
+
+/* secondary floating button (Groups → Join): lighter gradient */
+body .fab-btn-join {
+  background: linear-gradient(135deg, #5A4AAA, #8B6FD6);
+  border-color: transparent;
+  box-shadow: 0 4px 14px rgba(90, 74, 170, 0.35);
+}
+
+/* Dashboard forecasts: this month's bar and the "Est. … payment" pill get a
+   gradient of the utility's own colour (purple electricity, blue water) */
+body .fc-bar-fill.fc-actual {
+  background: var(--bar-color, #3B2AAB);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--bar-color, #3B2AAB) 62%, #B9A6FF), var(--bar-color, #3B2AAB));
+}
+body .fc-pill {
+  background: var(--bar-color, #3B2AAB);
+  background: linear-gradient(135deg, var(--bar-color, #3B2AAB), color-mix(in srgb, var(--bar-color, #3B2AAB) 62%, #A78BFA));
+  box-shadow: 0 4px 14px rgba(59, 42, 171, 0.3);
+}
+
+/* Expenses: the household pills and the Shared / You Owe cards sit in
+   sideways-scrolling rows, which clip anything below them — the shadows were
+   cut into a hard line. Room underneath, and shadows kept close to the item. */
+body .hh-toggle-row { padding-bottom: 10px; margin-bottom: -8px; }
+body .stat-cards-row { padding-bottom: 12px; margin-bottom: -8px; }
+body .stat-card { box-shadow: 0 6px 14px -6px rgba(30, 20, 80, 0.35); }
