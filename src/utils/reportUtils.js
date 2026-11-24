@@ -91,11 +91,11 @@ const memberStatusLabel = (status) => ({
  * Returns { rows, total, paid, pending, count }.
  */
 export function computeReport({ expenses, splitsMap, memberId, categories, includeSplits, memberNames, ownerId, refundsMap = {}, deletionMap = {} }) {
-  const catSet = categories && categories.length ? new Set(categories) : null;
+  const matchesCategory = categoryMatcher(categories);
   const rows = [];
 
   expenses.forEach((e) => {
-    if (catSet && !catSet.has(e.category)) return;
+    if (!matchesCategory(e.category)) return;
     const splits = splitsMap[e.id] || [];
     // Deletion refund sent → still counts as paid ('verifying for deletion');
     // confirmed → settled and left out of the totals ('refunded for deletion').

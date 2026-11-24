@@ -14,7 +14,7 @@ import SelectField from '../components/SelectField';
 import DatePickerField from '../components/DatePickerField';
 import {
   computeReport, periodLabel, statementFromReport, statementFromMonthly,
-  exportReportPdf, datePresets, REPORT_CATEGORIES, peso, refundsForExpense, statementRefunds, toDeletionRefundEntries, toOverpaidRefundEntries,
+  exportReportPdf, datePresets, REPORT_CATEGORIES, categoryMatcher, isOtherCategory, peso, refundsForExpense, statementRefunds, toDeletionRefundEntries, toOverpaidRefundEntries,
 } from '../utils/reportUtils';
 import { fetchAwaitingRefundsMap, fetchDeletionRefundsMap, deletionStateOf, fetchConfirmedDeletionRefunds } from '../utils/refundsOwed';
 import './ReportsScreen.css';
@@ -683,10 +683,10 @@ export default function ReportsScreen() {
     // "Refunded for deletion of expense": deletion refunds the member approved.
     // The admin's household / own report lists everyone; a member's only theirs.
     const everyone = memberId === 'all' || memberId === selectedHousehold.created_by;
-    const catSet = reportForm.category_filter && reportForm.category_filter.length ? new Set(reportForm.category_filter) : null;
+    const matchesCategory = categoryMatcher(reportForm.category_filter);
     // "Refunded for overpaid expense": overpayment refunds the member approved — same rule.
     const confirmedOf = async (type) => (await fetchConfirmedDeletionRefunds(selectedHousehold.id, reportForm.from, reportForm.to, type))
-      .filter((f) => (everyone || f.user_id === memberId) && (!catSet || catSet.has(f.category)))
+      .filter((f) => (everyone || f.user_id === memberId) && matchesCategory(f.category))
       .map((f) => ({ ...f, name: names[f.user_id] || 'Member' }));
     const [deletionRefunds, overpaidRefunds] = await Promise.all([confirmedOf('expense_deletion'), confirmedOf('overpayment')]);
     return { memberId, names, ...result, deletionRefunds, overpaidRefunds };
@@ -957,7 +957,8 @@ export default function ReportsScreen() {
       avatar: { url: m.profiles?.avatar_url, name: m.profiles?.full_name },
     })),
   ];
-  const categoryOptions = Array.from(new Set([...REPORT_CATEGORIES, ...categoryData.map((c) => c.name)]));
+  // Custom "Other" types (e.g. "LOANS") are covered by the "Other" chip
+  const categoryOptions = Array.from(new Set([...REPORT_CATEGORIES, ...categoryData.map((c) => c.name).filter((n) => !isOtherCategory(n))]));
 
   return (
     <div className="reports-screen">
