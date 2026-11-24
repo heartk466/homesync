@@ -18,6 +18,25 @@ export const REPORT_CATEGORIES = [
   'Transport', 'Entertainment', 'Subscription', 'Other',
 ];
 
+// Every category name the app itself uses. Anything else is a custom "Other"
+// type (e.g. "LOANS"). Keep in sync with report_category_matches() in
+// supabase/migrations/20261124000000_report_other_category.sql.
+const BUILT_IN_CATEGORIES = new Set([
+  ...REPORT_CATEGORIES,
+  'Power', 'Gas', 'Mobile', 'Cable', 'Other utility',
+]);
+
+/** True for a custom type the app has no name for (covered by the "Other" filter). */
+export const isOtherCategory = (category) => !!category && !BUILT_IN_CATEGORIES.has(category);
+
+/** Predicate for a category filter: empty = everything; "Other" also matches custom types. */
+export function categoryMatcher(categories) {
+  if (!categories || !categories.length) return () => true;
+  const set = new Set(categories);
+  const withOther = set.has('Other');
+  return (category) => set.has(category) || (withOther && isOtherCategory(category));
+}
+
 // ───────────────────────── dates ─────────────────────────
 export const ymd = (d) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
